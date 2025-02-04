@@ -45,19 +45,7 @@ class BybitUtils:
             self.exchange.enable_demo_trading(is_testnet)  # 데모 트레이딩 활성화
         except Exception as e:
             print(f"Initialization error: {e}")
-            
-    # def get_orders(self):
-    #     try:
-    #         self.orders = self.exchange.fetch_open_orders()
-    #         if self.orders is None:
-    #             return None
-            
-    #         return self.positions
-        
-        except Exception as e:
-            print(f"Error fetching orders: {e}")
-            return None
-    
+ 
     def get_positions(self):
         """포지션 정보들 조회"""
         try:
@@ -138,7 +126,17 @@ class BybitUtils:
     def close_position(self, symbol, order_id):
         try:
             # 포지션 청산
-            order = self.exchange.cancel_order(order_id, symbol)
+            order = self.exchange.close_position(order_id, symbol)
+            return order
+        
+        except Exception as e:
+            print(f"Error closing position: {e}")
+            return None
+        
+    def close_all_positions(self, symbol, order_id):
+        try:
+            # 포지션 청산
+            order = self.exchange.close_all_positions()
             return order
         
         except Exception as e:
@@ -147,6 +145,7 @@ class BybitUtils:
         
         
     def get_orders(self):
+        """주문들 받기"""
         try:
             orders = self.exchange.fetch_open_orders()
             if len(orders) == 0:
@@ -173,21 +172,21 @@ class BybitUtils:
         
 if __name__ == '__main__':
     bybit = BybitUtils(is_testnet=True)  # 테스트넷 사용
-    value = bybit.get_orders()
+    value = bybit.get_positions()
     
     print(value)
     
-    order = bybit.open_position(
-        Open_Position(
-            symbol="XRP/USDT:USDT",
-            side="buy",
-            price=2.8,
-            quantity=1000,
-            tp=3.3,
-            sl=2.7,
-            type="market"
-        )
-    )
+    # order = bybit.open_position(
+    #     Open_Position(
+    #         symbol="XRP/USDT:USDT",
+    #         side="buy",
+    #         price=2.8,
+    #         quantity=1000,
+    #         tp=3.3,
+    #         sl=2.7,
+    #         type="market"
+    #     )
+    # )
     # print(order)
     
     

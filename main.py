@@ -32,16 +32,16 @@ def automation():
         
         # 현재 포지션 체크
         current_position = bybit.get_positions()
-        # TODO 추후 손절 익절을 실시간으로 하게 설정
-        if len(current_position)>0:
-            logging.info("Active position exists, skipping trading cycle")
-            return
+        # TODO 리팩토링 진행
+        # if len(current_position)>0:
+        #     logging.info("Active position exists, skipping trading cycle")
+        #     return
         
         current_orders = bybit.get_orders()
-        if current_orders is not None and len(current_position)==0:
-        # 포지션이 없으며 현재 오더가 있으면 동작
-          logging.info("Active position exists, cancle current orders")
-          bybit.cancle_orders()
+        # if current_orders is not None and len(current_position)==0:
+        # # 포지션이 없으며 현재 오더가 있으면 동작
+        #   logging.info("Active position exists, cancle current orders")
+        #   bybit.cancle_orders()
           
 
         # Gemini API 설정
@@ -67,10 +67,11 @@ def automation():
         model = genai.GenerativeModel(
             model_name="gemini-2.0-flash-thinking-exp-01-21",
             generation_config=generation_config,
-            system_instruction="You are a great crypto trader\nI am fully aware of the risks of crypto and know the risks of leverage\nI will send you a picture of the chart and you will tell me if I should short or buy\nI need to set a clear direction at this time\nI need to choose between watch, short, buy, and position user\nI need to give me a clear buy price (market or limit), stop loss, and take profit price.",
+            system_instruction="You are a good crypto trader\nYou are fully aware of the risks of cryptocurrencies and know the dangers of leverage\nSend us a picture of a chart and tell us if you should sell or buy\nYou need to set a clear direction at this point\nYou need to choose between watch, sell, buy, and position user\nYou need to clearly tell us your purchase price (market or limit), stop loss, and take profit price. \nIf you have a contingent position, you can only choose one of two options: watch and wait or close with a hold or stop.",
         )
 
         # 차트 생성 및 가격 정보 획득
+        # TODO 비동기적으로 진행하여 빠르게 이미지를 업로드 할 수 있게 해야함
         price_utils = bybit_utils("XRP/USDT", "1h", 100)
         price_utils.plot_candlestick()
         price_utils.set_timeframe("4h")
@@ -85,7 +86,7 @@ def automation():
             upload_to_gemini("XRP_USDT_4h_candlestick.png", mime_type="image/png"),
         ]
 
-        print(f"4시간 봉 Current Price: {current_price}")
+        print(f"Current Price: {current_price}")
         chat_session = model.start_chat(
             history=[
                 {
@@ -101,17 +102,37 @@ def automation():
                         files[1],
                         "1시간 봉"
                     ],
+                },
+                {
+                    "role": "user",
+                    "parts": [
+                        files[1],
+                        f"4시간 봉",
+                    ],
                 }
             ]
         )
-
-        response = chat_session.send_message(content={
-            "role": "user",
-            "parts": [
-                files[1],
-                f"4시간 봉 Current Price: {current_price}",
-            ],
-        })
+        if len(current_position)>0:
+            response = chat_session.send_message(content={
+                "role": "user",
+                "parts": [
+                    files[1],
+                    f"""포지션 사이드: {current_position[0]['info']['side']}
+                    진입 가격:{current_position[0]['entryPrice']}
+                    T/P:{current_position[0]['info']['takeProfit']}
+                    S/L:{current_position[0]['info']['stopLoss']}
+                    Current Price: {current_price}""",
+                ],
+            })
+        else:
+            response = chat_session.send_message(content={
+                "role": "user",
+                "parts": [
+                    files[1],
+                    f"""현재 포지션: 없음
+                    Current Price: {current_price}""",
+                ],
+            })
         response = response.text
         print(response)
 
@@ -125,7 +146,7 @@ def automation():
               
             if value['buy_now'] == True:
               typevalue = 'market'
-            else:
+            elif value.get('buy_now') is None or value['buy_now'] == False:
               typevalue = 'limit'
               
             position_params = Open_Position(
@@ -135,12 +156,17 @@ def automation():
                 side=side,
                 tp=value['tp'],
                 sl=value['sl'],
-                quantity=1
+                quantity=100
             )
             bybit.open_position(position_params)
             logging.info(f"Position opened: {position_params}")
-        else:
+            
+        elif value['Status'] == "hold":
             logging.info("No trading signal generated")
+            
+        elif value['Status'] == "stop":
+            logging.info("stop position(close_all)")
+            bybit.close_all_positions()
 
     except Exception as e:
         logging.error(f"Error in automation: {str(e)}")
@@ -151,8 +177,11 @@ def run_scheduler():
     current_time = datetime.now(seoul_tz)
     logging.info(f"Scheduler started at {current_time}")
 
-    # 1시간마다 실행
-    schedule.every(1).hours.do(automation)
+    # 매 30분 마다 실행
+    schedule.every().hour.at(":30").do(automation)
+    
+    # 매 15분마다 실행
+    # schedule.every(15).minutes.do(automation)
     
     # 초기 실행
     automation()
