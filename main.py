@@ -32,6 +32,7 @@ def automation():
         
         # 현재 포지션 체크
         current_position = bybit.get_positions()
+        # TODO 리팩토링 진행
         # TODO 추후 손절 익절을 실시간으로 하게 설정
         if len(current_position)>0:
             logging.info("Active position exists, skipping trading cycle")
@@ -112,6 +113,7 @@ def automation():
                 f"4시간 봉 Current Price: {current_price}",
             ],
         })
+        # TODO 현재 사이드,진입 가격,tp,sl 입력해야함
         response = response.text
         print(response)
 
@@ -125,7 +127,7 @@ def automation():
               
             if value['buy_now'] == True:
               typevalue = 'market'
-            else:
+            elif value.get('buy_now') is None or value['buy_now'] == False:
               typevalue = 'limit'
               
             position_params = Open_Position(
@@ -135,7 +137,7 @@ def automation():
                 side=side,
                 tp=value['tp'],
                 sl=value['sl'],
-                quantity=1
+                quantity=100
             )
             bybit.open_position(position_params)
             logging.info(f"Position opened: {position_params}")
@@ -151,8 +153,11 @@ def run_scheduler():
     current_time = datetime.now(seoul_tz)
     logging.info(f"Scheduler started at {current_time}")
 
-    # 1시간마다 실행
-    schedule.every(1).hours.do(automation)
+    # 매 30분 마다 실행
+    schedule.every().hour.at(":30").do(automation)
+    
+    # 매 15분마다 실행
+    # schedule.every(15).minutes.do(automation)
     
     # 초기 실행
     automation()

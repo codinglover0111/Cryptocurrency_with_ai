@@ -45,19 +45,7 @@ class BybitUtils:
             self.exchange.enable_demo_trading(is_testnet)  # 데모 트레이딩 활성화
         except Exception as e:
             print(f"Initialization error: {e}")
-            
-    # def get_orders(self):
-    #     try:
-    #         self.orders = self.exchange.fetch_open_orders()
-    #         if self.orders is None:
-    #             return None
-            
-    #         return self.positions
-        
-        except Exception as e:
-            print(f"Error fetching orders: {e}")
-            return None
-    
+ 
     def get_positions(self):
         """포지션 정보들 조회"""
         try:
@@ -147,6 +135,7 @@ class BybitUtils:
         
         
     def get_orders(self):
+        """주문들 받기"""
         try:
             orders = self.exchange.fetch_open_orders()
             if len(orders) == 0:

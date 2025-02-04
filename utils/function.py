@@ -15,8 +15,7 @@ class make_to_object():
             properties = {
             "Status": content.Schema(
                 type = content.Type.STRING,
-                # TODO: 추후 포지션 청산 기능 추가
-                enum = ["hold", "sell", "buy"]
+                enum = ["hold", "sell", "buy","stop"]
             ),
             "tp": content.Schema(
                 type = content.Type.NUMBER,
