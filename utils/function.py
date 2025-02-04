@@ -15,7 +15,7 @@ class make_to_object():
             properties = {
             "Status": content.Schema(
                 type = content.Type.STRING,
-                enum = ["hold", "sell", "buy","stop"]
+                enum = ["hold", "sell", "buy"]
             ),
             "tp": content.Schema(
                 type = content.Type.NUMBER,
@@ -27,6 +27,9 @@ class make_to_object():
                 type = content.Type.NUMBER,
             ),
             "buy_now": content.Schema(
+                type = content.Type.BOOLEAN,
+            ),
+            "stop_order": content.Schema(
                 type = content.Type.BOOLEAN,
             ),
             },

@@ -126,7 +126,17 @@ class BybitUtils:
     def close_position(self, symbol, order_id):
         try:
             # 포지션 청산
-            order = self.exchange.cancel_order(order_id, symbol)
+            order = self.exchange.close_position(order_id, symbol)
+            return order
+        
+        except Exception as e:
+            print(f"Error closing position: {e}")
+            return None
+        
+    def close_all_positions(self, symbol, order_id):
+        try:
+            # 포지션 청산
+            order = self.exchange.close_all_positions()
             return order
         
         except Exception as e:
@@ -162,21 +172,21 @@ class BybitUtils:
         
 if __name__ == '__main__':
     bybit = BybitUtils(is_testnet=True)  # 테스트넷 사용
-    value = bybit.get_orders()
+    value = bybit.get_positions()
     
     print(value)
     
-    order = bybit.open_position(
-        Open_Position(
-            symbol="XRP/USDT:USDT",
-            side="buy",
-            price=2.8,
-            quantity=1000,
-            tp=3.3,
-            sl=2.7,
-            type="market"
-        )
-    )
+    # order = bybit.open_position(
+    #     Open_Position(
+    #         symbol="XRP/USDT:USDT",
+    #         side="buy",
+    #         price=2.8,
+    #         quantity=1000,
+    #         tp=3.3,
+    #         sl=2.7,
+    #         type="market"
+    #     )
+    # )
     # print(order)
     
     
