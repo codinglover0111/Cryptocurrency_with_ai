@@ -8,6 +8,8 @@ from datetime import datetime
 import pytz
 import logging
 
+# TODO: 추후 AI 관련 부분을 클래스로 묶어 리팩토링해야함
+
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +32,7 @@ def automation():
         
         # 현재 포지션 체크
         current_position = bybit.get_positions()
+        # TODO 추후 손절 익절을 실시간으로 하게 설정
         if len(current_position)>0:
             logging.info("Active position exists, skipping trading cycle")
             return
@@ -148,8 +151,8 @@ def run_scheduler():
     current_time = datetime.now(seoul_tz)
     logging.info(f"Scheduler started at {current_time}")
 
-    # 4시간마다 실행
-    schedule.every(4).hours.do(automation)
+    # 1시간마다 실행
+    schedule.every(1).hours.do(automation)
     
     # 초기 실행
     automation()
