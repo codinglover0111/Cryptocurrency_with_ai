@@ -75,6 +75,35 @@
         grid-template-columns: 1fr 1fr;
         gap: 16px;
       }
+      /* 통계 카드 레이아웃 개선 */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: 1.2fr 1.2fr 1fr 0.8fr;
+        gap: 8px;
+        margin-bottom: 8px;
+        align-items: end;
+      }
+      .stats-actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .stats-actions .btn {
+        height: 36px;
+        display: inline-flex;
+        align-items: center;
+      }
+      @media (max-width: 1024px) {
+        .stats-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 640px) {
+        .stats-grid {
+          grid-template-columns: 1fr;
+        }
+      }
       input,
       select {
         background: #0b1220;
@@ -140,14 +169,7 @@
         </div>
         <div class="card" id="card-stats">
           <h2>통계</h2>
-          <div
-            style="
-              display: grid;
-              grid-template-columns: repeat(4, 1fr);
-              gap: 8px;
-              margin-bottom: 8px;
-            "
-          >
+          <div class="stats-grid">
             <div>
               <label>시작(UTC YYYY-MM-DD)</label>
               <input id="st-since" placeholder="2025-01-01" />
@@ -170,7 +192,7 @@
               </select>
             </div>
           </div>
-          <div style="display: flex; gap: 8px; margin-bottom: 8px">
+          <div class="stats-actions">
             <button class="btn secondary" onclick="manualRefreshStats()">
               조회
             </button>
