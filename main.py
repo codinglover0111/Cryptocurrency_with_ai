@@ -943,20 +943,19 @@ def automation_for_symbol(symbol_usdt: str):
                 # 실패 시 기존 계산값으로 진행(안전)
                 pass
 
-            # 3-2) 계정 가용 마진 기준 심볼 수(N)로 균등 분할한 '현재 가능한 노션널'로 최종 클램프
+            # 3-2) 계정 총자산 기준(전체 포지션 용량) × 레버리지 / N 으로 최종 클램프
             try:
-                free_usdt = float(balance_info.get("free") or 0.0)
                 try:
                     num_symbols_avail = max(1, len(_parse_symbols()))
                 except Exception:
                     num_symbols_avail = 1
                 avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
                 effective_lev_for_avail = max(1.0, float(leverage))
-                per_symbol_available_notional = (
-                    free_usdt
-                    * effective_lev_for_avail
-                    * avail_safety
-                    / float(num_symbols_avail)
+                total_capacity_notional = (
+                    float(balance_total or 0.0) * effective_lev_for_avail * avail_safety
+                )
+                per_symbol_available_notional = total_capacity_notional / float(
+                    num_symbols_avail
                 )
                 if float(entry_price) > 0:
                     max_qty_by_available = per_symbol_available_notional / float(
@@ -972,13 +971,13 @@ def automation_for_symbol(symbol_usdt: str):
                                     "content": json.dumps(
                                         {
                                             "status": "skip",
-                                            "reason": "no_available_capacity",
+                                            "reason": "no_total_capacity_per_symbol",
                                         },
                                         ensure_ascii=False,
                                     ),
                                     "reason": value.get("explain"),
                                     "meta": {
-                                        "free_usdt": float(free_usdt),
+                                        "balance_total": float(balance_total or 0.0),
                                         "effective_lev": float(effective_lev_for_avail),
                                         "num_symbols": int(num_symbols_avail),
                                         "per_symbol_available_notional": float(
@@ -1001,10 +1000,10 @@ def automation_for_symbol(symbol_usdt: str):
                                 {
                                     "symbol": contract_symbol,
                                     "entry_type": "action",
-                                    "content": f"clamp_available_notional qty_from={quantity_before_avail} qty_to={float(quantity)}",
+                                    "content": f"clamp_total_capacity qty_from={quantity_before_avail} qty_to={float(quantity)}",
                                     "reason": value.get("explain"),
                                     "meta": {
-                                        "free_usdt": float(free_usdt),
+                                        "balance_total": float(balance_total or 0.0),
                                         "effective_lev": float(effective_lev_for_avail),
                                         "num_symbols": int(num_symbols_avail),
                                         "per_symbol_available_notional": float(
