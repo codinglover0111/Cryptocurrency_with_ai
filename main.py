@@ -691,7 +691,20 @@ def automation_for_symbol(symbol_usdt: str):
             leverage = float(
                 value.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5")
             )
-            min_qty = float(os.getenv("MIN_QTY", "1"))
+            # 심볼 최소 수량(거래소 스펙 우선, 없으면 환경변수 폴백)
+            try:
+                market = bybit.exchange.market(contract_symbol)
+                symbol_min_qty = (
+                    (market.get("limits", {}) or {}).get("amount", {}) or {}
+                ).get("min")
+            except Exception:
+                symbol_min_qty = None
+            env_min_qty = os.getenv("MIN_QTY")
+            min_qty = (
+                float(symbol_min_qty)
+                if symbol_min_qty is not None
+                else float(env_min_qty if env_min_qty is not None else "0")
+            )
 
             entry_price = (
                 current_price
@@ -828,7 +841,7 @@ def automation_for_symbol(symbol_usdt: str):
                         entry_price
                     )
                     if target_qty_by_available > 0:
-                        quantity = max(min_qty, float(target_qty_by_available))
+                        quantity = float(target_qty_by_available)
             except Exception:
                 # 실패 시 기존 리스크 기반 계산값 유지
                 pass
@@ -959,13 +972,42 @@ def automation_for_symbol(symbol_usdt: str):
                     except Exception:
                         pass
                     return
-                # 최종 수량을 여유치 기준으로 클램프(최소 수량 보장)
-                quantity = max(
-                    min_qty, min(float(quantity), float(max_qty_by_remaining))
-                )
+                # 최종 수량을 여유치 기준으로 상한만 클램프(최소 수량은 강제하지 않음)
+                quantity = min(float(quantity), float(max_qty_by_remaining))
             except Exception:
                 # 실패 시 기존 계산값으로 진행(안전)
                 pass
+
+            # 3-1-끝) 거래소 정밀도에 맞춰 수량 반올림
+            try:
+                quantity = float(
+                    bybit.exchange.amount_to_precision(contract_symbol, quantity)
+                )
+            except Exception:
+                quantity = float(quantity)
+
+            # 3-1-a) 최소 수량 미달 시 주문 스킵(최소 수량으로 끌어올리지 않음)
+            if float(quantity) < float(min_qty):
+                try:
+                    store.record_journal(
+                        {
+                            "symbol": contract_symbol,
+                            "entry_type": "decision",
+                            "content": json.dumps(
+                                {"status": "skip", "reason": "below_min_lot"},
+                                ensure_ascii=False,
+                            ),
+                            "reason": value.get("explain"),
+                            "meta": {
+                                "min_qty": float(min_qty),
+                                "entry_price": float(entry_price),
+                                "target_qty": float(quantity),
+                            },
+                        }
+                    )
+                except Exception:
+                    pass
+                return
 
             # (구) 총자산 기반 클램프는 제거됨: 총 가용 Free 기반 목표 수량을 3-1 잔여치 클램프에서만 제한
 
@@ -995,7 +1037,29 @@ def automation_for_symbol(symbol_usdt: str):
                 except Exception:
                     pass
                 return
-            logging.info(f"Position opened: {position_params}")
+            # 실제 체결 수량(리트라이 시 조정된 수량)을 로그/저장에 반영
+            executed_qty = None
+            try:
+                if isinstance(order, dict):
+                    executed_qty = order.get("amount") or (
+                        (order.get("info", {}) or {}).get("qty")
+                    )
+            except Exception:
+                executed_qty = None
+            if executed_qty is None:
+                executed_qty = float(quantity)
+
+            logging.info(
+                "Position opened: symbol='%s' side='%s' quantity=%s price=%s type='%s' tp=%s sl=%s leverage=%s",
+                position_params.symbol,
+                position_params.side,
+                float(executed_qty),
+                float(entry_price),
+                position_params.type,
+                position_params.tp,
+                position_params.sl,
+                position_params.leverage,
+            )
 
             try:
                 order_id = None
@@ -1008,7 +1072,7 @@ def automation_for_symbol(symbol_usdt: str):
                         "side": position_params.side,
                         "type": position_params.type,
                         "price": float(entry_price),
-                        "quantity": float(quantity),
+                        "quantity": float(executed_qty),
                         "tp": position_params.tp,
                         "sl": position_params.sl,
                         "leverage": leverage,
@@ -1046,7 +1110,7 @@ def automation_for_symbol(symbol_usdt: str):
                     {
                         "symbol": contract_symbol,
                         "entry_type": "action",
-                        "content": f"open {side} {typevalue} price={float(entry_price)} qty={float(quantity)}",
+                        "content": f"open {side} {typevalue} price={float(entry_price)} qty={float(executed_qty)}",
                         "reason": value.get("explain"),
                         "meta": {"order_id": order_id},
                         "ref_order_id": order_id,
