@@ -1,6 +1,9 @@
 import os
-import google.generativeai as genai
+import json
 from utils import bybit_utils, BybitUtils, Open_Position, make_to_object
+from utils.risk import calculate_position_size
+from utils.storage import TradeStore, StorageConfig
+from utils.ai_provider import AIProvider
 from dotenv import load_dotenv
 import schedule
 import time
@@ -13,179 +16,314 @@ import logging
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('trading.log'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("trading.log"), logging.StreamHandler()],
 )
 
 load_dotenv()
+
 
 def round_price(price):
     """XRP/USDT 가격을 최소 정밀도(0.0001)에 맞게 반올림"""
     return round(float(price), 4)
 
-def automation():
+
+def _parse_symbols():
+    """환경변수 TRADING_SYMBOLS에서 심볼 리스트를 파싱 (기본: 주요 6종)."""
+    raw = os.getenv(
+        "TRADING_SYMBOLS",
+        "XRPUSDT,WLDUSDT,ETHUSDT,BTCUSDT,SOLUSDT,DOGEUSDT",
+    )
+    syms = [s.strip().upper() for s in raw.split(",") if s.strip()]
+    return syms or [
+        "XRPUSDT",
+        "WLDUSDT",
+        "ETHUSDT",
+        "BTCUSDT",
+        "SOLUSDT",
+        "DOGEUSDT",
+    ]
+
+
+def _to_ccxt_symbols(symbol_usdt: str):
+    """BTCUSDT -> (spot_symbol, contract_symbol) = (BTC/USDT, BTC/USDT:USDT)"""
+    s = symbol_usdt.upper().replace(":USDT", "").replace("/", "")
+    if s.endswith("USDT"):
+        base = s[:-4]
+    else:
+        base = s
+    spot = f"{base}/USDT"
+    contract = f"{base}/USDT:USDT"
+    return spot, contract
+
+
+def automation_for_symbol(symbol_usdt: str):
     try:
-        bybit = BybitUtils(True)
-        
-        # 현재 포지션 체크
-        current_position = bybit.get_positions()
+        is_testnet = bool(int(os.getenv("TESTNET", "1")))
+        bybit = BybitUtils(is_testnet)
+        store = TradeStore(
+            StorageConfig(
+                xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
+                mysql_url=os.getenv("MYSQL_URL"),
+            )
+        )
+
+        spot_symbol, contract_symbol = _to_ccxt_symbols(symbol_usdt)
+
+        # 현재 포지션 체크(심볼 한정)
+        current_position = bybit.get_positions_by_symbol(contract_symbol)
         # TODO 리팩토링 진행
         # if len(current_position)>0:
         #     logging.info("Active position exists, skipping trading cycle")
         #     return
-        
-        current_orders = bybit.get_orders()
+
+        # 현재 오픈오더 확인(미사용 시 주석 처리)
+        # current_orders = bybit.get_orders()
         # if current_orders is not None and len(current_position)==0:
         # # 포지션이 없으며 현재 오더가 있으면 동작
         #   logging.info("Active position exists, cancle current orders")
         #   bybit.cancle_orders()
-          
 
-        # Gemini API 설정
-        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+        # AI 설정 (Gemini 또는 OpenAI 호환)
+        ai_provider = AIProvider()
 
-        def upload_to_gemini(path, mime_type=None):
-            """Uploads the given file to Gemini.
-
-            See https://ai.google.dev/gemini-api/docs/prompting_with_media
-            """
-            file = genai.upload_file(path, mime_type=mime_type)
-            print(f"Uploaded file '{file.display_name}' as: {file.uri}")
-            return file
-
-        generation_config = {
-            "temperature": 0.2,
-            "top_p": 0.95,
-            "top_k": 64,
-            "max_output_tokens": 65536,
-            "response_mime_type": "text/plain",
-        }
-
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash-thinking-exp-01-21",
-            generation_config=generation_config,
-            system_instruction="You are a good crypto trader\nYou are fully aware of the risks of cryptocurrencies and know the dangers of leverage\nSend us a picture of a chart and tell us if you should sell or buy\nYou need to set a clear direction at this point\nYou need to choose between watch, sell, buy, and position user\nYou need to clearly tell us your purchase price (market or limit), stop loss, and take profit price. \nIf you have a contingent position, you can only choose one of two options: watch and wait or close with a hold or stop.",
-        )
-
-        # 차트 생성 및 가격 정보 획득
-        # TODO 비동기적으로 진행하여 빠르게 이미지를 업로드 할 수 있게 해야함
-        price_utils = bybit_utils("XRP/USDT", "1h", 100)
-        price_utils.plot_candlestick()
-        price_utils.set_timeframe("4h")
-        price_utils.plot_candlestick()
+        # 캔들 데이터(이미지 대신 CSV 텍스트 전송)
+        # TODO 비동기 최적화 가능
+        price_utils = bybit_utils(spot_symbol, "4h", 100)
+        df_4h = price_utils.get_ohlcv()
+        csv_4h = df_4h.to_csv()
+        price_utils.set_timeframe("1h")
+        df_1h = price_utils.get_ohlcv()
+        csv_1h = df_1h.to_csv()
         price_utils.set_timeframe("15m")
-        price_utils.plot_candlestick()
-        current_price = price_utils.get_current_price()
+        df_15m = price_utils.get_ohlcv()
+        csv_15m = df_15m.to_csv()
+        current_price = df_15m["close"].iloc[-1]
 
-        files = [
-            upload_to_gemini("XRP_USDT_15m_candlestick.png", mime_type="image/png"),
-            upload_to_gemini("XRP_USDT_1h_candlestick.png", mime_type="image/png"),
-            upload_to_gemini("XRP_USDT_4h_candlestick.png", mime_type="image/png"),
-        ]
-
-        print(f"Current Price: {current_price}")
-        chat_session = model.start_chat(
-            history=[
-                {
-                    "role": "model",
-                    "parts": [
-                        files[0],
-                        "15분 봉"
-                    ],
-                },
-                {
-                    "role": "model",
-                    "parts": [
-                        files[1],
-                        "1시간 봉"
-                    ],
-                },
-                {
-                    "role": "user",
-                    "parts": [
-                        files[1],
-                        f"4시간 봉",
-                    ],
-                }
-            ]
-        )
-        if len(current_position)>0:
-            response = chat_session.send_message(content={
-                "role": "user",
-                "parts": [
-                    files[1],
-                    f"""포지션 사이드: {current_position[0]['info']['side']}
-                    진입 가격:{current_position[0]['entryPrice']}
-                    T/P:{current_position[0]['info']['takeProfit']}
-                    S/L:{current_position[0]['info']['stopLoss']}
-                    Current Price: {current_price}""",
-                ],
-            })
-        else:
-            response = chat_session.send_message(content={
-                "role": "user",
-                "parts": [
-                    files[1],
-                    f"""현재 포지션: 없음
-                    Current Price: {current_price}""",
-                ],
-            })
-        response = response.text
-        print(response)
-
-        object = make_to_object()
-        value = object.make_it_object(response)
-        print(value)
-        
-        # 트레이딩 실행
-        if value['Status'] in ["buy", "sell"]:
-            side = value['Status']
-              
-            if value['buy_now'] == True:
-              typevalue = 'market'
-            elif value.get('buy_now') is None or value['buy_now'] == False:
-              typevalue = 'limit'
-              
-            position_params = Open_Position(
-                symbol="XRP/USDT:USDT",
-                type=typevalue,
-                price=value['price'],
-                side=side,
-                tp=value['tp'],
-                sl=value['sl'],
-                quantity=100
+        if len(current_position) > 0:
+            pos = current_position[0]
+            pos_side = (
+                pos.get("info", {}).get("side")
+                if isinstance(pos.get("info"), dict)
+                else pos.get("side")
             )
-            bybit.open_position(position_params)
+            pos_entry = pos.get("entryPrice") or pos.get("info", {}).get("avgPrice")
+        else:
+            pos_side, pos_entry = None, None
+
+        prompt = (
+            "당신은 천재적인 암호화폐 트레이더입니다.\n"
+            f"아래는 {spot_symbol}의 OHLCV CSV 데이터입니다.\n"
+            "[CSV_4h]\n" + csv_4h + "\n"
+            "[CSV_1h]\n" + csv_1h + "\n"
+            "[CSV_15m]\n" + csv_15m + "\n"
+            f"현재 가격: {current_price}\n"
+            + (
+                f"현재 포지션: side={pos_side}, entry={pos_entry}\n"
+                if pos_side is not None
+                else "현재 포지션: 없음\n"
+            )
+            + "다음 중 하나를 선택: watch/hold, sell, buy, stop.\n"
+            + "시장가/지정가 여부, 가격(price), 손절(sl), 익절(tp), buy_now(boolean), leverage(숫자)을 JSON으로 반환.\n"
+            + "계정 리스크는 20%로 제한됨(정보용).\n"
+            + "JSON만 출력."
+        )
+        # 우선 JSON 구조화 응답 시도(도구호출/response_format)
+        try:
+            value = ai_provider.decide_json(prompt)
+            logging.info(
+                json.dumps(
+                    {
+                        "event": "llm_response_parsed",
+                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                        "parsed": value,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:
+            # 폴백: 일반 텍스트 응답 후 파싱
+            response = ai_provider.decide(prompt)
+            try:
+                logging.info(
+                    json.dumps(
+                        {
+                            "event": "llm_response_raw",
+                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "response": response,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception as _e:
+                logging.error("LLM raw logging failed: %s", str(_e))
+            parser = make_to_object()
+            value = parser.make_it_object(response)
+            try:
+                logging.info(
+                    json.dumps(
+                        {
+                            "event": "llm_response_parsed",
+                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "parsed": value,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception as _e:
+                logging.error("LLM parsed logging failed: %s", str(_e))
+
+        # 트레이딩 실행
+        if value["Status"] in ["buy", "sell"]:
+            side = value["Status"]
+            if value.get("buy_now") is True:
+                typevalue = "market"
+            else:
+                typevalue = "limit"
+
+            # 리스크 기반 수량 계산
+            balance_info = bybit.get_balance("USDT") or {}
+            balance_total = balance_info.get("total") or 0
+            # 리스크는 무조건 20% 리미트
+            risk_percent = 20.0
+            max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", "20.0"))
+            # AI가 제안한 레버리지 우선 사용, 없으면 기본값
+            leverage = float(
+                value.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5")
+            )
+            min_qty = float(os.getenv("MIN_QTY", "1"))
+
+            entry_price = (
+                current_price
+                if typevalue == "market"
+                else value.get("price") or current_price
+            )
+            stop_price = value.get("sl") or (
+                entry_price * (0.99 if side == "buy" else 1.01)
+            )
+            quantity = calculate_position_size(
+                balance_usdt=float(balance_total or 0),
+                entry_price=float(entry_price),
+                stop_price=float(stop_price),
+                risk_percent=risk_percent,
+                max_allocation_percent=max_alloc,
+                leverage=leverage,
+                min_quantity=min_qty,
+            )
+
+            position_params = Open_Position(
+                symbol=contract_symbol,
+                type=typevalue,
+                price=value.get("price") or float(entry_price),
+                side=side,
+                tp=value.get("tp"),
+                sl=value.get("sl"),
+                quantity=quantity,
+                leverage=leverage,
+            )
+            order = bybit.open_position(position_params)
             logging.info(f"Position opened: {position_params}")
-            
-        elif value['Status'] == "hold":
+
+            try:
+                order_id = None
+                if isinstance(order, dict):
+                    order_id = order.get("id") or order.get("info", {}).get("orderId")
+                store.record_trade(
+                    {
+                        "ts": datetime.utcnow(),
+                        "symbol": position_params.symbol,
+                        "side": position_params.side,
+                        "type": position_params.type,
+                        "price": float(entry_price),
+                        "quantity": float(quantity),
+                        "tp": position_params.tp,
+                        "sl": position_params.sl,
+                        "leverage": leverage,
+                        "status": "opened",
+                        "order_id": order_id,
+                        "pnl": None,
+                    }
+                )
+            except Exception as e:
+                logging.error(f"Trade store write failed: {str(e)}")
+
+        elif value["Status"] == "hold":
             logging.info("No trading signal generated")
-            
-        elif value['Status'] == "stop":
+
+        elif value["Status"] == "stop":
             logging.info("stop position(close_all)")
-            bybit.close_all_positions()
+            try:
+                # 포지션별 대략적 실현 손익 기록 후 청산
+                positions = bybit.get_positions_by_symbol(contract_symbol) or []
+                last = bybit.get_last_price(contract_symbol) or current_price
+                for p in positions:
+                    try:
+                        entry = float(
+                            p.get("entryPrice")
+                            or p.get("info", {}).get("avgPrice")
+                            or 0
+                        )
+                        amount = float(
+                            p.get("contracts") or p.get("amount") or p.get("size") or 0
+                        )
+                        side = p.get("side") or p.get("info", {}).get("side")
+                        if amount <= 0 or entry <= 0 or not side:
+                            continue
+                        pnl = (
+                            (last - entry) * amount
+                            if side == "long"
+                            else (entry - last) * amount
+                        )
+                        store.record_trade(
+                            {
+                                "ts": datetime.utcnow(),
+                                "symbol": p.get("symbol"),
+                                "side": side,
+                                "type": "market",
+                                "price": last,
+                                "quantity": amount,
+                                "tp": None,
+                                "sl": None,
+                                "leverage": None,
+                                "status": "closed",
+                                "order_id": None,
+                                "pnl": float(pnl),
+                            }
+                        )
+                    except Exception:
+                        pass
+            except Exception as e:
+                logging.error(f"PNL calc failed: {str(e)}")
+            bybit.close_symbol_positions(contract_symbol)
 
     except Exception as e:
         logging.error(f"Error in automation: {str(e)}")
 
+
 def run_scheduler():
     # 서울 시간대 설정
-    seoul_tz = pytz.timezone('Asia/Seoul')
+    seoul_tz = pytz.timezone("Asia/Seoul")
     current_time = datetime.now(seoul_tz)
     logging.info(f"Scheduler started at {current_time}")
 
-    # 매 30분 마다 실행
-    schedule.every().hour.at(":30").do(automation)
-    
+    # 매 30분 마다 실행: 설정된 모든 심볼을 순회
+    def job():
+        symbols = _parse_symbols()
+        for s in symbols:
+            try:
+                logging.info(f"Run automation for {s}")
+                automation_for_symbol(s)
+            except Exception as e:
+                logging.error(f"Automation error for {s}: {e}")
+
+    schedule.every().hour.at(":30").do(job)
+
     # 매 15분마다 실행
     # schedule.every(15).minutes.do(automation)
-    
+
     # 초기 실행
-    automation()
-    
+    job()
+
     while True:
         try:
             schedule.run_pending()
@@ -194,5 +332,6 @@ def run_scheduler():
             logging.error(f"Scheduler error: {str(e)}")
             time.sleep(60)  # 오류 발생시 1분 대기
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     run_scheduler()
