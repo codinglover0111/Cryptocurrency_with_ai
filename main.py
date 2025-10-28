@@ -100,7 +100,7 @@ def _ohlcv_csv_between(
         return ""
 
 
-def _format_loss_reviews_for_prompt(store: TradeStore, contract_symbol: str) -> str:
+def _format_trade_reviews_for_prompt(store: TradeStore, contract_symbol: str) -> str:
     """해당 심볼의 최신 리뷰 5개를 프롬프트 텍스트로 구성"""
     try:
         df = store.fetch_journals(
@@ -125,7 +125,7 @@ def _format_loss_reviews_for_prompt(store: TradeStore, contract_symbol: str) -> 
 
 
 def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
-    """최근 N분 내 손실 확정(trades.status=closed, pnl<0) 주문을 리뷰하여 journals(review)로 저장"""
+    """최근 N분 내 실현 손익이 발생한(trades.status=closed, pnl!=0) 주문을 리뷰하여 journals(review)로 저장"""
     try:
         trades_df = store.load_trades()
         if trades_df is None or getattr(trades_df, "empty", True):
@@ -143,13 +143,13 @@ def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
         )
         since_ts = now_utc - pd.Timedelta(minutes=int(since_minutes))
 
-        closed_losses = trades_df[
+        closed_recent = trades_df[
             (trades_df["status"] == "closed")
             & (trades_df["pnl"].notna())
-            & (trades_df["pnl"] < 0)
+            & (trades_df["pnl"] != 0)
             & (trades_df["ts"] >= since_ts)
         ].copy()
-        if getattr(closed_losses, "empty", True):
+        if getattr(closed_recent, "empty", True):
             return
 
         # 중복 리뷰 방지용 최근 리뷰 읽기
@@ -176,7 +176,7 @@ def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
             pass
 
         ai = AIProvider()
-        for _, row in closed_losses.sort_values("ts").iterrows():
+        for _, row in closed_recent.sort_values("ts").iterrows():
             contract_symbol = str(row.get("symbol"))
             side = row.get("side")
             close_ts = row.get("ts")
@@ -212,13 +212,20 @@ def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
             # 리뷰 프롬프트 구성
             open_ts_str = pd.Timestamp(open_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
             close_ts_str = pd.Timestamp(close_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+            is_loss = pnl < 0
+            role_line = "손실 원인 분석가" if is_loss else "수익 요인 분석가"
+            task_line = (
+                "아래 CSV_1m 구간의 가격 흐름을 참고하여, 손실 발생의 핵심 원인과 재발 방지를 위한 교훈/체크리스트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
+                if is_loss
+                else "아래 CSV_1m 구간의 가격 흐름을 참고하여, 수익 발생의 핵심 요인과 재현 방법, 리스크 관리/익절·손절 개선 포인트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
+            )
             prompt = (
-                "당신은 암호화폐 트레이딩 손실 원인 분석가입니다. 한국어로 간결히 답하세요.\n"
+                f"당신은 암호화폐 트레이딩 {role_line}입니다. 한국어로 간결히 답하세요.\n"
                 f"심볼: {contract_symbol} (spot={spot_symbol})\n"
                 f"포지션: {side}, 손익: {pnl} USDT\n"
                 f"기간: {open_ts_str} ~ {close_ts_str}\n"
                 + (f"진입가(추정): {entry_price}\n" if entry_price else "")
-                + "아래 CSV_1m 구간의 가격 흐름을 참고하여, 손실 발생의 핵심 원인과 재발 방지를 위한 교훈/체크리스트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
+                + task_line
                 + "[CSV_1m_BETWEEN]\n"
                 + (csv_1m or "(no data)")
             )
@@ -226,7 +233,7 @@ def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
             try:
                 review_text = ai.decide(prompt)
             except Exception as _e:
-                logging.error(f"Loss review LLM failed: {_e}")
+                logging.error(f"Trade review LLM failed: {_e}")
                 review_text = None
 
             try:
@@ -235,7 +242,7 @@ def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
                         "symbol": contract_symbol,
                         "entry_type": "review",
                         "content": review_text or "리뷰 생성 실패",
-                        "reason": "loss_review",
+                        "reason": ("loss_review" if pnl < 0 else "win_review"),
                         "meta": {
                             "closed_ts": pd.Timestamp(close_ts).isoformat(),
                             "opened_ts": pd.Timestamp(open_ts).isoformat(),
@@ -379,7 +386,7 @@ def automation_for_symbol(symbol_usdt: str):
             recent_reports_text = ""
 
         # 최신 리뷰 5개 수집(해당 심볼)
-        loss_reviews_text = _format_loss_reviews_for_prompt(store, contract_symbol)
+        trade_reviews_text = _format_trade_reviews_for_prompt(store, contract_symbol)
 
         # 포지션이 존재하면, 최근 오픈 이후 기록도 수집
         since_open_text = ""
@@ -441,8 +448,8 @@ def automation_for_symbol(symbol_usdt: str):
                 else ""
             )
             + (
-                "[LOSS_REVIEWS_5]\n" + loss_reviews_text + "\n"
-                if loss_reviews_text
+                "[TRADE_REVIEWS_5]\n" + trade_reviews_text + "\n"
+                if trade_reviews_text
                 else ""
             )
             + (
