@@ -253,61 +253,168 @@ class BybitUtils:
                     self.set_leverage(position.symbol, position.leverage)
                 except Exception as le:
                     print(f"Warning: failed to set leverage: {le}")
-            # 포지션 열기
-            order = None
-            if position.type == "market":
-                # 시장가 주문
-                if position.side == "sell":
-                    order = self.exchange.create_market_sell_order(
-                        position.symbol,
-                        position.quantity,
-                        params=self._merge_params(
-                            {
-                                "takeProfit": position.tp,  # TP 가격
-                                "stopLoss": position.sl,  # SL 가격
-                            }
-                        ),
-                    )
+
+            # 주문 생성 함수(공통) 정의
+            def _place_with_quantity(qty: float):
+                if position.type == "market":
+                    if position.side == "sell":
+                        return self.exchange.create_market_sell_order(
+                            position.symbol,
+                            qty,
+                            params=self._merge_params(
+                                {
+                                    "takeProfit": position.tp,
+                                    "stopLoss": position.sl,
+                                }
+                            ),
+                        )
+                    else:
+                        return self.exchange.create_market_buy_order(
+                            position.symbol,
+                            qty,
+                            params=self._merge_params(
+                                {
+                                    "takeProfit": position.tp,
+                                    "stopLoss": position.sl,
+                                }
+                            ),
+                        )
+                elif position.type == "limit":
+                    if position.side == "sell":
+                        return self.exchange.create_limit_sell_order(
+                            position.symbol,
+                            qty,
+                            position.price,
+                            params=self._merge_params(
+                                {
+                                    "takeProfit": position.tp,
+                                    "stopLoss": position.sl,
+                                }
+                            ),
+                        )
+                    else:
+                        return self.exchange.create_limit_buy_order(
+                            position.symbol,
+                            qty,
+                            position.price,
+                            params=self._merge_params(
+                                {
+                                    "takeProfit": position.tp,
+                                    "stopLoss": position.sl,
+                                }
+                            ),
+                        )
                 else:
-                    order = self.exchange.create_market_buy_order(
-                        position.symbol,
-                        position.quantity,
-                        params=self._merge_params(
-                            {
-                                "takeProfit": position.tp,  # TP 가격
-                                "stopLoss": position.sl,  # SL 가격
-                            }
-                        ),
-                    )
-            elif position.type == "limit":
-                # 지정가 주문
-                if position.side == "sell":
-                    order = self.exchange.create_limit_sell_order(
-                        position.symbol,
-                        position.quantity,
-                        position.price,
-                        params=self._merge_params(
-                            {
-                                "takeProfit": position.tp,  # TP 가격kwargs
-                                "stopLoss": position.sl,  # SL 가격
-                            }
-                        ),
-                    )
+                    raise ValueError(f"Unsupported order type: {position.type}")
+
+            # 1차 시도
+            try:
+                order = _place_with_quantity(position.quantity)
+                return order
+            except Exception as first_error:
+                msg = str(first_error)
+                # Bybit 110007: ab not enough for new order (가용 마진 부족)
+                if (
+                    "110007" in msg
+                    or "ab not enough" in msg.lower()
+                    or "insufficient" in msg.lower()
+                ):
+                    try:
+                        # 가용 잔고 및 마켓 스펙을 기반으로 수량 자동 조정 후 재시도
+                        balance = self.get_balance("USDT") or {}
+                        free_usdt = float(balance.get("free") or 0)
+                        if free_usdt <= 0:
+                            print(
+                                "Insufficient free balance for retry after 110007; aborting"
+                            )
+                            return None
+
+                        leverage = float(position.leverage or 1.0)
+                        safety = float(os.getenv("ORDER_SAFETY_MARGIN", "0.96"))
+                        # 가격은 전달된 price 사용(시장가일 경우 main에서 현재가를 전달함)
+                        effective_price = float(position.price or 0)
+                        if effective_price <= 0:
+                            # 폴백: 티커에서 조회
+                            last_price = self.get_last_price(position.symbol) or 0
+                            effective_price = float(last_price)
+                        if effective_price <= 0:
+                            print(
+                                "Cannot determine effective price for retry; aborting"
+                            )
+                            return None
+
+                        # 최대 가능 수량 계산
+                        max_position_value = free_usdt * leverage * safety
+                        computed_max_qty = max_position_value / effective_price
+
+                        # 마켓 스펙 로드
+                        try:
+                            market = self.exchange.market(position.symbol)
+                            min_qty = (
+                                (market.get("limits", {}) or {})
+                                .get("amount", {})
+                                .get("min")
+                            )
+                        except Exception:
+                            market = None
+                            min_qty = None
+
+                        # 수량 반올림(정밀도/스텝에 맞춤) - 안전하게 소수 절삭 효과를 위해 amount_to_precision 사용
+                        def _round_qty(symbol: str, qty: float) -> float:
+                            try:
+                                return float(
+                                    self.exchange.amount_to_precision(symbol, qty)
+                                )
+                            except Exception:
+                                return float(qty)
+
+                        adjusted_qty = _round_qty(
+                            position.symbol,
+                            max(0.0, min(position.quantity, computed_max_qty)),
+                        )
+
+                        # 여전히 너무 크면 단계적으로 축소하며 최대 3회 재시도
+                        retry_quantities = [
+                            adjusted_qty,
+                            _round_qty(position.symbol, adjusted_qty * 0.9),
+                            _round_qty(position.symbol, adjusted_qty * 0.75),
+                            _round_qty(position.symbol, adjusted_qty * 0.5),
+                        ]
+
+                        for idx, rq in enumerate(retry_quantities):
+                            if rq is None or rq <= 0:
+                                continue
+                            if min_qty is not None and rq < float(min_qty):
+                                # 최소 수량보다 작으면 스킵
+                                continue
+                            try:
+                                print(
+                                    f"Retrying order after 110007 with qty={rq} (attempt {idx + 1})"
+                                )
+                                order = _place_with_quantity(rq)
+                                return order
+                            except Exception as re:
+                                # 같은 오류가 계속되면 루프 계속
+                                if not (
+                                    "110007" in str(re).lower()
+                                    or "ab not enough" in str(re).lower()
+                                    or "insufficient" in str(re).lower()
+                                ):
+                                    print(f"Retry failed with non-110007 error: {re}")
+                                    return None
+                        print(
+                            "All retries after 110007 exhausted or qty < min; giving up"
+                        )
+                        return None
+                    except Exception as adjust_error:
+                        print(
+                            f"Error during auto-adjust retry after 110007: {adjust_error}"
+                        )
+                        return None
                 else:
-                    order = self.exchange.create_limit_buy_order(
-                        position.symbol,
-                        position.quantity,
-                        position.price,
-                        params=self._merge_params(
-                            {
-                                "takeProfit": position.tp,  # TP 가격
-                                "stopLoss": position.sl,  # SL 가격
-                            }
-                        ),
-                    )
-            if order is None:
-                raise ValueError(f"Unsupported order type: {position.type}")
-            return order
+                    # 기타 오류는 상위로 메시지만 남기고 실패 처리
+                    print(f"Error opening position: {first_error}")
+                    return None
 
         except Exception as e:
             print(f"Error opening position: {e}")
