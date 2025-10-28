@@ -125,6 +125,15 @@ function getTzParam() {
   }
 }
 
+function getSelectedTZ() {
+  // 우선순위: 셀렉트 UI 값 > URL 쿼리의 tz
+  const sel = document.getElementById("tz-select");
+  const v = sel && sel.value ? String(sel.value) : null;
+  if (v && v.startsWith("UTC")) return v;
+  const q = getTzParam();
+  return q && q.startsWith("UTC") ? q : "UTC";
+}
+
 function normalizeUtcTimestamp(raw) {
   if (raw == null) return raw;
   let value = String(raw).trim();
@@ -140,7 +149,7 @@ function normalizeUtcTimestamp(raw) {
 
 function formatTimeWithTZ(tsISO, opts = {}) {
   try {
-    const tz = getTzParam();
+    const tz = getSelectedTZ();
     const normalized = normalizeUtcTimestamp(tsISO);
     const base = new Date(normalized);
     if (Number.isNaN(base.getTime())) return String(tsISO);
@@ -255,6 +264,8 @@ window.addEventListener("DOMContentLoaded", () => {
   setupJournalDetailHandler();
   const refreshBtn = document.getElementById("jr-refresh");
   if (refreshBtn) refreshBtn.addEventListener("click", refreshJournals);
+  const tzSel = document.getElementById("tz-select");
+  if (tzSel) tzSel.addEventListener("change", refreshJournals);
   const stRefresh = document.getElementById("st-refresh");
   if (stRefresh) stRefresh.addEventListener("click", manualRefreshStats);
   const stThisMonth = document.getElementById("st-this-month");
@@ -440,21 +451,65 @@ function closeJournalModal() {
 function showJournalModal(it) {
   try {
     const tsStr = formatTimeWithTZ(it.ts, {});
+    const symbol = it.symbol || "";
     const body = `
       <div><strong>시간</strong>: ${escapeHtml(tsStr)}</div>
       <div><strong>유형</strong>: ${escapeHtml(it.entry_type)}</div>
-      <div><strong>심볼</strong>: ${escapeHtml(it.symbol || "-")}</div>
+      <div><strong>심볼</strong>: ${escapeHtml(symbol || "-")}</div>
+      <div id="jr-trade-info" class="muted" style="margin:6px 0 8px">거래 정보 조회 중...</div>
       ${
         it.reason
           ? `<div><strong>사유</strong>: ${escapeHtml(it.reason)}</div>`
           : ""
       }
-      <div style="margin-top:8px"><strong>내용</strong></div>
+      <div style=\"margin-top:8px\"><strong>내용</strong></div>
       <pre>${escapeHtml(it.content || "-")}</pre>
-      <div style="margin-top:8px"><strong>메타</strong></div>
+      <div style=\"margin-top:8px\"><strong>메타</strong></div>
       <pre>${escapeHtml(JSON.stringify(it.meta || {}, null, 2))}</pre>
     `;
     openJournalModal(body);
+
+    // 우선 meta에 값이 있으면 우선 사용
+    const meta = it.meta || {};
+    let entry = meta.entry ?? meta.entry_price ?? meta.entryPrice;
+    let tp = meta.tp ?? meta.take_profit ?? meta.takeProfit;
+    let sl = meta.sl ?? meta.stop_loss ?? meta.stopLoss;
+    const tradeInfoEl = document.getElementById("jr-trade-info");
+
+    const setTradeInfo = (e, t, s) => {
+      if (!tradeInfoEl) return;
+      const fmt = (v) => (v === undefined || v === null ? "-" : String(v));
+      tradeInfoEl.classList.remove("muted");
+      tradeInfoEl.innerHTML = `<strong>진입가</strong>: ${escapeHtml(
+        fmt(e)
+      )} · <strong>TP</strong>: ${escapeHtml(
+        fmt(t)
+      )} · <strong>SL</strong>: ${escapeHtml(fmt(s))}`;
+    };
+
+    if (entry != null || tp != null || sl != null) {
+      setTradeInfo(entry, tp, sl);
+      return;
+    }
+
+    // meta에 없으면 현재 포지션에서 조회
+    if (symbol) {
+      fetchJSON(`/api/positions_summary?symbol=${encodeURIComponent(symbol)}`)
+        .then((j) => {
+          const items = (j && j.items) || [];
+          const pos = items[0];
+          if (pos) {
+            setTradeInfo(pos.entryPrice, pos.tp, pos.sl);
+          } else if (tradeInfoEl) {
+            tradeInfoEl.textContent = "거래 정보 없음";
+          }
+        })
+        .catch(() => {
+          if (tradeInfoEl) tradeInfoEl.textContent = "거래 정보 조회 실패";
+        });
+    } else if (tradeInfoEl) {
+      tradeInfoEl.textContent = "심볼 정보 없음";
+    }
   } catch (e) {
     alert("보기 중 오류: " + e.message);
   }

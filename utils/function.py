@@ -35,6 +35,15 @@ class make_to_object:
                     "leverage": content.Schema(
                         type=content.Type.NUMBER,
                     ),
+                    "close_now": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
+                    "close_percent": content.Schema(
+                        type=content.Type.NUMBER,
+                    ),
+                    "reduce_only": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
                 },
             ),
             "response_mime_type": "application/json",

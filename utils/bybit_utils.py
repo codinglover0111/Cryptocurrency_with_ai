@@ -491,6 +491,48 @@ class BybitUtils:
             print(f"Error closing symbol positions: {e}")
             return None
 
+    def reduce_symbol_positions_percent(self, symbol: str, percent: float):
+        """특정 심볼 포지션을 퍼센트만큼 부분 청산(reduceOnly 시장가).
+        percent: 0~100 범위 권장. 100은 전량.
+        """
+        try:
+            pct = float(percent)
+            if pct <= 0:
+                return []
+            if pct > 100:
+                pct = 100.0
+            positions = (
+                self.exchange.fetch_positions(None, self._default_params()) or []
+            )
+            results = []
+            for p in positions:
+                if p.get("symbol") != symbol:
+                    continue
+                amount = p.get("contracts") or p.get("amount") or p.get("size")
+                side = p.get("side")
+                if not amount or not side:
+                    continue
+                reduce_side = "sell" if side == "long" else "buy"
+                qty = abs(float(amount)) * (pct / 100.0)
+                if qty <= 0:
+                    continue
+                try:
+                    res = self.exchange.create_order(
+                        symbol,
+                        "market",
+                        reduce_side,
+                        qty,
+                        None,
+                        self._merge_params({"reduceOnly": True}),
+                    )
+                    results.append(res)
+                except Exception as oe:
+                    print(f"Error partial reduce-only close for {symbol}: {oe}")
+            return results
+        except Exception as e:
+            print(f"Error reducing symbol positions: {e}")
+            return None
+
     def cancle_orders(self):
         try:
             orders = self.exchange.cancel_all_orders(None, self._default_params())

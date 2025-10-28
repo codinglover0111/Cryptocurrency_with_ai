@@ -41,7 +41,7 @@
       }
       .row {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: 1fr 2fr; /* 좌: 잔고/포지션, 우: 통계(넓게) */
         gap: 16px;
       }
       .btn {
@@ -189,7 +189,7 @@
       }
       @media (max-width: 1024px) {
         .row {
-          grid-template-columns: repeat(2, 1fr);
+          grid-template-columns: 1fr; /* 중간 화면 이하에서는 단일 열 */
         }
       }
       @media (max-width: 640px) {
@@ -275,12 +275,7 @@
           </div>
           <div id="stats"></div>
         </div>
-        <div class="card" id="card-actions">
-          <h2>제어 (비활성화됨)</h2>
-          <div class="muted">
-            루트 페이지에서는 변경 작업이 비활성화되어 있습니다.
-          </div>
-        </div>
+        <!-- 제어 패널 제거 -->
       </div>
 
       <div class="card">
@@ -298,6 +293,15 @@
           <label class="journal-limit">
             최근 개수
             <input id="jr-limit" type="number" min="1" max="200" value="20" />
+          </label>
+          <label class="journal-limit">
+            타임존
+            <select id="tz-select" style="width: 120px">
+              <option value="UTC" selected>UTC</option>
+              <option value="UTC+9">UTC+9</option>
+              <option value="UTC+1">UTC+1</option>
+              <option value="UTC-5">UTC-5</option>
+            </select>
           </label>
           <label
             class="journal-sort"

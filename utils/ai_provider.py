@@ -94,6 +94,15 @@ class AIProvider:
                             "leverage": genai.protos.Schema(
                                 type=genai.protos.Type.NUMBER
                             ),
+                            "close_now": genai.protos.Schema(
+                                type=genai.protos.Type.BOOLEAN
+                            ),
+                            "close_percent": genai.protos.Schema(
+                                type=genai.protos.Type.NUMBER
+                            ),
+                            "reduce_only": genai.protos.Schema(
+                                type=genai.protos.Type.BOOLEAN
+                            ),
                             "explain": genai.protos.Schema(
                                 type=genai.protos.Type.STRING
                             ),
@@ -128,6 +137,9 @@ class AIProvider:
                                 "buy_now": {"type": "boolean"},
                                 "stop_order": {"type": "boolean"},
                                 "leverage": {"type": "number"},
+                                "close_now": {"type": "boolean"},
+                                "close_percent": {"type": "number"},
+                                "reduce_only": {"type": "boolean"},
                                 "explain": {"type": "string"},
                             },
                             "required": ["Status"],

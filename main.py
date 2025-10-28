@@ -246,6 +246,8 @@ def automation_for_symbol(symbol_usdt: str):
             )
             + "Choose one of: watch/hold, short, long, or stop.\n"
             + "Return your decision as JSON with the following fields: order type (market/limit), price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number).\n"
+            + "If you want to immediately take profit or cut loss on an existing position, set close_now=true and optionally close_percent (1~100).\n"
+            + "When close_now is true, we will reduceOnly market-close the current position(s) without opening a new one in this cycle.\n"
             + "Account risk is limited to 20% (for your reference).\n"
             + "Include your reasoning for the decision in the 'explain' field. Output JSON, Korean only."
         )
@@ -293,6 +295,86 @@ def automation_for_symbol(symbol_usdt: str):
                 )
             except Exception as _e:
                 logging.error("LLM parsed logging failed: %s", str(_e))
+
+        # close_now 우선 처리: 기존 포지션 즉시 익절/손절(전체/부분)
+        if bool(value.get("close_now")):
+            try:
+                percent = float(value.get("close_percent") or 100.0)
+            except Exception:
+                percent = 100.0
+            percent = 100.0 if percent <= 0 else (percent if percent <= 100 else 100.0)
+            positions = bybit.get_positions_by_symbol(contract_symbol) or []
+            if positions:
+                try:
+                    if percent >= 99.999:
+                        res = bybit.close_symbol_positions(contract_symbol)
+                    else:
+                        res = bybit.reduce_symbol_positions_percent(
+                            contract_symbol, percent
+                        )
+                    # 간단 실현손익 추정 기록
+                    try:
+                        last = bybit.get_last_price(contract_symbol) or current_price
+                        for p in positions:
+                            entry = float(
+                                p.get("entryPrice")
+                                or p.get("info", {}).get("avgPrice")
+                                or 0
+                            )
+                            amount = float(
+                                p.get("contracts")
+                                or p.get("amount")
+                                or p.get("size")
+                                or 0
+                            )
+                            sidep = p.get("side") or p.get("info", {}).get("side")
+                            if amount <= 0 or entry <= 0 or not sidep:
+                                continue
+                            closed_qty = (
+                                amount
+                                if percent >= 99.999
+                                else amount * (percent / 100.0)
+                            )
+                            pnl = (
+                                (last - entry) * closed_qty
+                                if sidep == "long"
+                                else (entry - last) * closed_qty
+                            )
+                            store.record_trade(
+                                {
+                                    "ts": datetime.utcnow(),
+                                    "symbol": contract_symbol,
+                                    "side": sidep,
+                                    "type": "market",
+                                    "price": last,
+                                    "quantity": float(closed_qty),
+                                    "tp": None,
+                                    "sl": None,
+                                    "leverage": None,
+                                    "status": "closed",
+                                    "order_id": None,
+                                    "pnl": float(pnl),
+                                }
+                            )
+                    except Exception:
+                        pass
+                    try:
+                        store.record_journal(
+                            {
+                                "symbol": contract_symbol,
+                                "entry_type": "action",
+                                "content": f"close_now percent={float(percent)}",
+                                "reason": value.get("explain"),
+                                "meta": {"result": str(res)[:500]},
+                            }
+                        )
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logging.error("close_now failed: %s", str(e))
+            else:
+                logging.info("close_now ignored: no active position for symbol")
+            return
 
         # 의사결정/기록 + 트레이딩 실행
         if value["Status"] in ["long", "short"]:
