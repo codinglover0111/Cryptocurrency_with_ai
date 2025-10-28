@@ -425,9 +425,18 @@ class TradeStore:
                 else:
                     clauses.append("DATE(ts) = CURRENT_DATE")
             if since_ts is not None:
+                # Pandas Timestamp 등 datetime 유사 타입을 안전하게 Python datetime으로 변환
+                try:
+                    since_ts = pd.Timestamp(since_ts).to_pydatetime()
+                except Exception:
+                    pass
                 clauses.append("ts >= :since_ts")
                 params["since_ts"] = since_ts
             if until_ts is not None:
+                try:
+                    until_ts = pd.Timestamp(until_ts).to_pydatetime()
+                except Exception:
+                    pass
                 clauses.append("ts < :until_ts")
                 params["until_ts"] = until_ts
 

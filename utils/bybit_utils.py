@@ -196,6 +196,11 @@ class BybitUtils:
             print("set_leverage not supported on this ccxt version")
             return None
         except Exception as e:
+            msg = str(e)
+            # Bybit: 110043 leverage not modified -> 정상/무시
+            if "110043" in msg or "leverage not modified" in msg.lower():
+                print("Leverage unchanged (110043); continuing")
+                return None
             print(f"Error setting leverage: {e}")
             return None
 

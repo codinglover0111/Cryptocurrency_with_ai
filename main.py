@@ -378,8 +378,8 @@ def automation_for_symbol(symbol_usdt: str):
             return
 
         # 의사결정/기록 + 트레이딩 실행
-        if value["Status"] in ["long", "short"]:
-            ai_status = value["Status"]
+        ai_status = str(value.get("Status") or value.get("status") or "").lower()
+        if ai_status in ["long", "short"]:
             # 내부 CCXT 주문은 buy/sell을 사용하므로 매핑
             side = "buy" if ai_status == "long" else "sell"
             if value.get("buy_now") is True:
@@ -527,6 +527,21 @@ def automation_for_symbol(symbol_usdt: str):
                 leverage=leverage,
             )
             order = bybit.open_position(position_params)
+            if order is None:
+                logging.error("Failed to open position (order is None)")
+                try:
+                    store.record_journal(
+                        {
+                            "symbol": contract_symbol,
+                            "entry_type": "action",
+                            "content": f"open_failed {side} {typevalue} price={float(entry_price)} qty={float(quantity)}",
+                            "reason": value.get("explain") or "order rejected",
+                            "meta": {"leverage": leverage},
+                        }
+                    )
+                except Exception:
+                    pass
+                return
             logging.info(f"Position opened: {position_params}")
 
             try:
@@ -561,7 +576,7 @@ def automation_for_symbol(symbol_usdt: str):
                         "content": json.dumps(
                             {
                                 "status": side,
-                                "ai_status": value.get("Status"),
+                                "ai_status": ai_status,
                                 "type": typevalue,
                                 "price": float(entry_price),
                                 "tp": use_tp,
@@ -587,7 +602,7 @@ def automation_for_symbol(symbol_usdt: str):
             except Exception as _e:
                 logging.error(f"Journal write failed: {_e}")
 
-        elif value["Status"] == "hold":
+        elif ai_status == "hold":
             logging.info("No trading signal generated")
             try:
                 store.record_journal(
@@ -602,7 +617,7 @@ def automation_for_symbol(symbol_usdt: str):
             except Exception as _e:
                 logging.error(f"Journal write failed: {_e}")
 
-        elif value["Status"] == "stop":
+        elif ai_status == "stop":
             logging.info("stop position(close_all)")
             try:
                 # 포지션별 대략적 실현 손익 기록 후 청산
