@@ -58,6 +58,7 @@
       table {
         width: 100%;
         border-collapse: collapse;
+        table-layout: fixed; /* 열 너비 고정으로 셀 겹침 방지 */
       }
       th,
       td {
@@ -65,6 +66,9 @@
         padding: 8px;
         text-align: left;
         font-size: 14px;
+        white-space: nowrap; /* 긴 텍스트 줄바꿈으로 인한 겹침 방지 */
+        overflow: hidden; /* 셀 넘침 숨김 */
+        text-overflow: ellipsis; /* 넘친 텍스트 말줄임표 */
       }
       .muted {
         color: #9ca3af;
@@ -115,15 +119,20 @@
       }
       .kpis {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-        margin-bottom: 10px;
+        /* 화면 너비에 따라 자동으로 칼럼 수를 조정하여 KPI 겹침 방지 */
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+        margin-bottom: 12px;
       }
       .kpi {
         background: #0b1220;
         border: 1px solid #1f2937;
         border-radius: 10px;
         padding: 12px;
+        min-height: 72px; /* 박스 높이 고정으로 시각적 안정성 */
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
       }
       .kpi .label {
         font-size: 12px;
@@ -143,10 +152,14 @@
       /* 통계 카드 레이아웃 개선 */
       .stats-grid {
         display: grid;
-        grid-template-columns: 1.2fr 1.2fr 1fr 0.8fr;
-        gap: 8px;
-        margin-bottom: 8px;
-        align-items: end;
+        /* 각 입력 블록의 최소 너비를 보장하여 라벨/입력 겹침 방지 */
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+        margin-bottom: 10px;
+        align-items: start; /* 라벨 높이 차이로 인한 하단 정렬 겹침 방지 */
+      }
+      .stats-grid > div {
+        min-width: 0;
       }
       .stats-actions {
         display: flex;
@@ -162,6 +175,19 @@
       @media (max-width: 1024px) {
         .stats-grid {
           grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 900px) {
+        /* 중간 화면에서도 1열로 전환해 겹침 방지 */
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+        table {
+          /* 표는 가로 스크롤 허용으로 안전 처리 */
+          display: block;
+          overflow-x: auto;
+          white-space: nowrap;
+          table-layout: auto;
         }
       }
       @media (max-width: 640px) {

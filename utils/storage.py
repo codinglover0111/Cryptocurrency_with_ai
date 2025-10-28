@@ -201,8 +201,8 @@ class TradeStore:
             }
 
         try:
-            if not pd.api.types.is_datetime64_any_dtype(df["ts"]):
-                df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+            # 항상 UTC 타임존을 가진 시계열로 강제 변환 (naive/aware 모두 커버)
+            df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
         except Exception:
             df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
 
