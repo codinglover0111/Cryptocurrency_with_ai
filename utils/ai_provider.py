@@ -137,10 +137,11 @@ class AIProvider:
             ]
             resp = self._openai_client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "system", "content": prompt}],
                 tools=tools,
                 tool_choice="auto",
                 parallel_tool_calls=False,
+                extra_body={"provider": {"order": ["google-vertex", "fireworks"]}},
             )
             choice = resp.choices[0]
             tool_calls = (
