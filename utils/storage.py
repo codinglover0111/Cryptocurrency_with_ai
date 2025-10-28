@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -11,9 +10,7 @@ import sqlalchemy as sa
 
 @dataclass
 class StorageConfig:
-    # XLSX
-    xlsx_path: str = "trades.xlsx"
-    # MySQL
+    # DB 전용으로 단순화
     mysql_url: Optional[str] = None  # e.g. mysql+pymysql://user:pwd@host:3306/db
 
 
@@ -27,9 +24,44 @@ class TradeStore:
             except Exception as e:
                 print(f"Warning: failed to init MySQL engine: {e}")
 
-    def _ensure_xlsx(self) -> None:
-        if not os.path.exists(self.config.xlsx_path):
-            df = pd.DataFrame(
+    def record_trade(self, trade: Dict[str, Any]) -> None:
+        # DB 기록 전용
+        if self._engine is None:
+            print("No DB engine configured; trade not persisted")
+            return
+        if trade.get("ts") is None:
+            trade = dict(trade)
+            trade["ts"] = datetime.utcnow()
+        if trade.get("order_id") is not None:
+            trade["order_id"] = str(trade["order_id"])
+        try:
+            pd.DataFrame([trade]).to_sql(
+                "trades",
+                self._engine,
+                if_exists="append",
+                index=False,
+                dtype={
+                    "ts": sa.DateTime,
+                    "symbol": sa.String(64),
+                    "side": sa.String(8),
+                    "type": sa.String(8),
+                    "price": sa.Float,
+                    "quantity": sa.Float,
+                    "tp": sa.Float,
+                    "sl": sa.Float,
+                    "leverage": sa.Float,
+                    "status": sa.String(16),
+                    "order_id": sa.String(128),
+                    "pnl": sa.Float,
+                },
+            )
+        except Exception as e:
+            print(f"Error writing MySQL: {e}")
+
+    def load_trades(self) -> pd.DataFrame:
+        # DB에서만 읽기
+        if self._engine is None:
+            return pd.DataFrame(
                 columns=[
                     "ts",
                     "symbol",
@@ -45,48 +77,8 @@ class TradeStore:
                     "pnl",
                 ]
             )
-            df.to_excel(self.config.xlsx_path, index=False)
-
-    def record_trade(self, trade: Dict[str, Any]) -> None:
-        # XLSX 기록
         try:
-            self._ensure_xlsx()
-            df = pd.read_excel(self.config.xlsx_path)
-            df = pd.concat([df, pd.DataFrame([trade])], ignore_index=True)
-            df.to_excel(self.config.xlsx_path, index=False)
-        except Exception as e:
-            print(f"Error writing xlsx: {e}")
-
-        # MySQL 기록
-        if self._engine is not None:
-            try:
-                pd.DataFrame([trade]).to_sql(
-                    "trades",
-                    self._engine,
-                    if_exists="append",
-                    index=False,
-                    dtype={
-                        "ts": sa.DateTime,
-                        "symbol": sa.String(64),
-                        "side": sa.String(8),
-                        "type": sa.String(8),
-                        "price": sa.Float,
-                        "quantity": sa.Float,
-                        "tp": sa.Float,
-                        "sl": sa.Float,
-                        "leverage": sa.Float,
-                        "status": sa.String(16),
-                        "order_id": sa.String(128),
-                        "pnl": sa.Float,
-                    },
-                )
-            except Exception as e:
-                print(f"Error writing MySQL: {e}")
-
-    def load_trades(self) -> pd.DataFrame:
-        try:
-            self._ensure_xlsx()
-            return pd.read_excel(self.config.xlsx_path)
+            return pd.read_sql_table("trades", self._engine)
         except Exception:
             return pd.DataFrame(
                 columns=[

@@ -380,6 +380,36 @@ class BybitUtils:
             print(f"Error fetching orders: {e}")
             return None
 
+    def get_closed_orders(
+        self,
+        symbol: Optional[str] = None,
+        since_ms: Optional[int] = None,
+        limit: int = 50,
+    ):
+        """닫힌 주문 목록 조회 (ccxt.fetch_closed_orders 래핑)"""
+        try:
+            return self.exchange.fetch_closed_orders(
+                symbol, since_ms, limit, self._default_params()
+            )
+        except Exception as e:
+            print(f"Error fetching closed orders: {e}")
+            return []
+
+    def get_my_trades(
+        self,
+        symbol: Optional[str] = None,
+        since_ms: Optional[int] = None,
+        limit: int = 100,
+    ):
+        """내 체결 이력 조회 (ccxt.fetch_my_trades 래핑)"""
+        try:
+            return self.exchange.fetch_my_trades(
+                symbol, since_ms, limit, self._default_params()
+            )
+        except Exception as e:
+            print(f"Error fetching my trades: {e}")
+            return []
+
     def get_positions_by_symbol(self, symbol: str):
         """지정 심볼의 포지션만 필터링해서 반환"""
         try:

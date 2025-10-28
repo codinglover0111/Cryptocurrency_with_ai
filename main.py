@@ -61,12 +61,7 @@ def automation_for_symbol(symbol_usdt: str):
     try:
         is_testnet = bool(int(os.getenv("TESTNET", "1")))
         bybit = BybitUtils(is_testnet)
-        store = TradeStore(
-            StorageConfig(
-                xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
-                mysql_url=os.getenv("MYSQL_URL"),
-            )
-        )
+        store = TradeStore(StorageConfig(mysql_url=os.getenv("MYSQL_URL")))
 
         spot_symbol, contract_symbol = _to_ccxt_symbols(symbol_usdt)
 

@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
+from utils.ai_provider import AIProvider
 
 
 app = FastAPI(title="Crypto Bot UI")
@@ -100,10 +101,15 @@ def set_leverage(body: LeverageBody):
 def stats():
     store = TradeStore(
         StorageConfig(
-            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
             mysql_url=os.getenv("MYSQL_URL"),
         )
     )
+    # 자동(TP/SL) 청산으로 stats 누락된 건을 보완
+    try:
+        _reconcile_auto_closed_positions(store)
+    except Exception:
+        # 통계 조회는 실패 없이 반환되도록 방어
+        pass
     return store.compute_stats()
 
 
@@ -154,7 +160,6 @@ class JournalBody(BaseModel):
 def create_journal(body: JournalBody):
     store = TradeStore(
         StorageConfig(
-            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
             mysql_url=os.getenv("MYSQL_URL"),
         )
     )
@@ -172,7 +177,6 @@ def list_journals(
 ):
     store = TradeStore(
         StorageConfig(
-            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
             mysql_url=os.getenv("MYSQL_URL"),
         )
     )
@@ -218,7 +222,6 @@ def overlay(
 ):
     store = TradeStore(
         StorageConfig(
-            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
             mysql_url=os.getenv("MYSQL_URL"),
         )
     )
@@ -323,6 +326,304 @@ def positions_summary(symbol: Optional[str] = None):
         except Exception:
             continue
     return {"items": items}
+
+
+def _reconcile_auto_closed_positions(store: TradeStore) -> None:
+    """열린(opened) 거래가 있는데 현재 포지션이 없다면 자동 청산으로 간주하여
+    closed 레코드를 기록하고 저널/AI 리뷰를 추가한다. (멱등)
+    """
+    try:
+        df = store.load_trades()
+    except Exception:
+        return
+    if df is None or getattr(df, "empty", True):
+        return
+
+    # 필수 컬럼 확인
+    for col in (
+        "ts",
+        "symbol",
+        "side",
+        "type",
+        "price",
+        "quantity",
+        "tp",
+        "sl",
+        "status",
+        "leverage",
+    ):
+        if col not in df.columns:
+            return
+
+    try:
+        bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    except Exception:
+        return
+
+    # opened 행과 이미 closed 기록 수집
+    opened_df = df[df["status"].astype(str) == "opened"].copy()
+    if opened_df.empty:
+        return
+    try:
+        import pandas as pd  # 지역 임포트
+
+        if not pd.api.types.is_datetime64_any_dtype(opened_df["ts"]):
+            opened_df["ts"] = pd.to_datetime(opened_df["ts"], errors="coerce")
+        closed_df = df[df["status"].astype(str) == "closed"].copy()
+        if not closed_df.empty and not pd.api.types.is_datetime64_any_dtype(
+            closed_df["ts"]
+        ):
+            closed_df["ts"] = pd.to_datetime(closed_df["ts"], errors="coerce")
+    except Exception:
+        closed_df = df[df["status"].astype(str) == "closed"].copy()
+
+    for _, row in opened_df.iterrows():
+        symbol = row.get("symbol")
+        side = (row.get("side") or "").lower()
+        if not symbol or side not in ("buy", "sell"):
+            continue
+        ts_open = row.get("ts")
+        try:
+            has_closed = False
+            if not closed_df.empty:
+                mask = closed_df["symbol"].astype(str).eq(str(symbol))
+                try:
+                    if ts_open is not None:
+                        mask = mask & (closed_df["ts"] >= ts_open)
+                except Exception:
+                    pass
+                has_closed = bool(mask.any())
+            if has_closed:
+                continue
+        except Exception:
+            pass
+
+        # 아직 open인지 확인
+        try:
+            open_positions = bybit.get_positions_by_symbol(symbol) or []
+        except Exception:
+            open_positions = []
+        if open_positions:
+            continue
+
+        # 거래/주문 히스토리 기반으로 청산가(VWAP) 산출
+        vwap_close = None
+        order_id = None
+        closed_by = "unknown"
+        reduce_side = "sell" if side == "buy" else "buy"
+        since_ms = None
+        try:
+            if hasattr(ts_open, "timestamp"):
+                since_ms = int(ts_open.timestamp() * 1000)
+        except Exception:
+            pass
+        try:
+            trades = bybit.get_my_trades(symbol, since_ms, 1000) or []
+            trades = sorted(trades, key=lambda t: t.get("timestamp") or 0)
+            total_value = 0.0
+            total_amount = 0.0
+            target_qty = float(row.get("quantity") or 0)
+            for t in trades:
+                try:
+                    if (t.get("side") or "").lower() != reduce_side:
+                        continue
+                    price = t.get("price") or (t.get("info", {}) or {}).get("price")
+                    amt = t.get("amount")
+                    if price is None or amt is None:
+                        continue
+                    price_f = float(price)
+                    amt_f = float(amt)
+                    if price_f <= 0 or amt_f <= 0:
+                        continue
+                    total_value += price_f * amt_f
+                    total_amount += amt_f
+                    order_id = (
+                        order_id
+                        or t.get("order")
+                        or (t.get("info", {}) or {}).get("orderId")
+                    )
+                    if target_qty > 0 and total_amount >= target_qty:
+                        break
+                except Exception:
+                    continue
+            if total_amount > 0:
+                vwap_close = total_value / total_amount
+        except Exception:
+            pass
+
+        if vwap_close is None:
+            try:
+                closed_orders = bybit.get_closed_orders(symbol, since_ms, 100) or []
+                for o in sorted(
+                    closed_orders, key=lambda x: x.get("timestamp") or 0, reverse=True
+                ):
+                    if (o.get("side") or "").lower() != reduce_side:
+                        continue
+                    st = (o.get("status") or "").lower()
+                    if st not in ("closed", "filled"):
+                        continue
+                    avg = o.get("average") or o.get("price")
+                    if avg is None:
+                        continue
+                    vwap_close = float(avg)
+                    order_id = order_id or o.get("id")
+                    info_str = (str(o.get("type")) + " " + str(o.get("info"))).lower()
+                    if "take" in info_str and "profit" in info_str:
+                        closed_by = "tp"
+                    elif "stop" in info_str and "loss" in info_str:
+                        closed_by = "sl"
+                    break
+            except Exception:
+                pass
+
+        if vwap_close is None:
+            try:
+                last = bybit.get_last_price(symbol)
+                if last is not None:
+                    vwap_close = float(last)
+            except Exception:
+                pass
+        if vwap_close is None:
+            continue
+
+        try:
+            entry_price = float(row.get("price") or 0)
+            amount = float(row.get("quantity") or 0)
+            tp = row.get("tp")
+            sl = row.get("sl")
+            tp_f = float(tp) if tp is not None and tp == tp else None
+            sl_f = float(sl) if sl is not None and sl == sl else None
+        except Exception:
+            continue
+        if amount <= 0 or entry_price <= 0:
+            continue
+
+        if side == "buy":
+            pnl = (vwap_close - entry_price) * amount
+            if closed_by == "unknown":
+                closed_by = (
+                    "tp"
+                    if (tp_f is not None and vwap_close >= tp_f)
+                    else (
+                        "sl" if (sl_f is not None and vwap_close <= sl_f) else "unknown"
+                    )
+                )
+        else:
+            pnl = (entry_price - vwap_close) * amount
+            if closed_by == "unknown":
+                closed_by = (
+                    "tp"
+                    if (tp_f is not None and vwap_close <= tp_f)
+                    else (
+                        "sl" if (sl_f is not None and vwap_close >= sl_f) else "unknown"
+                    )
+                )
+
+        # closed 레코드 기록
+        try:
+            store.record_trade(
+                {
+                    "ts": datetime.utcnow(),
+                    "symbol": symbol,
+                    "side": side,
+                    "type": row.get("type") or "market",
+                    "price": float(vwap_close),
+                    "quantity": amount,
+                    "tp": tp_f,
+                    "sl": sl_f,
+                    "leverage": row.get("leverage"),
+                    "status": "closed",
+                    "order_id": order_id,
+                    "pnl": float(pnl),
+                }
+            )
+        except Exception:
+            pass
+
+        # 저널: action
+        try:
+            store.record_journal(
+                {
+                    "symbol": symbol,
+                    "entry_type": "action",
+                    "content": f"auto_close ({closed_by}) price={vwap_close} qty={amount}",
+                    "reason": f"Position closed by exchange due to {closed_by} or manual without signal.",
+                    "meta": {
+                        "auto_close": True,
+                        "closed_by": closed_by,
+                        "entry_price": entry_price,
+                        "close_price": vwap_close,
+                        "tp": tp_f,
+                        "sl": sl_f,
+                        "side": side,
+                        "pnl": float(pnl),
+                    },
+                }
+            )
+        except Exception:
+            pass
+
+        # 저널: AI 리뷰
+        try:
+            review = _try_ai_review(
+                symbol, side, entry_price, float(vwap_close), tp_f, sl_f, float(pnl)
+            )
+            if review:
+                store.record_journal(
+                    {
+                        "symbol": symbol,
+                        "entry_type": "review",
+                        "content": review,
+                        "reason": "auto_close_review",
+                        "meta": {
+                            "auto_close": True,
+                            "pnl": float(pnl),
+                            "closed_by": closed_by,
+                        },
+                    }
+                )
+        except Exception:
+            pass
+
+
+def _try_ai_review(
+    symbol: str,
+    side: str,
+    entry_price: float,
+    close_price: float,
+    tp: Optional[float],
+    sl: Optional[float],
+    pnl: float,
+) -> Optional[str]:
+    """간단한 AI 리뷰 텍스트 생성. 설정이 없으면 None."""
+    try:
+        provider = os.getenv("AI_PROVIDER", "gemini").lower()
+        if provider == "gemini" and not os.environ.get("GEMINI_API_KEY"):
+            return None
+        if provider != "gemini" and not os.environ.get("OPENAI_API_KEY"):
+            return None
+        ai = AIProvider()
+        direction = "LONG" if side == "buy" else "SHORT"
+        if tp is not None and (
+            (side == "buy" and close_price >= tp)
+            or (side == "sell" and close_price <= tp)
+        ):
+            reason = "TP reached"
+        elif sl is not None and (
+            (side == "buy" and close_price <= sl)
+            or (side == "sell" and close_price >= sl)
+        ):
+            reason = "SL reached"
+        else:
+            reason = "Unknown trigger"
+        prompt = (
+            "다음 자동 청산 결과를 간단히 리뷰하고 개선점을 bullet로 3개 이내로 제안해줘.\n"
+            f"심볼: {symbol}\n사이드: {direction}\n진입가: {entry_price}\n청산가: {close_price}\nTP: {tp}\nSL: {sl}\n실현손익: {pnl}\n사유: {reason}\n"
+        )
+        text = ai.decide(prompt)
+        return (text or "").strip()[:2000]
+    except Exception:
+        return None
 
 
 @app.get("/overlay_positions", response_class=HTMLResponse)
