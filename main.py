@@ -514,27 +514,31 @@ def automation_for_symbol(symbol_usdt: str):
             "[CSV_15m]\n" + csv_15m + "\n"
             f"Current price: {current_price}\n"
             + (
-                "[CURRENT_POSITIONS]\n" + "\n".join(current_positions_lines) + "\n"
+                "[CURRENT_POSITIONS]\n"
+                + "\n".join(current_positions_lines)
+                + "\n[/CURRENT_POSITIONS]\n"
                 if current_positions_lines
-                else "Current position: None\n"
+                else "Current position: None\n[/CURRENT_POSITIONS]\n"
             )
             + (
-                "[RECENT_REPORTS_10]\n" + recent_reports_text + "\n"
+                "[RECENT_REPORTS_10]\n"
+                + recent_reports_text
+                + "\n[/RECENT_REPORTS_10]\n"
                 if recent_reports_text
                 else ""
             )
             + (
-                "[TRADE_REVIEWS_5]\n" + trade_reviews_text + "\n"
+                "[TRADE_REVIEWS_5]\n" + trade_reviews_text + "\n[/TRADE_REVIEWS_5]\n"
                 if trade_reviews_text
                 else ""
             )
             + (
-                "[JOURNALS_TODAY]\n" + journal_today_text + "\n"
+                "[JOURNALS_TODAY]\n" + journal_today_text + "\n[/JOURNALS_TODAY]\n"
                 if journal_today_text
                 else ""
             )
             + (
-                "[SINCE_LAST_OPEN]\n" + since_open_text + "\n"
+                "[SINCE_LAST_OPEN]\n" + since_open_text + "\n[/SINCE_LAST_OPEN]\n"
                 if pos_side is not None and since_open_text
                 else ""
             )
