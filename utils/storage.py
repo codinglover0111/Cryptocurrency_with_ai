@@ -18,7 +18,13 @@ class StorageConfig:
 
     def resolve(self) -> Tuple[Optional[str], bool]:
         """Return (sqlalchemy_url, is_sqlite)."""
-        if self.mysql_url:
+        force_sqlite = str(os.getenv("FORCE_SQLITE", "0")).lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if self.mysql_url and not force_sqlite:
             return self.mysql_url, False
 
         # 기본 sqlite 파일 경로 결정
@@ -50,6 +56,21 @@ class TradeStore:
                 else:
                     kwargs["pool_pre_ping"] = True
                 self._engine = sa.create_engine(self._db_url, **kwargs)
+                # 연결 확인 및 실패 시 SQLite로 폴백
+                if not self._is_sqlite:
+                    try:
+                        with self._engine.connect() as conn:
+                            conn.execute(sa.text("SELECT 1"))
+                    except Exception as e:
+                        print(
+                            f"Warning: failed to connect to database ({e}); falling back to SQLite"
+                        )
+                        # SQLite로 강제 전환
+                        self._db_url, self._is_sqlite = StorageConfig(
+                            sqlite_path=self.config.sqlite_path
+                        ).resolve()
+                        kwargs = {"connect_args": {"check_same_thread": False}}
+                        self._engine = sa.create_engine(self._db_url, **kwargs)
             except Exception as e:
                 print(f"Warning: failed to init database engine: {e}")
 
@@ -85,7 +106,7 @@ class TradeStore:
                 },
             )
         except Exception as e:
-            print(f"Error writing MySQL: {e}")
+            print(f"Error writing database: {e}")
 
     def load_trades(self) -> pd.DataFrame:
         # DB에서만 읽기

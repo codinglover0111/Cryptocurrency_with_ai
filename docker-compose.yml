@@ -7,6 +7,7 @@ services:
     environment:
       SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
+      FORCE_SQLITE: "1"
     volumes:
       - ./.env:/app/.env
       - ./trading.log:/app/trading.log
@@ -25,6 +26,7 @@ services:
       TESTNET: ${TESTNET:-1}
       SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
+      FORCE_SQLITE: "1"
     ports:
       - "8000:8000"
     command: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
