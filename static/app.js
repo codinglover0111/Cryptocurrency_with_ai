@@ -258,9 +258,11 @@ window.addEventListener("DOMContentLoaded", () => {
   const typeFilters = document.getElementById("jr-type-filters");
   if (typeFilters && !typeFilters.__jrTypeAttached) {
     typeFilters.__jrTypeAttached = true;
-    typeFilters.addEventListener("change", refreshJournals);
+    // 자동 적용 대신 조회 버튼으로만 실행
+    // typeFilters.addEventListener("change", refreshJournals);
   }
   refreshAll();
+  // 초기 자동 조회 1회는 유지
   refreshJournals();
   setInterval(refreshAll, 10000);
 });
@@ -292,10 +294,12 @@ async function refreshJournals() {
     const selectedTypes = typeCheckboxes
       .filter((cb) => cb.checked)
       .map((cb) => cb.value);
+    const sort = document.getElementById("jr-sort")?.value || "desc";
+    const ascFlag = sort === "asc" ? "1" : "0";
     const q = new URLSearchParams({
       limit: String(limit),
       today_only: "1",
-      ascending: "0",
+      ascending: ascFlag,
     });
     if (
       selectedTypes.length > 0 &&
@@ -303,7 +307,8 @@ async function refreshJournals() {
     ) {
       q.set("types", selectedTypes.join(","));
     }
-    const j = await fetchJSON(`/api/journals?${q.toString()}`);
+    // 안전 공개용 필터 API 사용 (types는 서버에서 필터링)
+    const j = await fetchJSON(`/api/journals_filtered?${q.toString()}`);
     const items = j.items || [];
     const rows = items
       .map((it, idx) => {

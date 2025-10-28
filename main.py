@@ -216,6 +216,7 @@ def automation_for_symbol(symbol_usdt: str):
             "You always trade rationally and never emotionally.\n"
             "You analyze the current situation and make the optimal trading decision at all times.\n"
             "You typically use high leverage between 5x and 50x.\n"
+            "Decide TP and SL values considering leverage.\n"
             "It's important to not just always watch, sometimes take quick profits or cut losses to maximize returns.\n"
             f"Current UTC time: {now_utc}\n"
             f"The following is OHLCV CSV data for {spot_symbol}.\n"

@@ -331,6 +331,22 @@
             최근 개수
             <input id="jr-limit" type="number" min="1" max="200" value="20" />
           </label>
+          <label
+            class="journal-sort"
+            style="
+              display: flex;
+              align-items: center;
+              gap: 6px;
+              font-size: 13px;
+              color: #9ca3af;
+            "
+          >
+            정렬
+            <select id="jr-sort" style="width: 140px">
+              <option value="desc" selected>최신순</option>
+              <option value="asc">오래된순</option>
+            </select>
+          </label>
           <div id="jr-type-filters" class="journal-type-filters">
             <span class="journal-type-label">유형</span>
             <label><input type="checkbox" value="thought" checked />사고</label>
@@ -340,7 +356,7 @@
             <label><input type="checkbox" value="action" checked />액션</label>
             <label><input type="checkbox" value="review" checked />리뷰</label>
           </div>
-          <button class="btn secondary" id="jr-refresh">새로고침</button>
+          <button class="btn secondary" id="jr-refresh">조회</button>
           <a
             class="btn"
             href="/overlay?limit=12&today_only=1&ascending=0&types=decision,action,review"

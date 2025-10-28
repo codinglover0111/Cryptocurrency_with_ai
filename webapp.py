@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -271,6 +272,17 @@ def list_journals(
     items = []
     for _, row in df.iterrows():
         ts_iso = _to_utc_iso(row.get("ts"))
+        meta_val = row.get("meta")
+        # 문자열이면 JSON 파싱 시도 후 민감 정보 마스킹
+        try:
+            if isinstance(meta_val, str):
+                try:
+                    meta_val = json.loads(meta_val)
+                except Exception:
+                    pass
+            meta_val = _redact_sensitive(meta_val)
+        except Exception:
+            pass
         items.append(
             {
                 "ts": ts_iso,
@@ -278,7 +290,80 @@ def list_journals(
                 "entry_type": row.get("entry_type"),
                 "content": row.get("content"),
                 "reason": row.get("reason"),
-                "meta": _redact_sensitive(row.get("meta")),
+                "meta": meta_val,
+                "ref_order_id": row.get("ref_order_id"),
+            }
+        )
+    return {"items": items}
+
+
+@app.get("/api/journals_filtered")
+def list_journals_filtered(
+    symbol: Optional[str] = None,
+    types: Optional[str] = None,
+    today_only: int = 1,
+    limit: int = 20,
+    ascending: int = 0,
+):
+    """안전 공개용 저널 API: types는 SQL에 직접 반영하지 않고 서버에서 필터링.
+
+    - 허용 타입만 필터: thought | decision | action | review
+    - today_only, limit, ascending 등은 DB 쿼리 파라미터로 전달
+    - meta는 문자열일 경우 JSON 파싱 후 마스킹
+    """
+    store = TradeStore(
+        StorageConfig(
+            mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
+        )
+    )
+
+    allowed_types = {"thought", "decision", "action", "review"}
+    req_types: Optional[List[str]] = (
+        [t.strip() for t in types.split(",") if t.strip()] if types else None
+    )
+    if req_types:
+        req_types = [t for t in req_types if t in allowed_types]
+
+    # DB에서는 타입 미적용으로 조회 (SQL에 types 직접 반영하지 않음)
+    df = store.fetch_journals(
+        symbol=symbol,
+        types=None,
+        today_only=bool(today_only),
+        limit=max(1, min(int(limit), 200)),
+        ascending=bool(ascending),
+    )
+
+    if df.empty:
+        return {"items": []}
+
+    try:
+        if req_types:
+            df = df[df["entry_type"].astype(str).isin(req_types)]
+    except Exception:
+        pass
+
+    items = []
+    for _, row in df.iterrows():
+        ts_iso = _to_utc_iso(row.get("ts"))
+        meta_val = row.get("meta")
+        try:
+            if isinstance(meta_val, str):
+                try:
+                    meta_val = json.loads(meta_val)
+                except Exception:
+                    pass
+            meta_val = _redact_sensitive(meta_val)
+        except Exception:
+            pass
+        items.append(
+            {
+                "ts": ts_iso,
+                "symbol": row.get("symbol"),
+                "entry_type": row.get("entry_type"),
+                "content": row.get("content"),
+                "reason": row.get("reason"),
+                "meta": meta_val,
                 "ref_order_id": row.get("ref_order_id"),
             }
         )

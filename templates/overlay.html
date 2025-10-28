@@ -122,7 +122,7 @@
         const today_only = Number(qs("today_only") || 1);
         const ascending = Number(qs("ascending") || 0);
         const url =
-          `/api/journals?limit=${limit}&today_only=${today_only}&ascending=${ascending}` +
+          `/api/journals_filtered?limit=${limit}&today_only=${today_only}&ascending=${ascending}` +
           (symbol ? `&symbol=${encodeURIComponent(symbol)}` : "") +
           (types ? `&types=${encodeURIComponent(types)}` : "");
         try {
