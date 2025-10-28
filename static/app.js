@@ -55,11 +55,19 @@ function renderOrders(data) {
 }
 
 function renderStats(data) {
+  const fmtUSD = (n) =>
+    n === null || n === undefined || Number.isNaN(n)
+      ? "-"
+      : new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          maximumFractionDigits: 2,
+        }).format(Number(n));
   el("stats").innerHTML = `
-    <div>실현손익: ${data.realized_pnl}</div>
+    <div>실현손익: ${fmtUSD(data.realized_pnl)}</div>
     <div>거래 수: ${data.trades}</div>
     <div>승률: ${(data.win_rate * 100).toFixed(1)}%</div>
-    <div>평균 손익: ${data.avg_pnl}</div>
+    <div>평균 손익: ${fmtUSD(data.avg_pnl)}</div>
   `;
 }
 
@@ -156,15 +164,18 @@ async function refreshJournals() {
     const items = j.items || [];
     const rows = items
       .map((it, idx) => {
+        const url = new URL(window.location.href);
+        const tz = url.searchParams.get("tz");
         const ts = new Date(it.ts);
-        const tsStr = ts.toLocaleString("ko-KR", {
+        const opt = {
           year: "2-digit",
           month: "2-digit",
           day: "2-digit",
           hour: "2-digit",
           minute: "2-digit",
-          timeZone: "Asia/Seoul",
-        });
+        };
+        if (tz && tz.startsWith("UTC")) opt.timeZone = "UTC";
+        const tsStr = ts.toLocaleString("ko-KR", opt);
         const title = `${(it.entry_type || "").toUpperCase()}${
           it.symbol ? " · " + it.symbol : ""
         }`;

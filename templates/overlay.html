@@ -76,12 +76,16 @@
         board.innerHTML = items
           .map((it) => {
             const ts = new Date(it.ts);
-            const tsStr = ts.toLocaleString("ko-KR", {
+            // tz 파라미터 지원: UTC, UTC+9, UTC-5
+            const tz = qs("tz");
+            const opt = {
               month: "2-digit",
               day: "2-digit",
               hour: "2-digit",
               minute: "2-digit",
-            });
+              timeZone: tz && tz.startsWith("UTC") ? "UTC" : undefined,
+            };
+            const tsStr = ts.toLocaleString("ko-KR", opt);
             const title = `${it.entry_type.toUpperCase()}${
               it.symbol ? " · " + it.symbol : ""
             }`;

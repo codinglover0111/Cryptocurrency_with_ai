@@ -56,8 +56,8 @@ templates = Jinja2Templates(directory="templates")
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+def index(request: Request, tz: Optional[str] = None):
+    return templates.TemplateResponse("index.html", {"request": request, "tz": tz})
 
 
 class LeverageBody(BaseModel):
@@ -110,7 +110,14 @@ def stats():
     except Exception:
         # 통계 조회는 실패 없이 반환되도록 방어
         pass
-    return store.compute_stats()
+    s = store.compute_stats()
+    # USD 표기 일관성을 위해 float로 보정
+    try:
+        s["realized_pnl"] = float(s.get("realized_pnl") or 0.0)
+        s["avg_pnl"] = float(s.get("avg_pnl") or 0.0)
+    except Exception:
+        pass
+    return s
 
 
 @app.post("/close_all")
@@ -219,6 +226,7 @@ def overlay(
     today_only: int = 1,
     ascending: int = 1,
     refresh: int = 5,
+    tz: Optional[str] = None,
 ):
     store = TradeStore(
         StorageConfig(
@@ -260,6 +268,7 @@ def overlay(
             "today_only": today_only,
             "ascending": ascending,
             "refresh": refresh,
+            "tz": tz,
         },
     )
 

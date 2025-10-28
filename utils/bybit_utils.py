@@ -410,6 +410,44 @@ class BybitUtils:
             print(f"Error fetching my trades: {e}")
             return []
 
+    def sum_pnl_usdt_from_trades(self, trades: list, side: str) -> Optional[float]:
+        """체결 리스트로부터 대략적인 실현손익(USDT 기준)을 계산.
+        선물 USDT 마진 기준으로 가정: PnL ≈ Σ( (sell_price - buy_price) * qty )
+        (정확한 계산은 포지션별 진입/청산 매칭이 필요하여, 여기서는 VWAP 기반 근사)
+        """
+        try:
+            if not trades:
+                return None
+            # 가격*수량 총액 비교로 근사 PnL 계산 (reduce side 대비 increase side)
+            buy_value = 0.0
+            sell_value = 0.0
+            qty = 0.0
+            for t in trades:
+                price = t.get("price") or (t.get("info", {}) or {}).get("price")
+                amount = t.get("amount")
+                s = (t.get("side") or "").lower()
+                if price is None or amount is None:
+                    continue
+                p = float(price)
+                a = float(amount)
+                if p <= 0 or a <= 0:
+                    continue
+                qty += a
+                if s == "buy":
+                    buy_value += p * a
+                elif s == "sell":
+                    sell_value += p * a
+            if qty <= 0:
+                return 0.0
+            # 롱 기준: sell_value - buy_value, 숏 기준 반대
+            if (side or "").lower() == "buy":
+                return sell_value - buy_value
+            else:
+                return buy_value - sell_value
+        except Exception as e:
+            print(f"Error summing pnl from trades: {e}")
+            return None
+
     def get_positions_by_symbol(self, symbol: str):
         """지정 심볼의 포지션만 필터링해서 반환"""
         try:
