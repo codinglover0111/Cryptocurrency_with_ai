@@ -61,7 +61,12 @@ def automation_for_symbol(symbol_usdt: str):
     try:
         is_testnet = bool(int(os.getenv("TESTNET", "1")))
         bybit = BybitUtils(is_testnet)
-        store = TradeStore(StorageConfig(mysql_url=os.getenv("MYSQL_URL")))
+        store = TradeStore(
+            StorageConfig(
+                mysql_url=os.getenv("MYSQL_URL"),
+                sqlite_path=os.getenv("SQLITE_PATH"),
+            )
+        )
 
         spot_symbol, contract_symbol = _to_ccxt_symbols(symbol_usdt)
 
@@ -83,7 +88,7 @@ def automation_for_symbol(symbol_usdt: str):
         ai_provider = AIProvider()
 
         # 캔들 데이터(이미지 대신 CSV 텍스트 전송)
-        # TODO 비동기 최적화 가능
+
         price_utils = bybit_utils(spot_symbol, "4h", 100)
         df_4h = price_utils.get_ohlcv()
         csv_4h = df_4h.to_csv()
@@ -125,10 +130,56 @@ def automation_for_symbol(symbol_usdt: str):
         except Exception:
             journal_today_text = ""
 
+        # 최근 리포트(결정/리뷰 위주, hold 포함) 10개 수집
+        recent_reports_text = ""
+        try:
+            recent_df = store.fetch_journals(
+                symbol=contract_symbol,
+                types=["decision", "review"],
+                limit=10,
+                ascending=False,
+            )
+            if not recent_df.empty:
+                lines = []
+                # 최신순으로 가져왔으니 시간 흐름대로 보기 좋게 역순 정렬
+                for _, row in recent_df.iloc[::-1].iterrows():
+                    ts = row.get("ts")
+                    ts_str = (
+                        ts.strftime("%Y-%m-%d %H:%M:%S")
+                        if hasattr(ts, "strftime")
+                        else str(ts)
+                    )
+                    et = row.get("entry_type") or ""
+                    reason = row.get("reason") or ""
+                    content = row.get("content") or ""
+                    # decision 내용이 JSON 문자열인 경우 간단 요약 시도
+                    try:
+                        obj = json.loads(content)
+                        status = obj.get("status") or obj.get("Status")
+                        price = obj.get("price")
+                        tp_v = obj.get("tp")
+                        sl_v = obj.get("sl")
+                        lev = obj.get("leverage")
+                        brief = (
+                            f"status={status} price={price} tp={tp_v} sl={sl_v} lev={lev}"
+                            if status is not None
+                            else content
+                        )
+                    except Exception:
+                        brief = content
+                    line = f"[{ts_str}] ({et}) {reason} | {brief}"
+                    # 길이 과다 방지
+                    if len(line) > 300:
+                        line = line[:300]
+                    lines.append(line)
+                recent_reports_text = "\n".join(lines)
+        except Exception:
+            recent_reports_text = ""
+
         # 포지션이 존재하면, 최근 오픈 이후 기록도 수집
         since_open_text = ""
         try:
-            # trades.xlsx에서 해당 심볼의 마지막 opened ts 조회
+            # 최근 오픈 기록 기준으로 저널을 다시 끌어오기 위해 트레이드 DB 조회
             df_trades = store.load_trades()
             if not df_trades.empty:
                 df_sym = df_trades[(df_trades["symbol"] == contract_symbol)]
@@ -176,6 +227,11 @@ def automation_for_symbol(symbol_usdt: str):
                 f"Current position: side={pos_side}, entry={pos_entry}\n"
                 if pos_side is not None
                 else "Current position: None\n"
+            )
+            + (
+                "[RECENT_REPORTS_10]\n" + recent_reports_text + "\n"
+                if recent_reports_text
+                else ""
             )
             + (
                 "[JOURNALS_TODAY]\n" + journal_today_text + "\n"

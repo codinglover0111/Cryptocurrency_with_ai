@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, Request
@@ -51,6 +51,20 @@ def _redact_sensitive(obj):
         return obj
 
 
+def _to_utc_iso(value: Any) -> str:
+    """Convert datetime-like values to UTC ISO8601 string with trailing Z."""
+    try:
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                value = value.astimezone(timezone.utc)
+            return value.isoformat().replace("+00:00", "Z")
+    except Exception:
+        pass
+    return str(value)
+
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -73,7 +87,13 @@ def _startup():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "ts": datetime.utcnow().isoformat()}
+    return {
+        "status": "ok",
+        "ts": datetime.utcnow()
+        .replace(tzinfo=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
 
 
 @app.get("/status")
@@ -102,6 +122,7 @@ def stats():
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
     # 자동(TP/SL) 청산으로 stats 누락된 건을 보완
@@ -130,6 +151,7 @@ def stats_range(
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
 
@@ -213,6 +235,7 @@ def create_journal(body: JournalBody):
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
     store.record_journal({k: v for k, v in body.model_dump().items() if v is not None})
@@ -225,11 +248,12 @@ def list_journals(
     types: Optional[str] = None,
     today_only: int = 1,
     limit: int = 20,
-    ascending: int = 1,
+    ascending: int = 0,
 ):
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
     type_list: Optional[List[str]] = (
@@ -246,8 +270,7 @@ def list_journals(
         return {"items": []}
     items = []
     for _, row in df.iterrows():
-        ts = row.get("ts")
-        ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        ts_iso = _to_utc_iso(row.get("ts"))
         items.append(
             {
                 "ts": ts_iso,
@@ -400,6 +423,7 @@ def overlay(
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
     type_list: Optional[List[str]] = (
@@ -415,8 +439,7 @@ def overlay(
     items = []
     if not df.empty:
         for _, row in df.iterrows():
-            ts = row.get("ts")
-            ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            ts_iso = _to_utc_iso(row.get("ts"))
             items.append(
                 {
                     "ts": ts_iso,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, Tuple
 
 import pandas as pd
 import sqlalchemy as sa
@@ -12,17 +14,44 @@ import sqlalchemy as sa
 class StorageConfig:
     # DB 전용으로 단순화
     mysql_url: Optional[str] = None  # e.g. mysql+pymysql://user:pwd@host:3306/db
+    sqlite_path: Optional[str] = None  # e.g. data/trading.sqlite
+
+    def resolve(self) -> Tuple[Optional[str], bool]:
+        """Return (sqlalchemy_url, is_sqlite)."""
+        if self.mysql_url:
+            return self.mysql_url, False
+
+        # 기본 sqlite 파일 경로 결정
+        base_dir = Path(
+            os.getenv("APP_BASE_DIR") or Path(__file__).resolve().parents[1]
+        )
+        default_path = base_dir / "data" / "trading.sqlite"
+        target = (
+            Path(self.sqlite_path).expanduser() if self.sqlite_path else default_path
+        )
+
+        if target.is_dir():
+            target = target / "trading.sqlite"
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{target.resolve().as_posix()}", True
 
 
 class TradeStore:
     def __init__(self, config: StorageConfig):
         self.config = config
         self._engine = None
-        if config.mysql_url:
+        self._db_url, self._is_sqlite = config.resolve()
+        if self._db_url:
             try:
-                self._engine = sa.create_engine(config.mysql_url, pool_pre_ping=True)
+                kwargs: Dict[str, Any] = {}
+                if self._is_sqlite:
+                    kwargs["connect_args"] = {"check_same_thread": False}
+                else:
+                    kwargs["pool_pre_ping"] = True
+                self._engine = sa.create_engine(self._db_url, **kwargs)
             except Exception as e:
-                print(f"Warning: failed to init MySQL engine: {e}")
+                print(f"Warning: failed to init database engine: {e}")
 
     def record_trade(self, trade: Dict[str, Any]) -> None:
         # DB 기록 전용

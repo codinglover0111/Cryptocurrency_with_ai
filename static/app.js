@@ -113,36 +113,52 @@ function getTzParam() {
   }
 }
 
+function normalizeUtcTimestamp(raw) {
+  if (raw == null) return raw;
+  let value = String(raw).trim();
+  if (!value) return value;
+  if (!value.includes("T") && value.includes(" ")) {
+    value = value.replace(" ", "T");
+  }
+  if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(value)) {
+    value = value + "Z";
+  }
+  return value;
+}
+
 function formatTimeWithTZ(tsISO, opts = {}) {
   try {
     const tz = getTzParam();
-    const base = new Date(tsISO);
+    const normalized = normalizeUtcTimestamp(tsISO);
+    const base = new Date(normalized);
+    if (Number.isNaN(base.getTime())) return String(tsISO);
     const baseOpts = Object.assign(
       {
-        year: "2-digit",
+        year: "numeric",
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
       },
       opts
     );
+
+    let displayDate = base;
+    let label = "UTC";
     if (tz && tz.startsWith("UTC")) {
       const m = tz.match(/^UTC([+-]\d{1,2})$/);
       if (m) {
         const offsetH = parseInt(m[1], 10);
-        const adj = new Date(base.getTime() + offsetH * 3600000);
-        return adj.toLocaleString(
-          "ko-KR",
-          Object.assign({}, baseOpts, { timeZone: "UTC" })
-        );
+        displayDate = new Date(base.getTime() + offsetH * 3600000);
+        label = tz;
       }
-      return base.toLocaleString(
-        "ko-KR",
-        Object.assign({}, baseOpts, { timeZone: "UTC" })
-      );
     }
-    return base.toLocaleString("ko-KR", baseOpts);
+
+    const formatted = displayDate.toLocaleString("ko-KR", baseOpts);
+    return `${formatted} ${label}`;
   } catch (_) {
     return String(tsISO);
   }
@@ -227,6 +243,11 @@ window.addEventListener("DOMContentLoaded", () => {
   setupJournalDetailHandler();
   const refreshBtn = document.getElementById("jr-refresh");
   if (refreshBtn) refreshBtn.addEventListener("click", refreshJournals);
+  const typeFilters = document.getElementById("jr-type-filters");
+  if (typeFilters && !typeFilters.__jrTypeAttached) {
+    typeFilters.__jrTypeAttached = true;
+    typeFilters.addEventListener("change", refreshJournals);
+  }
   refreshAll();
   refreshJournals();
   setInterval(refreshAll, 10000);
@@ -255,11 +276,21 @@ async function submitJournal() {
 async function refreshJournals() {
   try {
     const limit = Number(el("jr-limit")?.value || 20);
+    const typeCheckboxes = getJournalTypeCheckboxes();
+    const selectedTypes = typeCheckboxes
+      .filter((cb) => cb.checked)
+      .map((cb) => cb.value);
     const q = new URLSearchParams({
       limit: String(limit),
       today_only: "1",
-      ascending: "1",
+      ascending: "0",
     });
+    if (
+      selectedTypes.length > 0 &&
+      selectedTypes.length < typeCheckboxes.length
+    ) {
+      q.set("types", selectedTypes.join(","));
+    }
     const j = await fetchJSON(`/api/journals?${q.toString()}`);
     const items = j.items || [];
     const rows = items
@@ -329,6 +360,12 @@ function ensureJournalModalDOM() {
       if (e.key === "Escape") closeJournalModal();
     });
   }
+}
+
+function getJournalTypeCheckboxes() {
+  const container = document.getElementById("jr-type-filters");
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('input[type="checkbox"]'));
 }
 
 function openJournalModal(html) {
