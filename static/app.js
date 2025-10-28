@@ -367,7 +367,9 @@ async function refreshJournals() {
         }`;
         return `
           <tr>
-            <td style="width: 120px" class="muted">${tsStr}</td>
+            <td style="width: 220px" class="muted" title="${escapeHtml(
+              tsStr
+            )}">${tsStr}</td>
             <td>${title}</td>
             <td style="width: 100px; text-align:right">
               <button class="btn secondary" data-action="jr-detail" data-item="${encodeURIComponent(
@@ -379,7 +381,7 @@ async function refreshJournals() {
       .join("");
     el("journals").innerHTML = `
       <table>
-        <thead><tr><th style="width:120px">시간</th><th>항목</th><th style="width:100px"></th></tr></thead>
+        <thead><tr><th style="width:220px">시간</th><th>항목</th><th style="width:100px"></th></tr></thead>
         <tbody>${
           rows || '<tr><td colspan="3" class="muted">기록 없음</td></tr>'
         }</tbody>

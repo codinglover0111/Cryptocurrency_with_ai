@@ -12,6 +12,11 @@
       rel="stylesheet"
     />
     <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box; /* padding/보더로 인한 입력칸 겹침 방지 */
+      }
       body {
         font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto,
           sans-serif;
@@ -153,7 +158,7 @@
       .stats-grid {
         display: grid;
         /* 각 입력 블록의 최소 너비를 보장하여 라벨/입력 겹침 방지 */
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
         gap: 12px;
         margin-bottom: 10px;
         align-items: start; /* 라벨 높이 차이로 인한 하단 정렬 겹침 방지 */
@@ -206,6 +211,9 @@
         padding: 8px;
         border-radius: 8px;
         width: 100%;
+        max-width: 100%;
+        min-width: 0; /* 그리드 셀 내에서 내용으로 인한 확장 방지 */
+        display: block; /* inline 특성으로 인한 라인 높이 충돌 방지 */
       }
       label {
         font-size: 13px;
