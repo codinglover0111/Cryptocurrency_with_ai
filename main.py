@@ -683,6 +683,7 @@ def automation_for_symbol(symbol_usdt: str):
             # 리스크 기반 수량 계산
             balance_info = bybit.get_balance("USDT") or {}
             balance_total = balance_info.get("total") or 0
+            balance_free = balance_info.get("free") or 0
             # 리스크는 고정(코드 내부), 최대 배분은 심볼 균등(환경변수로 오버라이드 가능)
             risk_percent = 20.0
             max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(per_symbol_alloc_pct)))
@@ -808,6 +809,29 @@ def automation_for_symbol(symbol_usdt: str):
                 leverage=leverage,
                 min_quantity=min_qty,
             )
+
+            # 3-0) 총 가용가능 포지션(Free) / 심볼 수 기준으로 균등 분배된 목표 수량으로 설정
+            #    - 가용 Free USDT × 레버리지 × 안전마진 / N 을 해당 심볼 진입가로 나눠 수량 산출
+            try:
+                try:
+                    num_symbols_avail = max(1, len(_parse_symbols()))
+                except Exception:
+                    num_symbols_avail = 1
+                avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
+                effective_lev_for_avail = max(1.0, float(leverage))
+                free_usdt = float(balance_free or 0.0)
+                per_symbol_available_notional = (
+                    free_usdt * effective_lev_for_avail * avail_safety
+                ) / float(num_symbols_avail)
+                if float(entry_price) > 0:
+                    target_qty_by_available = per_symbol_available_notional / float(
+                        entry_price
+                    )
+                    if target_qty_by_available > 0:
+                        quantity = max(min_qty, float(target_qty_by_available))
+            except Exception:
+                # 실패 시 기존 리스크 기반 계산값 유지
+                pass
 
             # 3-1) 심볼별 누적 노출 상한 적용: 이미 보유 중인 해당 심볼 노출을 고려해 남은 여유치만 진입
             try:
@@ -943,79 +967,7 @@ def automation_for_symbol(symbol_usdt: str):
                 # 실패 시 기존 계산값으로 진행(안전)
                 pass
 
-            # 3-2) 계정 총자산 기준(전체 포지션 용량) × 레버리지 / N 으로 최종 클램프
-            try:
-                try:
-                    num_symbols_avail = max(1, len(_parse_symbols()))
-                except Exception:
-                    num_symbols_avail = 1
-                avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
-                effective_lev_for_avail = max(1.0, float(leverage))
-                total_capacity_notional = (
-                    float(balance_total or 0.0) * effective_lev_for_avail * avail_safety
-                )
-                per_symbol_available_notional = total_capacity_notional / float(
-                    num_symbols_avail
-                )
-                if float(entry_price) > 0:
-                    max_qty_by_available = per_symbol_available_notional / float(
-                        entry_price
-                    )
-                    if max_qty_by_available <= 0:
-                        # 여유치 없음: 스킵
-                        try:
-                            store.record_journal(
-                                {
-                                    "symbol": contract_symbol,
-                                    "entry_type": "decision",
-                                    "content": json.dumps(
-                                        {
-                                            "status": "skip",
-                                            "reason": "no_total_capacity_per_symbol",
-                                        },
-                                        ensure_ascii=False,
-                                    ),
-                                    "reason": value.get("explain"),
-                                    "meta": {
-                                        "balance_total": float(balance_total or 0.0),
-                                        "effective_lev": float(effective_lev_for_avail),
-                                        "num_symbols": int(num_symbols_avail),
-                                        "per_symbol_available_notional": float(
-                                            per_symbol_available_notional
-                                        ),
-                                    },
-                                }
-                            )
-                        except Exception:
-                            pass
-                        return
-                    # 최종 수량 재클램프
-                    quantity_before_avail = float(quantity)
-                    quantity = max(
-                        min_qty, min(float(quantity), float(max_qty_by_available))
-                    )
-                    if quantity < quantity_before_avail:
-                        try:
-                            store.record_journal(
-                                {
-                                    "symbol": contract_symbol,
-                                    "entry_type": "action",
-                                    "content": f"clamp_total_capacity qty_from={quantity_before_avail} qty_to={float(quantity)}",
-                                    "reason": value.get("explain"),
-                                    "meta": {
-                                        "balance_total": float(balance_total or 0.0),
-                                        "effective_lev": float(effective_lev_for_avail),
-                                        "num_symbols": int(num_symbols_avail),
-                                        "per_symbol_available_notional": float(
-                                            per_symbol_available_notional
-                                        ),
-                                    },
-                                }
-                            )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            # (구) 총자산 기반 클램프는 제거됨: 총 가용 Free 기반 목표 수량을 3-1 잔여치 클램프에서만 제한
 
             position_params = Open_Position(
                 symbol=contract_symbol,
