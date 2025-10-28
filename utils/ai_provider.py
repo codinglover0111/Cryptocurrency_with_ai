@@ -141,7 +141,12 @@ class AIProvider:
                 tools=tools,
                 tool_choice="auto",
                 parallel_tool_calls=False,
-                extra_body={"provider": {"order": ["google-vertex", "fireworks"]}},
+                extra_body={
+                    "provider": {
+                        "order": ["google-vertex", "fireworks"],
+                        "allow_fallbacks": True,
+                    }
+                },
             )
             choice = resp.choices[0]
             tool_calls = (
