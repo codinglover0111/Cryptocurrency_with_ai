@@ -124,7 +124,7 @@ def _format_trade_reviews_for_prompt(store: TradeStore, contract_symbol: str) ->
         return ""
 
 
-def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
+def _review_losing_trades(store: TradeStore, since_minutes: int = 600) -> None:
     """최근 N분 내 실현 손익이 발생한(trades.status=closed, pnl!=0) 주문을 리뷰하여 journals(review)로 저장"""
     try:
         trades_df = store.load_trades()
@@ -316,9 +316,85 @@ def automation_for_symbol(symbol_usdt: str):
                 if isinstance(pos.get("info"), dict)
                 else pos.get("side")
             )
-            pos_entry = pos.get("entryPrice") or pos.get("info", {}).get("avgPrice")
         else:
-            pos_side, pos_entry = None, None
+            pos_side = None
+
+        # 현재 심볼 포지션 상세를 LLM에 전달하기 위한 요약 문자열 구성
+        current_positions_lines = []
+        try:
+            last_fallback = float(current_price or 0)
+            for p in current_position or []:
+                try:
+                    sym = p.get("symbol") or (p.get("info", {}) or {}).get("symbol")
+                    if sym != contract_symbol:
+                        continue
+                    sidep = p.get("side") or (p.get("info", {}) or {}).get("side")
+                    entry = p.get("entryPrice") or (p.get("info", {}) or {}).get(
+                        "avgPrice"
+                    )
+                    contract_size = p.get("contractSize") or (
+                        p.get("info", {}) or {}
+                    ).get("contractSize")
+                    size_raw = p.get("size") or p.get("contracts") or p.get("amount")
+                    try:
+                        size_f = float(size_raw) if size_raw is not None else None
+                    except Exception:
+                        size_f = None
+                    # contracts만 있는 경우 contractSize 곱해 기본 단위로 변환
+                    if (
+                        size_f is not None
+                        and p.get("size") is None
+                        and p.get("contracts") is not None
+                        and contract_size is not None
+                    ):
+                        try:
+                            size_f = size_f * float(contract_size)
+                        except Exception:
+                            pass
+                    mark = p.get("markPrice") or (p.get("info", {}) or {}).get(
+                        "markPrice"
+                    )
+                    try:
+                        last = float(mark) if mark is not None else float(last_fallback)
+                    except Exception:
+                        last = last_fallback
+                    try:
+                        entry_f = float(entry) if entry is not None else None
+                    except Exception:
+                        entry_f = None
+                    unreal = p.get("unrealizedPnl") or (p.get("info", {}) or {}).get(
+                        "unrealisedPnl"
+                    )
+                    pct = p.get("percentage") or (p.get("info", {}) or {}).get(
+                        "unrealisedPnlPcnt"
+                    )
+                    tp = p.get("takeProfit") or (p.get("info", {}) or {}).get(
+                        "takeProfit"
+                    )
+                    sl = p.get("stopLoss") or (p.get("info", {}) or {}).get("stopLoss")
+                    lev = p.get("leverage") or (p.get("info", {}) or {}).get("leverage")
+
+                    def _fmt(v):
+                        try:
+                            return f"{float(v):.6f}"
+                        except Exception:
+                            return str(v)
+
+                    line = (
+                        f"side={sidep}, "
+                        f"size={_fmt(size_f) if size_f is not None else 'n/a'}, "
+                        f"entry={_fmt(entry_f) if entry_f is not None else 'n/a'}, "
+                        f"last={_fmt(last)}, "
+                        f"tp={_fmt(tp) if tp is not None else 'n/a'}, "
+                        f"sl={_fmt(sl) if sl is not None else 'n/a'}, "
+                        f"lev={_fmt(lev) if lev is not None else 'n/a'}, "
+                        f"unreal={_fmt(unreal) if unreal is not None else 'n/a'} ({_fmt(pct)}%)"
+                    )
+                    current_positions_lines.append(line)
+                except Exception:
+                    continue
+        except Exception:
+            current_positions_lines = []
 
         # 오늘 저널(같은 심볼 기준) 조회 후 프롬프트에 반영
         try:
@@ -438,8 +514,8 @@ def automation_for_symbol(symbol_usdt: str):
             "[CSV_15m]\n" + csv_15m + "\n"
             f"Current price: {current_price}\n"
             + (
-                f"Current position: side={pos_side}, entry={pos_entry}\n"
-                if pos_side is not None
+                "[CURRENT_POSITIONS]\n" + "\n".join(current_positions_lines) + "\n"
+                if current_positions_lines
                 else "Current position: None\n"
             )
             + (
@@ -1016,7 +1092,7 @@ def run_scheduler():
                     sqlite_path=os.getenv("SQLITE_PATH"),
                 )
             )
-            _review_losing_trades(store, since_minutes=5)
+            _review_losing_trades(store, since_minutes=600)
         except Exception as e:
             logging.error(f"Loss review job error: {e}")
 
