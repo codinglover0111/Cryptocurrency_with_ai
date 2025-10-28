@@ -119,6 +119,126 @@ class TradeStore:
             "avg_pnl": avg_pnl,
         }
 
+    def compute_stats_range(
+        self,
+        *,
+        since_ts: Optional[datetime] = None,
+        until_ts: Optional[datetime] = None,
+        symbol: Optional[str] = None,
+        group: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """기간/심볼 필터 기반 실현 손익 통계. DB가 없으면 기본값 반환.
+
+        Args:
+            since_ts: 포함 하한(UTC)
+            until_ts: 제외 상한(UTC)
+            symbol: 심볼 필터
+            group: 'day' | 'week' | 'month' 그룹 집계 시리즈
+        """
+        df = self.load_trades()
+        if df is None or getattr(df, "empty", True):
+            return {
+                "range": {"since": since_ts, "until": until_ts},
+                "summary": {
+                    "trades": 0,
+                    "realized_pnl": 0.0,
+                    "wins": 0,
+                    "win_rate": 0.0,
+                    "avg_pnl": 0.0,
+                },
+                "by_symbol": [],
+                "series": [],
+            }
+
+        try:
+            if not pd.api.types.is_datetime64_any_dtype(df["ts"]):
+                df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+        except Exception:
+            df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+
+        # 필터: 실현 손익이 있는 행만
+        df = df[df["pnl"].notna()].copy()
+        if since_ts is not None:
+            df = df[df["ts"] >= pd.Timestamp(since_ts, tz="UTC")]
+        if until_ts is not None:
+            df = df[df["ts"] < pd.Timestamp(until_ts, tz="UTC")]
+        if symbol:
+            df = df[df["symbol"].astype(str) == str(symbol)]
+
+        if getattr(df, "empty", True):
+            base = {
+                "trades": 0,
+                "realized_pnl": 0.0,
+                "wins": 0,
+                "win_rate": 0.0,
+                "avg_pnl": 0.0,
+            }
+            return {
+                "range": {"since": since_ts, "until": until_ts},
+                "summary": base,
+                "by_symbol": [],
+                "series": [],
+            }
+
+        trades = int(len(df))
+        realized_pnl = float(df["pnl"].sum())
+        wins = int((df["pnl"] > 0).sum())
+        win_rate = float(wins / trades) if trades > 0 else 0.0
+        avg_pnl = float(df["pnl"].mean()) if trades > 0 else 0.0
+
+        # 심볼별 집계
+        by_symbol = []
+        try:
+            g = df.groupby("symbol", dropna=False)
+            for k, sub in g:
+                by_symbol.append(
+                    {
+                        "symbol": k,
+                        "trades": int(len(sub)),
+                        "realized_pnl": float(sub["pnl"].sum()),
+                    }
+                )
+        except Exception:
+            pass
+
+        # 시계열 집계
+        series = []
+        try:
+            if group in ("day", "week", "month"):
+                if group == "day":
+                    idx = df["ts"].dt.floor("D")
+                elif group == "week":
+                    # 주의 시작으로 정규화 (월요일)
+                    idx = (
+                        df["ts"] - pd.to_timedelta(df["ts"].dt.weekday, unit="D")
+                    ).dt.floor("D")
+                else:
+                    idx = df["ts"].dt.to_period("M").dt.to_timestamp()
+                gf = df.groupby(idx)
+                for t, sub in gf:
+                    series.append(
+                        {
+                            "t": pd.Timestamp(t).tz_convert("UTC").isoformat(),
+                            "realized_pnl": float(sub["pnl"].sum()),
+                            "trades": int(len(sub)),
+                        }
+                    )
+        except Exception:
+            pass
+
+        return {
+            "range": {"since": since_ts, "until": until_ts},
+            "summary": {
+                "trades": trades,
+                "realized_pnl": realized_pnl,
+                "wins": wins,
+                "win_rate": win_rate,
+                "avg_pnl": avg_pnl,
+            },
+            "by_symbol": by_symbol,
+            "series": series,
+        }
+
     # -------------------------------
     # Journal (DB only)
     # -------------------------------

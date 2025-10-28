@@ -120,6 +120,51 @@ def stats():
     return s
 
 
+@app.get("/stats_range")
+def stats_range(
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    symbol: Optional[str] = None,
+    group: Optional[str] = None,
+):
+    store = TradeStore(
+        StorageConfig(
+            mysql_url=os.getenv("MYSQL_URL"),
+        )
+    )
+
+    def _parse_iso(ts: Optional[str]):
+        if not ts:
+            return None
+        try:
+            # YYYY-MM-DD 또는 ISO8601 허용, UTC 가정
+            if len(ts) == 10:
+                from datetime import datetime
+
+                return datetime.fromisoformat(ts + "T00:00:00+00:00")
+            from datetime import datetime
+
+            return datetime.fromisoformat(ts)
+        except Exception:
+            return None
+
+    since_ts = _parse_iso(since)
+    until_ts = _parse_iso(until)
+    g = group if group in ("day", "week", "month") else None
+    result = store.compute_stats_range(
+        since_ts=since_ts, until_ts=until_ts, symbol=symbol, group=g
+    )
+    # float 보정
+    try:
+        if isinstance(result, dict) and "summary" in result:
+            s = result["summary"]
+            s["realized_pnl"] = float(s.get("realized_pnl") or 0.0)
+            s["avg_pnl"] = float(s.get("avg_pnl") or 0.0)
+    except Exception:
+        pass
+    return result
+
+
 @app.post("/close_all")
 def close_all():
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))

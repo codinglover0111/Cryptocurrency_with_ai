@@ -54,7 +54,7 @@ function renderOrders(data) {
     </table>`;
 }
 
-function renderStats(data) {
+function renderStatsRange(data) {
   const fmtUSD = (n) =>
     n === null || n === undefined || Number.isNaN(n)
       ? "-"
@@ -63,11 +63,44 @@ function renderStats(data) {
           currency: "USD",
           maximumFractionDigits: 2,
         }).format(Number(n));
+  const s = data.summary || {};
+  const bySym = (data.by_symbol || [])
+    .map(
+      (r) =>
+        `<tr><td>${r.symbol}</td><td>${r.trades}</td><td>${fmtUSD(
+          r.realized_pnl
+        )}</td></tr>`
+    )
+    .join("");
+  const series = (data.series || [])
+    .map(
+      (r) =>
+        `<tr><td>${r.t}</td><td>${r.trades}</td><td>${fmtUSD(
+          r.realized_pnl
+        )}</td></tr>`
+    )
+    .join("");
   el("stats").innerHTML = `
-    <div>실현손익: ${fmtUSD(data.realized_pnl)}</div>
-    <div>거래 수: ${data.trades}</div>
-    <div>승률: ${(data.win_rate * 100).toFixed(1)}%</div>
-    <div>평균 손익: ${fmtUSD(data.avg_pnl)}</div>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:8px">
+      <div>실현손익: ${fmtUSD(s.realized_pnl)}</div>
+      <div>거래 수: ${s.trades ?? 0}</div>
+      <div>승률: ${((s.win_rate || 0) * 100).toFixed(1)}%</div>
+      <div>평균 손익: ${fmtUSD(s.avg_pnl)}</div>
+    </div>
+    <div class="grid-2">
+      <div>
+        <h3 style="margin:0 0 6px;font-size:14px;color:#9ca3af">심볼별</h3>
+        <table><thead><tr><th>심볼</th><th>거래수</th><th>실현손익</th></tr></thead><tbody>
+          ${bySym || '<tr><td colspan="3" class="muted">없음</td></tr>'}
+        </tbody></table>
+      </div>
+      <div>
+        <h3 style="margin:0 0 6px;font-size:14px;color:#9ca3af">시계열</h3>
+        <table><thead><tr><th>기간</th><th>거래수</th><th>실현손익</th></tr></thead><tbody>
+          ${series || '<tr><td colspan="3" class="muted">없음</td></tr>'}
+        </tbody></table>
+      </div>
+    </div>
   `;
 }
 
@@ -119,19 +152,42 @@ async function refreshAll() {
   try {
     const [status, stats, syms] = await Promise.all([
       fetchJSON("/status"),
-      fetchJSON("/stats"),
+      fetchJSON(buildStatsRangeUrl()),
       fetchJSON("/symbols"),
     ]);
     renderBalance(status);
     renderPositions(status);
     renderOrders(status);
-    renderStats(stats);
+    renderStatsRange(stats);
     const dl = el("symbols");
     if (dl && syms && Array.isArray(syms.symbols)) {
       dl.innerHTML = syms.symbols
         .map((s) => `<option value="${s.contract}">${s.code}</option>`)
         .join("");
     }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function buildStatsRangeUrl() {
+  const since = el("st-since").value.trim();
+  const until = el("st-until").value.trim();
+  const symbol = el("st-symbol").value.trim();
+  const group = el("st-group").value;
+  const q = new URLSearchParams();
+  if (since) q.set("since", since);
+  if (until) q.set("until", until);
+  if (symbol) q.set("symbol", symbol);
+  if (group) q.set("group", group);
+  return "/stats_range" + (q.toString() ? "?" + q.toString() : "");
+}
+
+async function manualRefreshStats() {
+  try {
+    const url = buildStatsRangeUrl();
+    const data = await fetchJSON(url);
+    renderStatsRange(data);
   } catch (e) {
     console.error(e);
   }
