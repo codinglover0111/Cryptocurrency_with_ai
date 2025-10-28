@@ -165,6 +165,8 @@ def automation_for_symbol(symbol_usdt: str):
 
         prompt = (
             "당신은 천재적인 암호화폐 트레이더입니다.\n"
+            "언제나 이성적으로 거래를 하며 감정적이지 않습니다.\n"
+            "당신은 항상 현재 상황을 분석하고 최적의 거래를 결정합니다.\n"
             f"아래는 {spot_symbol}의 OHLCV CSV 데이터입니다.\n"
             "[CSV_4h]\n" + csv_4h + "\n"
             "[CSV_1h]\n" + csv_1h + "\n"

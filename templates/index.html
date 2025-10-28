@@ -100,7 +100,9 @@
     <div class="container">
       <div class="card">
         <h1>Crypto Bot Dashboard</h1>
-        <div class="muted">상태, 레버리지, 통계 확인 및 제어</div>
+        <div class="muted">
+          상태, 통계 조회 및 저널 목록 확인 (루트 페이지는 조회 전용)
+        </div>
       </div>
 
       <div class="row">
@@ -114,25 +116,10 @@
           <div id="stats"></div>
         </div>
         <div class="card" id="card-actions">
-          <h2>액션</h2>
-          <div class="grid-2">
-            <div>
-              <label>심볼</label>
-              <input id="symbol" list="symbols" value="XRP/USDT:USDT" />
-              <datalist id="symbols"></datalist>
-            </div>
-            <div>
-              <label>레버리지</label>
-              <input id="leverage" type="number" min="1" step="1" value="5" />
-            </div>
+          <h2>제어 (비활성화됨)</h2>
+          <div class="muted">
+            루트 페이지에서는 변경 작업이 비활성화되어 있습니다.
           </div>
-          <div style="margin-top: 12px; display: flex; gap: 8px">
-            <button class="btn" onclick="applyLeverage()">레버리지 설정</button>
-            <button class="btn secondary" onclick="closeAll()">
-              모든 포지션 청산
-            </button>
-          </div>
-          <div id="action-result" class="muted" style="margin-top: 8px"></div>
         </div>
       </div>
 
@@ -142,40 +129,37 @@
       </div>
 
       <div class="card">
-        <h2>저널 입력</h2>
-        <div class="grid-2">
-          <div>
-            <label>심볼(선택)</label>
-            <input id="j-symbol" placeholder="BTC/USDT:USDT" />
-          </div>
-          <div>
-            <label>유형</label>
-            <select id="j-type">
-              <option value="thought">thought</option>
-              <option value="decision">decision</option>
-              <option value="action">action</option>
-              <option value="review">review</option>
-            </select>
-          </div>
+        <h2>저널 조회</h2>
+        <div class="muted" style="margin-bottom: 8px">
+          오늘 생성된 최신 기록을 시간순으로 보여줍니다. 항목의 "상세" 버튼을
+          클릭해 전체 내용을 확인하세요.
         </div>
-        <div style="margin-top: 8px">
-          <label>사유(간단 요약)</label>
-          <input id="j-reason" placeholder="왜 이런 판단을 했는지" />
-        </div>
-        <div style="margin-top: 8px">
-          <label>내용(자유서술)</label>
-          <input id="j-content" placeholder="세부 내용" />
-        </div>
-        <div style="margin-top: 12px; display: flex; gap: 8px">
-          <button class="btn" onclick="submitJournal()">기록</button>
+        <div style="display: flex; gap: 8px; margin-bottom: 8px">
+          <label style="display: flex; align-items: center; gap: 6px">
+            최근 개수
+            <input
+              id="jr-limit"
+              type="number"
+              min="1"
+              max="200"
+              value="20"
+              style="width: 90px"
+            />
+          </label>
+          <button class="btn secondary" onclick="refreshJournals()">
+            새로고침
+          </button>
+          <a class="btn" href="/overlay?limit=12&today_only=1" target="_blank"
+            >판단 오버레이</a
+          >
           <a
-            class="btn secondary"
-            href="/overlay?limit=12&today_only=1"
+            class="btn"
+            href="/overlay_positions?refresh=5&fs=18"
             target="_blank"
-            >오버레이 열기</a
+            >포지션 오버레이</a
           >
         </div>
-        <div id="j-result" class="muted" style="margin-top: 8px"></div>
+        <div id="journals"></div>
       </div>
     </div>
   </body>

@@ -216,3 +216,79 @@ def overlay(
             "refresh": refresh,
         },
     )
+
+
+@app.get("/api/positions_summary")
+def positions_summary(symbol: Optional[str] = None):
+    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    positions = bybit.get_positions() or []
+    items = []
+    for p in positions:
+        try:
+            sym = p.get("symbol") or (p.get("info", {}) or {}).get("symbol")
+            if not sym:
+                continue
+            if symbol and sym != symbol:
+                continue
+            side = p.get("side") or (p.get("info", {}) or {}).get("side")
+            entry = p.get("entryPrice") or (p.get("info", {}) or {}).get("avgPrice")
+            size = p.get("contracts") or p.get("amount") or p.get("size")
+            tp = (
+                p.get("takeProfit")
+                or (p.get("info", {}) or {}).get("takeProfit")
+                or None
+            )
+            sl = p.get("stopLoss") or (p.get("info", {}) or {}).get("stopLoss") or None
+            lev = p.get("leverage") or (p.get("info", {}) or {}).get("leverage")
+            try:
+                lev = float(lev) if lev is not None else None
+            except Exception:
+                lev = None
+
+            last = bybit.get_last_price(sym)
+            entry_f = float(entry) if entry is not None else None
+            size_f = float(size) if size is not None else None
+            last_f = float(last) if last is not None else None
+            pnl = None
+            pnl_pct = None
+            if (
+                entry_f is not None
+                and size_f is not None
+                and last_f is not None
+                and side
+            ):
+                if (side or "").lower() in ("long", "buy"):
+                    pnl = (last_f - entry_f) * size_f
+                    pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
+                else:
+                    pnl = (entry_f - last_f) * size_f
+                    pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
+            items.append(
+                {
+                    "symbol": sym,
+                    "side": side,
+                    "entryPrice": entry_f,
+                    "lastPrice": last_f,
+                    "size": size_f,
+                    "tp": float(tp) if tp is not None else None,
+                    "sl": float(sl) if sl is not None else None,
+                    "leverage": lev,
+                    "pnl": pnl,
+                    "pnlPct": pnl_pct,
+                }
+            )
+        except Exception:
+            continue
+    return {"items": items}
+
+
+@app.get("/overlay_positions", response_class=HTMLResponse)
+def overlay_positions(
+    request: Request,
+    symbol: Optional[str] = None,
+    refresh: int = 5,
+):
+    return templates.TemplateResponse(
+        "overlay_positions.html",
+        {"request": request, "symbol": symbol, "refresh": refresh},
+    )
