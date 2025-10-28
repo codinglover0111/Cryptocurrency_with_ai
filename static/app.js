@@ -71,6 +71,50 @@ function renderStats(data) {
   `;
 }
 
+function getTzParam() {
+  try {
+    const url = new URL(window.location.href);
+    return url.searchParams.get("tz");
+  } catch (_) {
+    return null;
+  }
+}
+
+function formatTimeWithTZ(tsISO, opts = {}) {
+  try {
+    const tz = getTzParam();
+    const base = new Date(tsISO);
+    const baseOpts = Object.assign(
+      {
+        year: "2-digit",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      },
+      opts
+    );
+    if (tz && tz.startsWith("UTC")) {
+      const m = tz.match(/^UTC([+-]\d{1,2})$/);
+      if (m) {
+        const offsetH = parseInt(m[1], 10);
+        const adj = new Date(base.getTime() + offsetH * 3600000);
+        return adj.toLocaleString(
+          "ko-KR",
+          Object.assign({}, baseOpts, { timeZone: "UTC" })
+        );
+      }
+      return base.toLocaleString(
+        "ko-KR",
+        Object.assign({}, baseOpts, { timeZone: "UTC" })
+      );
+    }
+    return base.toLocaleString("ko-KR", baseOpts);
+  } catch (_) {
+    return String(tsISO);
+  }
+}
+
 async function refreshAll() {
   try {
     const [status, stats, syms] = await Promise.all([
@@ -164,18 +208,7 @@ async function refreshJournals() {
     const items = j.items || [];
     const rows = items
       .map((it, idx) => {
-        const url = new URL(window.location.href);
-        const tz = url.searchParams.get("tz");
-        const ts = new Date(it.ts);
-        const opt = {
-          year: "2-digit",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-        };
-        if (tz && tz.startsWith("UTC")) opt.timeZone = "UTC";
-        const tsStr = ts.toLocaleString("ko-KR", opt);
+        const tsStr = formatTimeWithTZ(it.ts);
         const title = `${(it.entry_type || "").toUpperCase()}${
           it.symbol ? " · " + it.symbol : ""
         }`;
@@ -258,8 +291,7 @@ function closeJournalModal() {
 
 function showJournalModal(it) {
   try {
-    const ts = new Date(it.ts);
-    const tsStr = ts.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+    const tsStr = formatTimeWithTZ(it.ts, {});
     const body = `
       <div><strong>시간</strong>: ${escapeHtml(tsStr)}</div>
       <div><strong>유형</strong>: ${escapeHtml(it.entry_type)}</div>

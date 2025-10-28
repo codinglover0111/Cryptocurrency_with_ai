@@ -85,7 +85,19 @@
               minute: "2-digit",
               timeZone: tz && tz.startsWith("UTC") ? "UTC" : undefined,
             };
-            const tsStr = ts.toLocaleString("ko-KR", opt);
+            // 오프셋 지원: UTC+/-H
+            let tsStr;
+            const m = tz && tz.match(/^UTC([+-]\d{1,2})$/);
+            if (m) {
+              const offsetH = parseInt(m[1], 10);
+              const adj = new Date(ts.getTime() + offsetH * 3600000);
+              tsStr = adj.toLocaleString(
+                "ko-KR",
+                Object.assign({}, opt, { timeZone: "UTC" })
+              );
+            } else {
+              tsStr = ts.toLocaleString("ko-KR", opt);
+            }
             const title = `${it.entry_type.toUpperCase()}${
               it.symbol ? " · " + it.symbol : ""
             }`;
