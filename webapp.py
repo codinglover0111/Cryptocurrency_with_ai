@@ -398,7 +398,12 @@ def overlay(
 
 
 @app.get("/api/positions_summary")
-def positions_summary(symbol: Optional[str] = None):
+def positions_summary(
+    symbol: Optional[str] = None,
+    force_mark: int = 0,
+    force_exchange_pnl: int = 0,
+    force_roe: int = 0,
+):
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
     positions = bybit.get_positions() or []
     items = []
@@ -449,9 +454,12 @@ def positions_summary(symbol: Optional[str] = None):
             except Exception:
                 lev = None
 
-            # 거래소 UI와 일치하도록 마크 프라이스 우선 사용, 불가 시 최근 체결가 사용
+            # 가격 소스: 강제 옵션(force_mark) 시 마크 프라이스 고정, 아니면 마크 우선
             mark = p.get("markPrice") or (p.get("info", {}) or {}).get("markPrice")
-            last = mark if mark is not None else bybit.get_last_price(sym)
+            if force_mark:
+                last = mark if mark is not None else bybit.get_last_price(sym)
+            else:
+                last = mark if mark is not None else bybit.get_last_price(sym)
 
             entry_f = float(entry) if entry is not None else None
             last_f = float(last) if last is not None else None
@@ -509,30 +517,42 @@ def positions_summary(symbol: Optional[str] = None):
                     initial_margin_f = None
 
             # PnL 값 결정: 거래소 제공치 → 자체 계산(마크/라스트)
-            if unreal_f is not None:
-                pnl = unreal_f
-            elif (
-                entry_f is not None
-                and size_f is not None
-                and last_f is not None
-                and side
-            ):
-                if (side or "").lower() in ("long", "buy"):
-                    pnl = (last_f - entry_f) * size_f
-                else:
-                    pnl = (entry_f - last_f) * size_f
+            if force_exchange_pnl:
+                pnl = unreal_f  # 폴백 금지
+            else:
+                if unreal_f is not None:
+                    pnl = unreal_f
+                elif (
+                    entry_f is not None
+                    and size_f is not None
+                    and last_f is not None
+                    and side
+                ):
+                    if (side or "").lower() in ("long", "buy"):
+                        pnl = (last_f - entry_f) * size_f
+                    else:
+                        pnl = (entry_f - last_f) * size_f
 
-            # 퍼센트: ROE(초기증거금 대비)가 우선, 불가 시 가격 변화율로 폴백
-            if pct_f is not None:
-                pnl_pct = pct_f
-            elif pnl is not None:
-                if initial_margin_f and initial_margin_f > 0:
+            # 퍼센트: 강제 ROE면 ROE만, 아니면 거래소 percentage 우선 → ROE → 가격 변화율
+            if force_roe:
+                if pnl is not None and initial_margin_f and initial_margin_f > 0:
                     pnl_pct = (float(pnl) / initial_margin_f) * 100.0
-                elif entry_f and last_f is not None:
+                elif pnl is not None and entry_f and last_f is not None:
                     if (side or "").lower() in ("long", "buy"):
                         pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
                     else:
                         pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
+            else:
+                if pct_f is not None:
+                    pnl_pct = pct_f
+                elif pnl is not None:
+                    if initial_margin_f and initial_margin_f > 0:
+                        pnl_pct = (float(pnl) / initial_margin_f) * 100.0
+                    elif entry_f and last_f is not None:
+                        if (side or "").lower() in ("long", "buy"):
+                            pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
+                        else:
+                            pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
             items.append(
                 {
                     "symbol": sym,

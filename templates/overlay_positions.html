@@ -124,9 +124,15 @@
       }
       async function refresh() {
         const symbol = qs("symbol");
-        const url =
-          "/api/positions_summary" +
-          (symbol ? `?symbol=${encodeURIComponent(symbol)}` : "");
+        const q = new URLSearchParams();
+        if (symbol) q.set("symbol", symbol);
+        const optMark = document.getElementById("opt_force_mark");
+        const optEx = document.getElementById("opt_force_ex");
+        const optRoe = document.getElementById("opt_force_roe");
+        if (optMark) q.set("force_mark", optMark.checked ? "1" : "0");
+        if (optEx) q.set("force_exchange_pnl", optEx.checked ? "1" : "0");
+        if (optRoe) q.set("force_roe", optRoe.checked ? "1" : "0");
+        const url = "/api/positions_summary?" + q.toString();
         try {
           const j = await fetchJSON(url);
           render(j.items || []);
@@ -172,5 +178,49 @@
   </head>
   <body>
     <div class="board" id="board"></div>
+    <div
+      style="
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        background: rgba(17, 24, 39, 0.85);
+        border: 1px solid #1f2937;
+        padding: 6px 8px;
+        border-radius: 8px;
+        font-size: 0.9em;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      "
+    >
+      <label
+        style="display: flex; align-items: center; gap: 4px; cursor: pointer"
+      >
+        <input id="opt_force_mark" type="checkbox" /> 마크가격 고정
+      </label>
+      <label
+        style="display: flex; align-items: center; gap: 4px; cursor: pointer"
+      >
+        <input id="opt_force_ex" type="checkbox" /> 거래소 PnL만 사용
+      </label>
+      <label
+        style="display: flex; align-items: center; gap: 4px; cursor: pointer"
+      >
+        <input id="opt_force_roe" type="checkbox" /> ROE 퍼센트 강제
+      </label>
+      <button
+        onclick="refresh()"
+        style="
+          background: #334155;
+          color: #e2e8f0;
+          border: 1px solid #475569;
+          border-radius: 6px;
+          padding: 4px 8px;
+          cursor: pointer;
+        "
+      >
+        적용
+      </button>
+    </div>
   </body>
 </html>
