@@ -943,6 +943,81 @@ def automation_for_symbol(symbol_usdt: str):
                 # 실패 시 기존 계산값으로 진행(안전)
                 pass
 
+            # 3-2) 계정 가용 마진 기준 심볼 수(N)로 균등 분할한 '현재 가능한 노션널'로 최종 클램프
+            try:
+                free_usdt = float(balance_info.get("free") or 0.0)
+                try:
+                    num_symbols_avail = max(1, len(_parse_symbols()))
+                except Exception:
+                    num_symbols_avail = 1
+                avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
+                effective_lev_for_avail = max(1.0, float(leverage))
+                per_symbol_available_notional = (
+                    free_usdt
+                    * effective_lev_for_avail
+                    * avail_safety
+                    / float(num_symbols_avail)
+                )
+                if float(entry_price) > 0:
+                    max_qty_by_available = per_symbol_available_notional / float(
+                        entry_price
+                    )
+                    if max_qty_by_available <= 0:
+                        # 여유치 없음: 스킵
+                        try:
+                            store.record_journal(
+                                {
+                                    "symbol": contract_symbol,
+                                    "entry_type": "decision",
+                                    "content": json.dumps(
+                                        {
+                                            "status": "skip",
+                                            "reason": "no_available_capacity",
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                    "reason": value.get("explain"),
+                                    "meta": {
+                                        "free_usdt": float(free_usdt),
+                                        "effective_lev": float(effective_lev_for_avail),
+                                        "num_symbols": int(num_symbols_avail),
+                                        "per_symbol_available_notional": float(
+                                            per_symbol_available_notional
+                                        ),
+                                    },
+                                }
+                            )
+                        except Exception:
+                            pass
+                        return
+                    # 최종 수량 재클램프
+                    quantity_before_avail = float(quantity)
+                    quantity = max(
+                        min_qty, min(float(quantity), float(max_qty_by_available))
+                    )
+                    if quantity < quantity_before_avail:
+                        try:
+                            store.record_journal(
+                                {
+                                    "symbol": contract_symbol,
+                                    "entry_type": "action",
+                                    "content": f"clamp_available_notional qty_from={quantity_before_avail} qty_to={float(quantity)}",
+                                    "reason": value.get("explain"),
+                                    "meta": {
+                                        "free_usdt": float(free_usdt),
+                                        "effective_lev": float(effective_lev_for_avail),
+                                        "num_symbols": int(num_symbols_avail),
+                                        "per_symbol_available_notional": float(
+                                            per_symbol_available_notional
+                                        ),
+                                    },
+                                }
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             position_params = Open_Position(
                 symbol=contract_symbol,
                 type=typevalue,
