@@ -81,21 +81,33 @@ function renderStatsRange(data) {
     )
     .join("");
   el("stats").innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:8px">
-      <div>실현손익: ${fmtUSD(s.realized_pnl)}</div>
-      <div>거래 수: ${s.trades ?? 0}</div>
-      <div>승률: ${((s.win_rate || 0) * 100).toFixed(1)}%</div>
-      <div>평균 손익: ${fmtUSD(s.avg_pnl)}</div>
+    <div class="kpis">
+      <div class="kpi">
+        <div class="label">실현손익</div>
+        <div class="value">${fmtUSD(s.realized_pnl)}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">거래 수</div>
+        <div class="value">${s.trades ?? 0}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">승률</div>
+        <div class="value">${((s.win_rate || 0) * 100).toFixed(1)}%</div>
+      </div>
+      <div class="kpi">
+        <div class="label">평균 손익</div>
+        <div class="value">${fmtUSD(s.avg_pnl)}</div>
+      </div>
     </div>
     <div class="grid-2">
       <div>
-        <h3 style="margin:0 0 6px;font-size:14px;color:#9ca3af">심볼별</h3>
+        <h3 class="subtle-heading">심볼별</h3>
         <table><thead><tr><th>심볼</th><th>거래수</th><th>실현손익</th></tr></thead><tbody>
           ${bySym || '<tr><td colspan="3" class="muted">없음</td></tr>'}
         </tbody></table>
       </div>
       <div>
-        <h3 style="margin:0 0 6px;font-size:14px;color:#9ca3af">시계열</h3>
+        <h3 class="subtle-heading">시계열</h3>
         <table><thead><tr><th>기간</th><th>거래수</th><th>실현손익</th></tr></thead><tbody>
           ${series || '<tr><td colspan="3" class="muted">없음</td></tr>'}
         </tbody></table>

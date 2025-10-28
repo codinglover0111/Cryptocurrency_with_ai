@@ -113,6 +113,33 @@
         color: #9ca3af;
         margin-right: 4px;
       }
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .kpi {
+        background: #0b1220;
+        border: 1px solid #1f2937;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .kpi .label {
+        font-size: 12px;
+        color: #94a3b8;
+        margin-bottom: 4px;
+      }
+      .kpi .value {
+        font-size: 18px;
+        font-weight: 700;
+        color: #e2e8f0;
+      }
+      .subtle-heading {
+        margin: 0 0 6px;
+        font-size: 14px;
+        color: #9ca3af;
+      }
       /* 통계 카드 레이아웃 개선 */
       .stats-grid {
         display: grid;
@@ -140,6 +167,9 @@
       @media (max-width: 640px) {
         .stats-grid {
           grid-template-columns: 1fr;
+        }
+        .kpis {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
       }
       input,
@@ -311,7 +341,10 @@
             <label><input type="checkbox" value="review" checked />리뷰</label>
           </div>
           <button class="btn secondary" id="jr-refresh">새로고침</button>
-          <a class="btn" href="/overlay?limit=12&today_only=1" target="_blank"
+          <a
+            class="btn"
+            href="/overlay?limit=12&today_only=1&ascending=0&types=decision,action,review"
+            target="_blank"
             >판단 오버레이</a
           >
           <a

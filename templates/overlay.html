@@ -120,7 +120,7 @@
         const symbol = qs("symbol");
         const types = qs("types");
         const today_only = Number(qs("today_only") || 1);
-        const ascending = Number(qs("ascending") || 1);
+        const ascending = Number(qs("ascending") || 0);
         const url =
           `/api/journals?limit=${limit}&today_only=${today_only}&ascending=${ascending}` +
           (symbol ? `&symbol=${encodeURIComponent(symbol)}` : "") +

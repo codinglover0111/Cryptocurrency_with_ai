@@ -360,7 +360,11 @@ class TradeStore:
                 clauses.append(f"entry_type IN ({placeholders})")
                 params.update(in_params)
             if today_only:
-                clauses.append("DATE(ts) = CURRENT_DATE")
+                # SQLite와 기타 DB의 오늘 날짜 표현을 각각 지원
+                if getattr(self, "_is_sqlite", False):
+                    clauses.append("DATE(ts) = DATE('now')")
+                else:
+                    clauses.append("DATE(ts) = CURRENT_DATE")
             if since_ts is not None:
                 clauses.append("ts >= :since_ts")
                 params["since_ts"] = since_ts
