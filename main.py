@@ -265,6 +265,13 @@ def automation_for_symbol(symbol_usdt: str):
 
         spot_symbol, contract_symbol = _to_ccxt_symbols(symbol_usdt)
 
+        # 심볼 수 기준 균등 배분 비율(%) 계산
+        try:
+            num_symbols = max(1, len(_parse_symbols()))
+        except Exception:
+            num_symbols = 1
+        per_symbol_alloc_pct = 100.0 / float(num_symbols)
+
         # 현재 포지션 체크(심볼 한정)
         current_position = bybit.get_positions_by_symbol(contract_symbol)
         # TODO 리팩토링 진행
@@ -452,7 +459,7 @@ def automation_for_symbol(symbol_usdt: str):
             + "Return your decision as JSON with the following fields: order type (market/limit), price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number).\n"
             + "If you want to immediately take profit or cut loss on an existing position, set close_now=true and optionally close_percent (1~100).\n"
             + "When close_now is true, we will reduceOnly market-close the current position(s) without opening a new one in this cycle.\n"
-            + "Account risk is limited to 20% (for your reference).\n"
+            + f"Per-symbol max allocation is {per_symbol_alloc_pct:.2f}% of account equity (for your reference).\n"
             + "Include your reasoning for the decision in the 'explain' field. Output JSON, Korean only."
         )
         # 우선 JSON 구조화 응답 시도(도구호출/response_format)
@@ -593,9 +600,9 @@ def automation_for_symbol(symbol_usdt: str):
             # 리스크 기반 수량 계산
             balance_info = bybit.get_balance("USDT") or {}
             balance_total = balance_info.get("total") or 0
-            # 리스크는 무조건 20% 리미트
+            # 리스크는 고정(코드 내부), 최대 배분은 심볼 균등(환경변수로 오버라이드 가능)
             risk_percent = 20.0
-            max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", "20.0"))
+            max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(per_symbol_alloc_pct)))
             # AI가 제안한 레버리지 우선 사용, 없으면 기본값
             leverage = float(
                 value.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5")
