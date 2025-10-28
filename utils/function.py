@@ -15,7 +15,7 @@ class make_to_object:
                 required=["Status"],
                 properties={
                     "Status": content.Schema(
-                        type=content.Type.STRING, enum=["hold", "sell", "buy"]
+                        type=content.Type.STRING, enum=["hold", "short", "long", "stop"]
                     ),
                     "tp": content.Schema(
                         type=content.Type.NUMBER,
@@ -44,18 +44,17 @@ class make_to_object:
             generation_config=generation_config,
             system_instruction=(
                 "입력된 트레이딩 결론을 JSON 오브젝트로 변환하시오.\n"
-                "필수: Status in [hold,sell,buy]. 선택: price, sl, tp, buy_now, leverage.\n"
+                "필수: Status in [hold,short,long,stop]. 선택: price, sl, tp, buy_now, leverage.\n"
                 "시장가의 경우 buy_now를 true로 설정합니다.\n"
                 "레버리지를 숫자로 제안할 수 있습니다(예: 3, 5, 10)."
             ),
         )
         self.chat_session = self.model.start_chat(history=[])
-        pass
 
     def make_it_object(self, inputs: str):
         response = self.chat_session.send_message(inputs)
-        dict = json.loads(response.text)
-        return dict
+        obj = json.loads(response.text)
+        return obj
 
 
 if __name__ == "__main__":

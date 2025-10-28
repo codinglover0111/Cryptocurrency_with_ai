@@ -269,41 +269,9 @@
             </div>
           </div>
           <div class="stats-actions">
-            <button class="btn secondary" onclick="manualRefreshStats()">
-              조회
-            </button>
-            <button
-              class="btn"
-              onclick="(function(){
-              const d=new Date();
-              const iso=(n)=> String(n).padStart(2,'0');
-              const y=d.getUTCFullYear();
-              const m=iso(d.getUTCMonth()+1);
-              const first=`${y}-${m}-01`;
-              const next=new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth()+1, 1));
-              const until=`${next.getUTCFullYear()}-${iso(next.getUTCMonth()+1)}-01`;
-              document.getElementById('st-since').value=first;
-              document.getElementById('st-until').value=until;
-              document.getElementById('st-group').value='day';
-              manualRefreshStats();
-            })()"
-            >
-              이번 달
-            </button>
-            <button
-              class="btn"
-              onclick="(function(){
-              const now=new Date();
-              const last7=new Date(now.getTime()-6*24*3600*1000);
-              const iso=(x)=>`${x.getUTCFullYear()}-${String(x.getUTCMonth()+1).padStart(2,'0')}-${String(x.getUTCDate()).padStart(2,'0')}`;
-              document.getElementById('st-since').value=iso(last7);
-              document.getElementById('st-until').value=iso(new Date(now.getTime()+24*3600*1000));
-              document.getElementById('st-group').value='day';
-              manualRefreshStats();
-            })()"
-            >
-              최근 7일
-            </button>
+            <button class="btn secondary" id="st-refresh">조회</button>
+            <button class="btn" id="st-this-month">이번 달</button>
+            <button class="btn" id="st-last-7d">최근 7일</button>
           </div>
           <div id="stats"></div>
         </div>

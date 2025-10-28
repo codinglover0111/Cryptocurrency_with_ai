@@ -255,6 +255,44 @@ window.addEventListener("DOMContentLoaded", () => {
   setupJournalDetailHandler();
   const refreshBtn = document.getElementById("jr-refresh");
   if (refreshBtn) refreshBtn.addEventListener("click", refreshJournals);
+  const stRefresh = document.getElementById("st-refresh");
+  if (stRefresh) stRefresh.addEventListener("click", manualRefreshStats);
+  const stThisMonth = document.getElementById("st-this-month");
+  if (stThisMonth)
+    stThisMonth.addEventListener("click", () => {
+      const d = new Date();
+      const iso2 = (n) => String(n).padStart(2, "0");
+      const y = d.getUTCFullYear();
+      const m = iso2(d.getUTCMonth() + 1);
+      const first = `${y}-${m}-01`;
+      const next = new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)
+      );
+      const until = `${next.getUTCFullYear()}-${iso2(
+        next.getUTCMonth() + 1
+      )}-01`;
+      document.getElementById("st-since").value = first;
+      document.getElementById("st-until").value = until;
+      document.getElementById("st-group").value = "day";
+      manualRefreshStats();
+    });
+  const stLast7d = document.getElementById("st-last-7d");
+  if (stLast7d)
+    stLast7d.addEventListener("click", () => {
+      const now = new Date();
+      const last7 = new Date(now.getTime() - 6 * 24 * 3600 * 1000);
+      const iso = (x) =>
+        `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(
+          2,
+          "0"
+        )}-${String(x.getUTCDate()).padStart(2, "0")}`;
+      document.getElementById("st-since").value = iso(last7);
+      document.getElementById("st-until").value = iso(
+        new Date(now.getTime() + 24 * 3600 * 1000)
+      );
+      document.getElementById("st-group").value = "day";
+      manualRefreshStats();
+    });
   const typeFilters = document.getElementById("jr-type-filters");
   if (typeFilters && !typeFilters.__jrTypeAttached) {
     typeFilters.__jrTypeAttached = true;

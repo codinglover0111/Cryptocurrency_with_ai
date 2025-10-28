@@ -244,7 +244,7 @@ def automation_for_symbol(symbol_usdt: str):
                 if pos_side is not None and since_open_text
                 else ""
             )
-            + "Choose one of: watch/hold, sell, buy, or stop.\n"
+            + "Choose one of: watch/hold, short, long, or stop.\n"
             + "Return your decision as JSON with the following fields: order type (market/limit), price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number).\n"
             + "Account risk is limited to 20% (for your reference).\n"
             + "Include your reasoning for the decision in the 'explain' field. Output JSON, Korean only."
@@ -295,8 +295,10 @@ def automation_for_symbol(symbol_usdt: str):
                 logging.error("LLM parsed logging failed: %s", str(_e))
 
         # 의사결정/기록 + 트레이딩 실행
-        if value["Status"] in ["buy", "sell"]:
-            side = value["Status"]
+        if value["Status"] in ["long", "short"]:
+            ai_status = value["Status"]
+            # 내부 CCXT 주문은 buy/sell을 사용하므로 매핑
+            side = "buy" if ai_status == "long" else "sell"
             if value.get("buy_now") is True:
                 typevalue = "market"
             else:
@@ -319,9 +321,96 @@ def automation_for_symbol(symbol_usdt: str):
                 if typevalue == "market"
                 else value.get("price") or current_price
             )
-            stop_price = value.get("sl") or (
-                entry_price * (0.99 if side == "buy" else 1.01)
-            )
+            # 1) TP/SL 확인 루프: AI가 제안한 TP/SL이 있으면 수익률/손실률 알려주고 확정받기
+            orig_tp = value.get("tp")
+            orig_sl = value.get("sl")
+            use_tp = orig_tp
+            use_sl = orig_sl
+            if (
+                isinstance(orig_tp, (int, float))
+                and isinstance(orig_sl, (int, float))
+                and float(orig_tp) > 0
+                and float(orig_sl) > 0
+            ):
+                e = float(entry_price)
+                tp_v = float(orig_tp)
+                sl_v = float(orig_sl)
+                if ai_status == "long":
+                    tp_pct = (tp_v - e) / e * 100.0
+                    sl_pct = (e - sl_v) / e * 100.0
+                else:
+                    tp_pct = (e - tp_v) / e * 100.0
+                    sl_pct = (sl_v - e) / e * 100.0
+                confirm_prompt = (
+                    "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
+                    f"심볼: {contract_symbol}\n"
+                    f"포지션: {ai_status} (내부 side={side})\n"
+                    f"진입가(entry): {float(e)}\n"
+                    f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}%)\n"
+                    f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}%)\n"
+                    f"레버리지: {float(leverage)}x\n"
+                    "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
+                    "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
+                )
+                try:
+                    confirm = ai_provider.confirm_trade_json(confirm_prompt)
+                    logging.info(
+                        json.dumps(
+                            {
+                                "event": "llm_confirm_response_parsed",
+                                "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                                "parsed": confirm,
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    if not bool(confirm.get("confirm")):
+                        # 주문 중단 기록
+                        try:
+                            store.record_journal(
+                                {
+                                    "symbol": contract_symbol,
+                                    "entry_type": "decision",
+                                    "content": json.dumps(
+                                        {
+                                            "status": "skip_after_confirm",
+                                            "ai_status": ai_status,
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                    "reason": (
+                                        confirm.get("explain") or value.get("explain")
+                                    ),
+                                    "meta": {"first": value, "confirm": confirm},
+                                }
+                            )
+                        except Exception:
+                            pass
+                        return
+                    # 확정: 조정값 반영
+                    use_tp = (
+                        float(confirm.get("tp"))
+                        if confirm.get("tp") is not None
+                        else use_tp
+                    )
+                    use_sl = (
+                        float(confirm.get("sl"))
+                        if confirm.get("sl") is not None
+                        else use_sl
+                    )
+                    if confirm.get("price") is not None:
+                        entry_price = float(confirm.get("price"))
+                    if confirm.get("buy_now") is not None:
+                        typevalue = (
+                            "market" if bool(confirm.get("buy_now")) else "limit"
+                        )
+                    if confirm.get("leverage") is not None:
+                        leverage = float(confirm.get("leverage"))
+                except Exception as _e:
+                    logging.error("AI confirm failed: %s", str(_e))
+
+            # 2) 수량 재계산(확정된 SL 반영)
+            stop_price = use_sl or (entry_price * (0.99 if side == "buy" else 1.01))
             quantity = calculate_position_size(
                 balance_usdt=float(balance_total or 0),
                 entry_price=float(entry_price),
@@ -337,8 +426,8 @@ def automation_for_symbol(symbol_usdt: str):
                 type=typevalue,
                 price=value.get("price") or float(entry_price),
                 side=side,
-                tp=value.get("tp"),
-                sl=value.get("sl"),
+                tp=use_tp,
+                sl=use_sl,
                 quantity=quantity,
                 leverage=leverage,
             )
@@ -377,10 +466,11 @@ def automation_for_symbol(symbol_usdt: str):
                         "content": json.dumps(
                             {
                                 "status": side,
+                                "ai_status": value.get("Status"),
                                 "type": typevalue,
                                 "price": float(entry_price),
-                                "tp": value.get("tp"),
-                                "sl": value.get("sl"),
+                                "tp": use_tp,
+                                "sl": use_sl,
                                 "leverage": leverage,
                             },
                             ensure_ascii=False,

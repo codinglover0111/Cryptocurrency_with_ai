@@ -80,7 +80,7 @@ class AIProvider:
                         properties={
                             "Status": genai.protos.Schema(
                                 type=genai.protos.Type.STRING,
-                                enum=["hold", "sell", "buy"],
+                                enum=["hold", "short", "long", "stop"],
                             ),
                             "tp": genai.protos.Schema(type=genai.protos.Type.NUMBER),
                             "sl": genai.protos.Schema(type=genai.protos.Type.NUMBER),
@@ -120,7 +120,7 @@ class AIProvider:
                             "properties": {
                                 "Status": {
                                     "type": "string",
-                                    "enum": ["hold", "sell", "buy"],
+                                    "enum": ["hold", "short", "long", "stop"],
                                 },
                                 "tp": {"type": "number"},
                                 "sl": {"type": "number"},
@@ -169,7 +169,125 @@ class AIProvider:
             messages=[
                 {
                     "role": "system",
-                    "content": "Return strictly a JSON object with keys: Status, price, sl, tp, buy_now, leverage, explain.",
+                    "content": "Return strictly a JSON object with keys: Status, price, sl, tp, buy_now, leverage, explain. Status must be one of [hold, short, long, stop]",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+        )
+        content = resp.choices[0].message.content
+        return json.loads(content)
+
+    def confirm_trade_json(self, prompt: str) -> Dict[str, Any]:
+        """TP/SL, 가격, 레버리지 제안에 대해 확인/수정 여부를 JSON으로 반환.
+        스키마:
+          - confirm: boolean (required)
+          - tp: number (optional)
+          - sl: number (optional)
+          - price: number (optional)
+          - buy_now: boolean (optional)
+          - leverage: number (optional)
+          - explain: string (optional)
+        """
+        if self.provider == "gemini":
+            model = genai.GenerativeModel(
+                model_name=os.getenv(
+                    "GEMINI_MODEL", "gemini-2.0-flash-thinking-exp-01-21"
+                ),
+                generation_config={
+                    "temperature": 0.2,
+                    "top_p": 0.95,
+                    "top_k": 64,
+                    "max_output_tokens": 2048,
+                    "response_mime_type": "application/json",
+                    "response_schema": genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        required=["confirm"],
+                        properties={
+                            "confirm": genai.protos.Schema(
+                                type=genai.protos.Type.BOOLEAN
+                            ),
+                            "tp": genai.protos.Schema(type=genai.protos.Type.NUMBER),
+                            "sl": genai.protos.Schema(type=genai.protos.Type.NUMBER),
+                            "price": genai.protos.Schema(type=genai.protos.Type.NUMBER),
+                            "buy_now": genai.protos.Schema(
+                                type=genai.protos.Type.BOOLEAN
+                            ),
+                            "leverage": genai.protos.Schema(
+                                type=genai.protos.Type.NUMBER
+                            ),
+                            "explain": genai.protos.Schema(
+                                type=genai.protos.Type.STRING
+                            ),
+                        },
+                    ),
+                },
+            )
+            chat = model.start_chat(history=[])
+            res = chat.send_message(prompt)
+            return json.loads(res.text)
+
+        # OpenAI 호환 경로
+        model = os.environ.get("OPENAI_MODEL", "deepseek-reasoner")
+        use_tools = os.getenv("OPENAI_TOOLCALL", "0") == "1"
+        if use_tools:
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "confirm_trade",
+                        "description": "Confirm or adjust TP/SL and order params.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "confirm": {"type": "boolean"},
+                                "tp": {"type": "number"},
+                                "sl": {"type": "number"},
+                                "price": {"type": "number"},
+                                "buy_now": {"type": "boolean"},
+                                "leverage": {"type": "number"},
+                                "explain": {"type": "string"},
+                            },
+                            "required": ["confirm"],
+                        },
+                    },
+                }
+            ]
+            resp = self._openai_client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": prompt}],
+                tools=tools,
+                tool_choice="auto",
+                parallel_tool_calls=False,
+                extra_body={
+                    "provider": {
+                        "order": ["google-vertex", "fireworks"],
+                        "allow_fallbacks": True,
+                    }
+                },
+            )
+            choice = resp.choices[0]
+            tool_calls = (
+                getattr(choice.message, "tool_calls", None) or choice.message.tool_calls
+                if hasattr(choice.message, "tool_calls")
+                else None
+            )
+            if tool_calls:
+                args = tool_calls[0].function.arguments
+                return json.loads(args)
+            # 도구 미사용 시 응답 본문에서 JSON 파싱 시도
+            content = choice.message.content
+            try:
+                return json.loads(content)
+            except Exception:
+                pass
+        # response_format 방식
+        resp = self._openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return strictly a JSON object with keys: confirm (boolean), tp, sl, price, buy_now, leverage, explain. Only 'confirm' is required.",
                 },
                 {"role": "user", "content": prompt},
             ],
