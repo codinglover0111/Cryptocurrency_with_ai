@@ -300,13 +300,56 @@ def positions_summary(symbol: Optional[str] = None):
             except Exception:
                 lev = None
 
-            last = bybit.get_last_price(sym)
+            # 거래소 UI와 일치하도록 마크 프라이스 우선 사용, 불가 시 최근 체결가 사용
+            mark = p.get("markPrice") or (p.get("info", {}) or {}).get("markPrice")
+            last = mark if mark is not None else bybit.get_last_price(sym)
+
             entry_f = float(entry) if entry is not None else None
             size_f = float(size) if size is not None else None
             last_f = float(last) if last is not None else None
+
             pnl = None
             pnl_pct = None
-            if (
+
+            # 거래소 제공 미실현손익(가능 시 우선 사용)
+            unreal = p.get("unrealizedPnl") or (p.get("info", {}) or {}).get(
+                "unrealisedPnl"
+            )
+            try:
+                unreal_f = float(unreal) if unreal is not None else None
+            except Exception:
+                unreal_f = None
+
+            # ROE 계산을 위한 명목가치/초기증거금 산출
+            notional = p.get("notional") or (p.get("info", {}) or {}).get(
+                "positionValue"
+            )
+            try:
+                notional_f = float(notional) if notional is not None else None
+            except Exception:
+                notional_f = None
+            if notional_f is None and entry_f is not None and size_f is not None:
+                notional_f = abs(entry_f * size_f)
+
+            initial_margin = p.get("initialMargin") or (p.get("info", {}) or {}).get(
+                "positionInitialMargin"
+            )
+            try:
+                initial_margin_f = (
+                    float(initial_margin) if initial_margin is not None else None
+                )
+            except Exception:
+                initial_margin_f = None
+            if (initial_margin_f is None) and (notional_f is not None):
+                try:
+                    initial_margin_f = notional_f / float(lev) if lev else None
+                except Exception:
+                    initial_margin_f = None
+
+            # PnL 값 결정: 거래소 제공치 → 자체 계산(마크/라스트)
+            if unreal_f is not None:
+                pnl = unreal_f
+            elif (
                 entry_f is not None
                 and size_f is not None
                 and last_f is not None
@@ -314,10 +357,18 @@ def positions_summary(symbol: Optional[str] = None):
             ):
                 if (side or "").lower() in ("long", "buy"):
                     pnl = (last_f - entry_f) * size_f
-                    pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
                 else:
                     pnl = (entry_f - last_f) * size_f
-                    pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
+
+            # 퍼센트: ROE(초기증거금 대비)가 우선, 불가 시 가격 변화율로 폴백
+            if pnl is not None:
+                if initial_margin_f and initial_margin_f > 0:
+                    pnl_pct = (float(pnl) / initial_margin_f) * 100.0
+                elif entry_f and last_f is not None:
+                    if (side or "").lower() in ("long", "buy"):
+                        pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
+                    else:
+                        pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
             items.append(
                 {
                     "symbol": sym,
