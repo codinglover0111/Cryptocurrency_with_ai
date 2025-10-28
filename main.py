@@ -812,27 +812,68 @@ def automation_for_symbol(symbol_usdt: str):
             # 3-1) 심볼별 누적 노출 상한 적용: 이미 보유 중인 해당 심볼 노출을 고려해 남은 여유치만 진입
             try:
                 positions_same_symbol = current_position or []
-                # 현재가 기준 노출 계산(보수적): |수량| * 현재가
-                last_price_for_notional = float(current_price or entry_price)
-                if last_price_for_notional <= 0:
-                    last_price_for_notional = float(entry_price)
+                # 현재가 기준 노출 계산: Σ(|수량| * 현재가격)
+                last_price_fallback = float(current_price or entry_price)
+                if last_price_fallback <= 0:
+                    last_price_fallback = float(entry_price)
                 existing_notional = 0.0
+                pos_max_leverage = 0.0
                 for p in positions_same_symbol:
                     try:
-                        amount_raw = (
-                            p.get("contracts") or p.get("amount") or p.get("size")
+                        contract_size = p.get("contractSize") or (
+                            p.get("info", {}) or {}
+                        ).get("contractSize")
+                        size_raw = (
+                            p.get("size") or p.get("amount") or p.get("contracts")
                         )
-                        if amount_raw is None:
+                        try:
+                            size_f = float(size_raw) if size_raw is not None else None
+                        except Exception:
+                            size_f = None
+                        # contracts만 있는 경우 contractSize 곱해 기본 단위로 변환
+                        if (
+                            size_f is not None
+                            and p.get("size") is None
+                            and p.get("contracts") is not None
+                            and contract_size is not None
+                        ):
+                            try:
+                                size_f = size_f * float(contract_size)
+                            except Exception:
+                                pass
+                        if size_f is None:
                             continue
-                        amount = abs(float(amount_raw))
-                        existing_notional += amount * last_price_for_notional
+                        mark = p.get("markPrice") or (p.get("info", {}) or {}).get(
+                            "markPrice"
+                        )
+                        try:
+                            px = (
+                                float(mark)
+                                if mark is not None
+                                else float(last_price_fallback)
+                            )
+                        except Exception:
+                            px = last_price_fallback
+                        existing_notional += abs(float(size_f)) * float(px)
+                        # 포지션 레버리지 추출(있다면)
+                        try:
+                            levp = p.get("leverage") or (p.get("info", {}) or {}).get(
+                                "leverage"
+                            )
+                            if levp is not None:
+                                pos_max_leverage = max(pos_max_leverage, float(levp))
+                        except Exception:
+                            pass
                     except Exception:
                         continue
-                # 이 심볼의 최대 노출 한도(리버리지 반영): balance * (max_alloc/100) * leverage
+                # 이 심볼의 최대 노출 한도(레버리지 반영): balance * (max_alloc/100) * effective_leverage
+                effective_leverage = max(
+                    1.0, float(leverage), float(pos_max_leverage or 0.0)
+                )
                 max_notional_for_symbol = (
                     float(balance_total or 0)
                     * (float(max_alloc) / 100.0)
-                    * max(1.0, float(leverage))
+                    * float(effective_leverage)
                 )
                 remaining_notional = max(
                     0.0, max_notional_for_symbol - existing_notional
