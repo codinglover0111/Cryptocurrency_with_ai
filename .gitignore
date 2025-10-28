@@ -4,3 +4,4 @@ __pycache__
 .env
 *.log
 .env.local
+trading.log
