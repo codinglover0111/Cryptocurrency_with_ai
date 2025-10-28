@@ -726,6 +726,99 @@ def automation_for_symbol(symbol_usdt: str):
                 min_quantity=min_qty,
             )
 
+            # 3-1) 심볼별 누적 노출 상한 적용: 이미 보유 중인 해당 심볼 노출을 고려해 남은 여유치만 진입
+            try:
+                positions_same_symbol = current_position or []
+                # 현재가 기준 노출 계산(보수적): |수량| * 현재가
+                last_price_for_notional = float(current_price or entry_price)
+                if last_price_for_notional <= 0:
+                    last_price_for_notional = float(entry_price)
+                existing_notional = 0.0
+                for p in positions_same_symbol:
+                    try:
+                        amount_raw = (
+                            p.get("contracts") or p.get("amount") or p.get("size")
+                        )
+                        if amount_raw is None:
+                            continue
+                        amount = abs(float(amount_raw))
+                        existing_notional += amount * last_price_for_notional
+                    except Exception:
+                        continue
+                # 이 심볼의 최대 노출 한도(리버리지 반영): balance * (max_alloc/100) * leverage
+                max_notional_for_symbol = (
+                    float(balance_total or 0)
+                    * (float(max_alloc) / 100.0)
+                    * max(1.0, float(leverage))
+                )
+                remaining_notional = max(
+                    0.0, max_notional_for_symbol - existing_notional
+                )
+                if remaining_notional <= 0:
+                    # 상한 도달: 주문 스킵
+                    try:
+                        store.record_journal(
+                            {
+                                "symbol": contract_symbol,
+                                "entry_type": "decision",
+                                "content": json.dumps(
+                                    {
+                                        "status": "skip",
+                                        "reason": "per_symbol_cap_reached",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                                "reason": value.get("explain"),
+                                "meta": {
+                                    "existing_notional": float(existing_notional),
+                                    "max_notional_for_symbol": float(
+                                        max_notional_for_symbol
+                                    ),
+                                },
+                            }
+                        )
+                    except Exception:
+                        pass
+                    return
+                # 남은 여유치로 제한된 최대 수량
+                max_qty_by_remaining = (
+                    remaining_notional / float(entry_price)
+                    if float(entry_price) > 0
+                    else quantity
+                )
+                if max_qty_by_remaining <= 0:
+                    try:
+                        store.record_journal(
+                            {
+                                "symbol": contract_symbol,
+                                "entry_type": "decision",
+                                "content": json.dumps(
+                                    {
+                                        "status": "skip",
+                                        "reason": "no_remaining_capacity",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                                "reason": value.get("explain"),
+                                "meta": {
+                                    "existing_notional": float(existing_notional),
+                                    "max_notional_for_symbol": float(
+                                        max_notional_for_symbol
+                                    ),
+                                },
+                            }
+                        )
+                    except Exception:
+                        pass
+                    return
+                # 최종 수량을 여유치 기준으로 클램프(최소 수량 보장)
+                quantity = max(
+                    min_qty, min(float(quantity), float(max_qty_by_remaining))
+                )
+            except Exception:
+                # 실패 시 기존 계산값으로 진행(안전)
+                pass
+
             position_params = Open_Position(
                 symbol=contract_symbol,
                 type=typevalue,
