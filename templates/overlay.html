@@ -47,6 +47,15 @@
         font-size: 13px;
         white-space: pre-wrap;
       }
+      @media (max-width: 640px) {
+        .board {
+          flex-wrap: wrap;
+        }
+        .card {
+          min-width: 100%;
+          max-width: 100%;
+        }
+      }
     </style>
     <script>
       async function fetchJSON(path) {

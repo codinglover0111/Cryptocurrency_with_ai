@@ -117,6 +117,8 @@ async function closeAll() {
 window.addEventListener("DOMContentLoaded", () => {
   ensureJournalModalDOM();
   setupJournalDetailHandler();
+  const refreshBtn = document.getElementById("jr-refresh");
+  if (refreshBtn) refreshBtn.addEventListener("click", refreshJournals);
   refreshAll();
   refreshJournals();
   setInterval(refreshAll, 10000);

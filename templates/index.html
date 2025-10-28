@@ -90,6 +90,33 @@
         display: block;
         margin-bottom: 6px;
       }
+      @media (max-width: 1024px) {
+        .row {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 640px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+        .container {
+          margin: 20px auto;
+          padding: 0 12px;
+        }
+        h1 {
+          font-size: 20px;
+        }
+        h2 {
+          font-size: 16px;
+        }
+        table {
+          display: block;
+          overflow-x: auto;
+        }
+      }
     </style>
     <meta
       http-equiv="Content-Security-Policy"
@@ -146,9 +173,7 @@
               style="width: 90px"
             />
           </label>
-          <button class="btn secondary" onclick="refreshJournals()">
-            새로고침
-          </button>
+          <button class="btn secondary" id="jr-refresh">새로고침</button>
           <a class="btn" href="/overlay?limit=12&today_only=1" target="_blank"
             >판단 오버레이</a
           >

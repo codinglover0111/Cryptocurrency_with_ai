@@ -15,6 +15,41 @@ from utils.storage import TradeStore, StorageConfig
 
 
 app = FastAPI(title="Crypto Bot UI")
+
+
+def _redact_sensitive(obj):
+    """Recursively redact sensitive-looking keys in dict/list structures."""
+    sensitive_keys = (
+        "key",
+        "secret",
+        "token",
+        "auth",
+        "password",
+        "passwd",
+        "mysql",
+        "dsn",
+        "bearer",
+        "authorization",
+        "openai",
+        "gemini",
+        "bybit",
+    )
+    try:
+        if isinstance(obj, dict):
+            redacted = {}
+            for k, v in obj.items():
+                if any(s in str(k).lower() for s in sensitive_keys):
+                    redacted[k] = "[REDACTED]"
+                else:
+                    redacted[k] = _redact_sensitive(v)
+            return redacted
+        if isinstance(obj, list):
+            return [_redact_sensitive(v) for v in obj]
+        return obj
+    except Exception:
+        return obj
+
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
@@ -43,7 +78,15 @@ def health():
 @app.get("/status")
 def status():
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
-    return bybit.get_account_overview()
+    data = bybit.get_account_overview()
+    try:
+        if isinstance(data, dict):
+            bal = data.get("balance")
+            if isinstance(bal, dict) and "raw" in bal:
+                bal.pop("raw", None)
+    except Exception:
+        pass
+    return data
 
 
 @app.post("/leverage")
@@ -156,7 +199,7 @@ def list_journals(
                 "entry_type": row.get("entry_type"),
                 "content": row.get("content"),
                 "reason": row.get("reason"),
-                "meta": row.get("meta"),
+                "meta": _redact_sensitive(row.get("meta")),
                 "ref_order_id": row.get("ref_order_id"),
             }
         )
