@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -217,6 +217,130 @@ def list_journals(
     return {"items": items}
 
 
+@app.get("/api/positions_debug")
+def positions_debug(symbol: Optional[str] = None):
+    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    positions = bybit.get_positions() or []
+    debug_items = []
+    for p in positions:
+        try:
+            sym = p.get("symbol") or (p.get("info", {}) or {}).get("symbol")
+            if not sym:
+                continue
+            if symbol and sym != symbol:
+                continue
+            side = p.get("side") or (p.get("info", {}) or {}).get("side")
+            entry = p.get("entryPrice") or (p.get("info", {}) or {}).get("avgPrice")
+            contract_size = p.get("contractSize") or (p.get("info", {}) or {}).get(
+                "contractSize"
+            )
+            size_raw = p.get("size") or p.get("contracts") or p.get("amount")
+            try:
+                size_f = float(size_raw) if size_raw is not None else None
+            except Exception:
+                size_f = None
+            if (
+                size_f is not None
+                and p.get("size") is None
+                and p.get("contracts") is not None
+                and contract_size is not None
+            ):
+                try:
+                    size_f = size_f * float(contract_size)
+                except Exception:
+                    pass
+
+            mark = p.get("markPrice") or (p.get("info", {}) or {}).get("markPrice")
+            last = mark if mark is not None else bybit.get_last_price(sym)
+
+            entry_f = float(entry) if entry is not None else None
+            last_f = float(last) if last is not None else None
+
+            unreal = p.get("unrealizedPnl") or (p.get("info", {}) or {}).get(
+                "unrealisedPnl"
+            )
+            pct = p.get("percentage") or (p.get("info", {}) or {}).get(
+                "unrealisedPnlPcnt"
+            )
+            notional = p.get("notional") or (p.get("info", {}) or {}).get(
+                "positionValue"
+            )
+            init_margin = (
+                p.get("initialMargin")
+                or p.get("margin")
+                or (p.get("info", {}) or {}).get("positionIM")
+                or (p.get("info", {}) or {}).get("positionInitialMargin")
+                or (p.get("info", {}) or {}).get("positionMargin")
+            )
+            lev = p.get("leverage") or (p.get("info", {}) or {}).get("leverage")
+            try:
+                lev = float(lev) if lev is not None else None
+            except Exception:
+                lev = None
+
+            # 계산 재현
+            try:
+                unreal_f = float(unreal) if unreal is not None else None
+            except Exception:
+                unreal_f = None
+            try:
+                pct_f = float(pct) if pct is not None else None
+            except Exception:
+                pct_f = None
+            pnl_calc = None
+            pnl_pct_calc = None
+            if unreal_f is not None:
+                pnl_calc = unreal_f
+            elif (
+                entry_f is not None
+                and last_f is not None
+                and size_f is not None
+                and side
+            ):
+                if (side or "").lower() in ("long", "buy"):
+                    pnl_calc = (last_f - entry_f) * size_f
+                else:
+                    pnl_calc = (entry_f - last_f) * size_f
+            try:
+                init_margin_f = float(init_margin) if init_margin is not None else None
+            except Exception:
+                init_margin_f = None
+            if pct_f is not None:
+                pnl_pct_calc = pct_f
+            elif pnl_calc is not None:
+                if init_margin_f and init_margin_f > 0:
+                    pnl_pct_calc = (float(pnl_calc) / init_margin_f) * 100.0
+                elif entry_f and last_f is not None:
+                    if (side or "").lower() in ("long", "buy"):
+                        pnl_pct_calc = ((last_f - entry_f) / entry_f) * 100.0
+                    else:
+                        pnl_pct_calc = ((entry_f - last_f) / entry_f) * 100.0
+
+            debug_items.append(
+                {
+                    "symbol": sym,
+                    "raw": p,
+                    "side": side,
+                    "entry": entry_f,
+                    "size_raw": size_raw,
+                    "contractSize": contract_size,
+                    "size": size_f,
+                    "markPrice": mark,
+                    "lastPrice": last_f,
+                    "unrealizedPnl": unreal,
+                    "percentage": pct,
+                    "notional": notional,
+                    "initialMargin": init_margin,
+                    "leverage": lev,
+                    "pnl_calc": pnl_calc,
+                    "pnl_pct_calc": pnl_pct_calc,
+                }
+            )
+        except Exception:
+            continue
+    return {"items": debug_items}
+
+
 @app.get("/overlay", response_class=HTMLResponse)
 def overlay(
     request: Request,
@@ -287,7 +411,32 @@ def positions_summary(symbol: Optional[str] = None):
                 continue
             side = p.get("side") or (p.get("info", {}) or {}).get("side")
             entry = p.get("entryPrice") or (p.get("info", {}) or {}).get("avgPrice")
-            size = p.get("contracts") or p.get("amount") or p.get("size")
+            # 수량: size(기본 단위) 우선, 없으면 contracts * contractSize 로 환산
+            contract_size = p.get("contractSize") or (p.get("info", {}) or {}).get(
+                "contractSize"
+            )
+            size_raw = p.get("size") or p.get("contracts") or p.get("amount")
+            try:
+                size_f = float(size_raw) if size_raw is not None else None
+            except Exception:
+                size_f = None
+            if size_f is None and size_raw is not None:
+                # 방어적 캐스팅 실패 대비
+                try:
+                    size_f = float(size_raw)
+                except Exception:
+                    size_f = None
+            # contracts만 있는 경우 contractSize 곱해 기본 단위로 변환
+            if (
+                size_f is not None
+                and p.get("size") is None
+                and p.get("contracts") is not None
+                and contract_size is not None
+            ):
+                try:
+                    size_f = size_f * float(contract_size)
+                except Exception:
+                    pass
             tp = (
                 p.get("takeProfit")
                 or (p.get("info", {}) or {}).get("takeProfit")
@@ -305,7 +454,6 @@ def positions_summary(symbol: Optional[str] = None):
             last = mark if mark is not None else bybit.get_last_price(sym)
 
             entry_f = float(entry) if entry is not None else None
-            size_f = float(size) if size is not None else None
             last_f = float(last) if last is not None else None
 
             pnl = None
@@ -320,6 +468,15 @@ def positions_summary(symbol: Optional[str] = None):
             except Exception:
                 unreal_f = None
 
+            # 거래소 제공 퍼센트(가능 시)
+            pct = p.get("percentage") or (p.get("info", {}) or {}).get(
+                "unrealisedPnlPcnt"
+            )
+            try:
+                pct_f = float(pct) if pct is not None else None
+            except Exception:
+                pct_f = None
+
             # ROE 계산을 위한 명목가치/초기증거금 산출
             notional = p.get("notional") or (p.get("info", {}) or {}).get(
                 "positionValue"
@@ -331,8 +488,13 @@ def positions_summary(symbol: Optional[str] = None):
             if notional_f is None and entry_f is not None and size_f is not None:
                 notional_f = abs(entry_f * size_f)
 
-            initial_margin = p.get("initialMargin") or (p.get("info", {}) or {}).get(
-                "positionInitialMargin"
+            # 초기증거금: 격리/크로스 모두 커버하도록 다양한 필드 참조
+            initial_margin = (
+                p.get("initialMargin")
+                or p.get("margin")
+                or (p.get("info", {}) or {}).get("positionIM")
+                or (p.get("info", {}) or {}).get("positionInitialMargin")
+                or (p.get("info", {}) or {}).get("positionMargin")
             )
             try:
                 initial_margin_f = (
@@ -361,7 +523,9 @@ def positions_summary(symbol: Optional[str] = None):
                     pnl = (entry_f - last_f) * size_f
 
             # 퍼센트: ROE(초기증거금 대비)가 우선, 불가 시 가격 변화율로 폴백
-            if pnl is not None:
+            if pct_f is not None:
+                pnl_pct = pct_f
+            elif pnl is not None:
                 if initial_margin_f and initial_margin_f > 0:
                     pnl_pct = (float(pnl) / initial_margin_f) * 100.0
                 elif entry_f and last_f is not None:
