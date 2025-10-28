@@ -146,7 +146,7 @@ def _review_losing_trades(store: TradeStore, since_minutes: int = 5) -> None:
         closed_recent = trades_df[
             (trades_df["status"] == "closed")
             & (trades_df["pnl"].notna())
-            & (trades_df["pnl"] != 0)
+            & (trades_df["pnl"] <= 0)
             & (trades_df["ts"] >= since_ts)
         ].copy()
         if getattr(closed_recent, "empty", True):
