@@ -115,6 +115,8 @@ async function closeAll() {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  ensureJournalModalDOM();
+  setupJournalDetailHandler();
   refreshAll();
   refreshJournals();
   setInterval(refreshAll, 10000);
@@ -169,9 +171,9 @@ async function refreshJournals() {
             <td style="width: 120px" class="muted">${tsStr}</td>
             <td>${title}</td>
             <td style="width: 100px; text-align:right">
-              <button class="btn secondary" onclick='showJournalDetail(${JSON.stringify(
+              <button class="btn secondary" data-action="jr-detail" data-item="${encodeURIComponent(
                 JSON.stringify(it)
-              )})'>상세</button>
+              )}">상세</button>
             </td>
           </tr>`;
       })
@@ -188,23 +190,96 @@ async function refreshJournals() {
   }
 }
 
-function showJournalDetail(raw) {
+function escapeHtml(value) {
+  const str = String(value ?? "");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function ensureJournalModalDOM() {
+  if (document.getElementById("jr-modal-backdrop")) return;
+  const wrap = document.createElement("div");
+  wrap.id = "jr-modal-backdrop";
+  wrap.className = "modal-backdrop";
+  wrap.hidden = true;
+  wrap.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="jr-modal-title">
+      <div class="modal-header">
+        <div id="jr-modal-title">저널 상세</div>
+        <button class="btn secondary" type="button" data-action="modal-close">닫기</button>
+      </div>
+      <div class="modal-body" id="jr-modal-body"></div>
+    </div>
+  `;
+  wrap.addEventListener("click", (e) => {
+    if (e.target === wrap || e.target.closest('[data-action="modal-close"]')) {
+      closeJournalModal();
+    }
+  });
+  document.body.appendChild(wrap);
+  if (!window.__jrEscHandlerAttached) {
+    window.__jrEscHandlerAttached = true;
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeJournalModal();
+    });
+  }
+}
+
+function openJournalModal(html) {
+  ensureJournalModalDOM();
+  const backdrop = document.getElementById("jr-modal-backdrop");
+  const body = document.getElementById("jr-modal-body");
+  if (!backdrop || !body) return;
+  body.innerHTML = html;
+  backdrop.hidden = false;
+}
+
+function closeJournalModal() {
+  const backdrop = document.getElementById("jr-modal-backdrop");
+  if (backdrop) backdrop.hidden = true;
+}
+
+function showJournalModal(it) {
   try {
-    const it = JSON.parse(raw);
     const ts = new Date(it.ts);
     const tsStr = ts.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
     const body = `
-시간: ${tsStr}\n유형: ${it.entry_type}\n심볼: ${it.symbol || "-"}\n사유: ${
-      it.reason || "-"
-    }\n내용:\n${it.content || "-"}\n\n메타:\n${JSON.stringify(
-      it.meta || {},
-      null,
-      2
-    )}
+      <div><strong>시간</strong>: ${escapeHtml(tsStr)}</div>
+      <div><strong>유형</strong>: ${escapeHtml(it.entry_type)}</div>
+      <div><strong>심볼</strong>: ${escapeHtml(it.symbol || "-")}</div>
+      ${
+        it.reason
+          ? `<div><strong>사유</strong>: ${escapeHtml(it.reason)}</div>`
+          : ""
+      }
+      <div style="margin-top:8px"><strong>내용</strong></div>
+      <pre>${escapeHtml(it.content || "-")}</pre>
+      <div style="margin-top:8px"><strong>메타</strong></div>
+      <pre>${escapeHtml(JSON.stringify(it.meta || {}, null, 2))}</pre>
     `;
-    // 간단 구현: alert. 필요시 모달로 교체 가능
-    alert(body);
+    openJournalModal(body);
   } catch (e) {
     alert("보기 중 오류: " + e.message);
   }
+}
+
+function setupJournalDetailHandler() {
+  const container = el("journals");
+  if (!container || container.__jrClickAttached) return;
+  container.__jrClickAttached = true;
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-action="jr-detail"]');
+    if (!btn) return;
+    try {
+      const raw = decodeURIComponent(btn.dataset.item || "{}");
+      const it = JSON.parse(raw);
+      showJournalModal(it);
+    } catch (err) {
+      alert("보기 중 오류: " + err.message);
+    }
+  });
 }
