@@ -140,6 +140,43 @@
         <h2>오픈 오더</h2>
         <div id="orders"></div>
       </div>
+
+      <div class="card">
+        <h2>저널 입력</h2>
+        <div class="grid-2">
+          <div>
+            <label>심볼(선택)</label>
+            <input id="j-symbol" placeholder="BTC/USDT:USDT" />
+          </div>
+          <div>
+            <label>유형</label>
+            <select id="j-type">
+              <option value="thought">thought</option>
+              <option value="decision">decision</option>
+              <option value="action">action</option>
+              <option value="review">review</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top: 8px">
+          <label>사유(간단 요약)</label>
+          <input id="j-reason" placeholder="왜 이런 판단을 했는지" />
+        </div>
+        <div style="margin-top: 8px">
+          <label>내용(자유서술)</label>
+          <input id="j-content" placeholder="세부 내용" />
+        </div>
+        <div style="margin-top: 12px; display: flex; gap: 8px">
+          <button class="btn" onclick="submitJournal()">기록</button>
+          <a
+            class="btn secondary"
+            href="/overlay?limit=12&today_only=1"
+            target="_blank"
+            >오버레이 열기</a
+          >
+        </div>
+        <div id="j-result" class="muted" style="margin-top: 8px"></div>
+      </div>
     </div>
   </body>
 </html>

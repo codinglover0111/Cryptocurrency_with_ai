@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -95,3 +95,124 @@ def symbols():
         spot, contract = _to_ccxt_symbols(c)
         items.append({"code": c, "spot": spot, "contract": contract})
     return {"symbols": items}
+
+
+class JournalBody(BaseModel):
+    symbol: Optional[str] = None
+    entry_type: str  # thought | decision | action | review
+    content: str
+    reason: Optional[str] = None
+    meta: Optional[dict] = None
+    ref_order_id: Optional[str] = None
+    ts: Optional[datetime] = None
+
+
+@app.post("/api/journals")
+def create_journal(body: JournalBody):
+    store = TradeStore(
+        StorageConfig(
+            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
+            mysql_url=os.getenv("MYSQL_URL"),
+        )
+    )
+    store.record_journal({k: v for k, v in body.model_dump().items() if v is not None})
+    return {"ok": True}
+
+
+@app.get("/api/journals")
+def list_journals(
+    symbol: Optional[str] = None,
+    types: Optional[str] = None,
+    today_only: int = 1,
+    limit: int = 20,
+    ascending: int = 1,
+):
+    store = TradeStore(
+        StorageConfig(
+            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
+            mysql_url=os.getenv("MYSQL_URL"),
+        )
+    )
+    type_list: Optional[List[str]] = (
+        [t.strip() for t in types.split(",") if t.strip()] if types else None
+    )
+    df = store.fetch_journals(
+        symbol=symbol,
+        types=type_list,
+        today_only=bool(today_only),
+        limit=max(1, min(int(limit), 200)),
+        ascending=bool(ascending),
+    )
+    if df.empty:
+        return {"items": []}
+    items = []
+    for _, row in df.iterrows():
+        ts = row.get("ts")
+        ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        items.append(
+            {
+                "ts": ts_iso,
+                "symbol": row.get("symbol"),
+                "entry_type": row.get("entry_type"),
+                "content": row.get("content"),
+                "reason": row.get("reason"),
+                "meta": row.get("meta"),
+                "ref_order_id": row.get("ref_order_id"),
+            }
+        )
+    return {"items": items}
+
+
+@app.get("/overlay", response_class=HTMLResponse)
+def overlay(
+    request: Request,
+    limit: int = 10,
+    symbol: Optional[str] = None,
+    types: Optional[str] = None,
+    today_only: int = 1,
+    ascending: int = 1,
+    refresh: int = 5,
+):
+    store = TradeStore(
+        StorageConfig(
+            xlsx_path=os.getenv("TRADES_XLSX", "trades.xlsx"),
+            mysql_url=os.getenv("MYSQL_URL"),
+        )
+    )
+    type_list: Optional[List[str]] = (
+        [t.strip() for t in types.split(",") if t.strip()] if types else None
+    )
+    df = store.fetch_journals(
+        symbol=symbol,
+        types=type_list,
+        today_only=bool(today_only),
+        limit=max(1, min(int(limit), 200)),
+        ascending=bool(ascending),
+    )
+    items = []
+    if not df.empty:
+        for _, row in df.iterrows():
+            ts = row.get("ts")
+            ts_iso = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            items.append(
+                {
+                    "ts": ts_iso,
+                    "symbol": row.get("symbol"),
+                    "entry_type": row.get("entry_type"),
+                    "content": row.get("content"),
+                    "reason": row.get("reason"),
+                }
+            )
+    return templates.TemplateResponse(
+        "overlay.html",
+        {
+            "request": request,
+            "items": items,
+            "limit": limit,
+            "symbol": symbol,
+            "types": types,
+            "today_only": today_only,
+            "ascending": ascending,
+            "refresh": refresh,
+        },
+    )

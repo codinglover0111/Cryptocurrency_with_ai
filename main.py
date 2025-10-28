@@ -111,6 +111,58 @@ def automation_for_symbol(symbol_usdt: str):
         else:
             pos_side, pos_entry = None, None
 
+        # 오늘 저널(같은 심볼 기준) 조회 후 프롬프트에 반영
+        try:
+            journals_today_df = store.fetch_journals(
+                symbol=contract_symbol, today_only=True, limit=50, ascending=True
+            )
+            journal_today_lines = []
+            if not journals_today_df.empty:
+                for _, row in journals_today_df.iterrows():
+                    ts = row.get("ts")
+                    ts_str = (
+                        ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else str(ts)
+                    )
+                    journal_today_lines.append(
+                        f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
+                    )
+            journal_today_text = "\n".join(journal_today_lines)
+        except Exception:
+            journal_today_text = ""
+
+        # 포지션이 존재하면, 최근 오픈 이후 기록도 수집
+        since_open_text = ""
+        try:
+            # trades.xlsx에서 해당 심볼의 마지막 opened ts 조회
+            df_trades = store.load_trades()
+            if not df_trades.empty:
+                df_sym = df_trades[(df_trades["symbol"] == contract_symbol)]
+                df_opened = df_sym[df_sym["status"] == "opened"]
+                if not df_opened.empty:
+                    last_open_ts = df_opened["ts"].max()
+                    journals_since_df = store.fetch_journals(
+                        symbol=contract_symbol,
+                        today_only=True,
+                        since_ts=last_open_ts,
+                        limit=50,
+                        ascending=True,
+                    )
+                    lines = []
+                    if not journals_since_df.empty:
+                        for _, row in journals_since_df.iterrows():
+                            ts = row.get("ts")
+                            ts_str = (
+                                ts.strftime("%H:%M:%S")
+                                if hasattr(ts, "strftime")
+                                else str(ts)
+                            )
+                            lines.append(
+                                f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
+                            )
+                    since_open_text = "\n".join(lines)
+        except Exception:
+            since_open_text = ""
+
         prompt = (
             "당신은 천재적인 암호화폐 트레이더입니다.\n"
             f"아래는 {spot_symbol}의 OHLCV CSV 데이터입니다.\n"
@@ -123,10 +175,20 @@ def automation_for_symbol(symbol_usdt: str):
                 if pos_side is not None
                 else "현재 포지션: 없음\n"
             )
+            + (
+                "[JOURNALS_TODAY]\n" + journal_today_text + "\n"
+                if journal_today_text
+                else ""
+            )
+            + (
+                "[SINCE_LAST_OPEN]\n" + since_open_text + "\n"
+                if pos_side is not None and since_open_text
+                else ""
+            )
             + "다음 중 하나를 선택: watch/hold, sell, buy, stop.\n"
             + "시장가/지정가 여부, 가격(price), 손절(sl), 익절(tp), buy_now(boolean), leverage(숫자)을 JSON으로 반환.\n"
             + "계정 리스크는 20%로 제한됨(정보용).\n"
-            + "JSON만 출력."
+            + "각 결정의 이유를 explain 문자열로 포함. JSON만 출력."
         )
         # 우선 JSON 구조화 응답 시도(도구호출/response_format)
         try:
@@ -173,7 +235,7 @@ def automation_for_symbol(symbol_usdt: str):
             except Exception as _e:
                 logging.error("LLM parsed logging failed: %s", str(_e))
 
-        # 트레이딩 실행
+        # 의사결정/기록 + 트레이딩 실행
         if value["Status"] in ["buy", "sell"]:
             side = value["Status"]
             if value.get("buy_now") is True:
@@ -247,8 +309,54 @@ def automation_for_symbol(symbol_usdt: str):
             except Exception as e:
                 logging.error(f"Trade store write failed: {str(e)}")
 
+            # 기록: decision + action
+            try:
+                store.record_journal(
+                    {
+                        "symbol": contract_symbol,
+                        "entry_type": "decision",
+                        "content": json.dumps(
+                            {
+                                "status": side,
+                                "type": typevalue,
+                                "price": float(entry_price),
+                                "tp": value.get("tp"),
+                                "sl": value.get("sl"),
+                                "leverage": leverage,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "reason": value.get("explain"),
+                        "meta": value,
+                    }
+                )
+                store.record_journal(
+                    {
+                        "symbol": contract_symbol,
+                        "entry_type": "action",
+                        "content": f"open {side} {typevalue} price={float(entry_price)} qty={float(quantity)}",
+                        "reason": value.get("explain"),
+                        "meta": {"order_id": order_id},
+                        "ref_order_id": order_id,
+                    }
+                )
+            except Exception as _e:
+                logging.error(f"Journal write failed: {_e}")
+
         elif value["Status"] == "hold":
             logging.info("No trading signal generated")
+            try:
+                store.record_journal(
+                    {
+                        "symbol": contract_symbol,
+                        "entry_type": "decision",
+                        "content": json.dumps({"status": "hold"}, ensure_ascii=False),
+                        "reason": value.get("explain"),
+                        "meta": value,
+                    }
+                )
+            except Exception as _e:
+                logging.error(f"Journal write failed: {_e}")
 
         elif value["Status"] == "stop":
             logging.info("stop position(close_all)")
@@ -295,6 +403,18 @@ def automation_for_symbol(symbol_usdt: str):
             except Exception as e:
                 logging.error(f"PNL calc failed: {str(e)}")
             bybit.close_symbol_positions(contract_symbol)
+            try:
+                store.record_journal(
+                    {
+                        "symbol": contract_symbol,
+                        "entry_type": "action",
+                        "content": "close_all",
+                        "reason": value.get("explain") or "stop signal",
+                        "meta": value,
+                    }
+                )
+            except Exception as _e:
+                logging.error(f"Journal write failed: {_e}")
 
     except Exception as e:
         logging.error(f"Error in automation: {str(e)}")

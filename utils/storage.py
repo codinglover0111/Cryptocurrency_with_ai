@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
+from datetime import datetime
 
 import pandas as pd
 import sqlalchemy as sa
@@ -181,8 +182,8 @@ class TradeStore:
         symbol: Optional[str] = None,
         types: Optional[list] = None,
         today_only: bool = False,
-        since_ts: Optional["datetime"] = None,
-        until_ts: Optional["datetime"] = None,
+        since_ts: Optional[datetime] = None,
+        until_ts: Optional[datetime] = None,
         limit: int = 20,
         ascending: bool = True,
     ) -> pd.DataFrame:

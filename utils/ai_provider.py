@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 from typing import Dict, Any, Optional
 import json
@@ -33,7 +32,7 @@ class AIProvider:
             self._openai_client = OpenAI(base_url=base_url, api_key=f"{api_key}")
 
     # 텍스트 + 선택 이미지 컨텍스트로 의사결정 프롬프트 수행
-    def decide(self, prompt: str, images: Optional[list] = None) -> str:
+    def decide(self, prompt: str, _images: Optional[list] = None) -> str:
         if self.provider == "gemini":
             model = genai.GenerativeModel(
                 model_name=os.getenv(

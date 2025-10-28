@@ -118,3 +118,23 @@ window.addEventListener("DOMContentLoaded", () => {
   refreshAll();
   setInterval(refreshAll, 10000);
 });
+
+async function submitJournal() {
+  const symbol = el("j-symbol").value.trim() || undefined;
+  const entry_type = el("j-type").value;
+  const content = el("j-content").value.trim();
+  const reason = el("j-reason").value.trim() || undefined;
+  try {
+    const res = await fetch("/api/journals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, entry_type, content, reason }),
+    });
+    const j = await res.json();
+    el("j-result").textContent = "기록 완료";
+    el("j-content").value = "";
+    el("j-reason").value = "";
+  } catch (e) {
+    el("j-result").textContent = "오류: " + e.message;
+  }
+}

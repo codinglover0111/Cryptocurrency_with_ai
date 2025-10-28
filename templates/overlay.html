@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OBS Overlay - Journals</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+      body {
+        margin: 0;
+        padding: 8px;
+        background: transparent; /* OBS 크로마키/투명 배경 옵션 고려 */
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto,
+          sans-serif;
+        color: #e2e8f0;
+      }
+      .board {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .card {
+        background: rgba(17, 24, 39, 0.9);
+        border: 1px solid #1f2937;
+        border-radius: 10px;
+        padding: 10px;
+        min-width: 240px;
+        max-width: 320px;
+      }
+      .ts {
+        font-size: 12px;
+        color: #9ca3af;
+        margin-bottom: 6px;
+      }
+      .title {
+        font-weight: 700;
+        font-size: 14px;
+        margin-bottom: 4px;
+      }
+      .reason {
+        color: #cbd5e1;
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+      .content {
+        color: #e5e7eb;
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+    </style>
+    <script>
+      async function fetchJSON(path) {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(`${path} ${res.status}`);
+        return await res.json();
+      }
+      function qs(name) {
+        const url = new URL(window.location.href);
+        return url.searchParams.get(name);
+      }
+      function render(items) {
+        const board = document.getElementById("board");
+        if (!items || items.length === 0) {
+          board.innerHTML = '<div class="card">표시할 항목 없음</div>';
+          return;
+        }
+        board.innerHTML = items
+          .map((it) => {
+            const ts = new Date(it.ts);
+            const tsStr = ts.toLocaleString("ko-KR", {
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            const title = `${it.entry_type.toUpperCase()}${
+              it.symbol ? " · " + it.symbol : ""
+            }`;
+            return `
+              <div class="card">
+                <div class="ts">${tsStr}</div>
+                <div class="title">${title}</div>
+                ${it.reason ? `<div class="reason">${it.reason}</div>` : ""}
+                <div class="content">${(it.content || "").replace(
+                  /</g,
+                  "&lt;"
+                )}</div>
+              </div>
+            `;
+          })
+          .join("");
+      }
+      async function refresh() {
+        const limit = Number(qs("limit") || 10);
+        const symbol = qs("symbol");
+        const types = qs("types");
+        const today_only = Number(qs("today_only") || 1);
+        const ascending = Number(qs("ascending") || 1);
+        const url =
+          `/api/journals?limit=${limit}&today_only=${today_only}&ascending=${ascending}` +
+          (symbol ? `&symbol=${encodeURIComponent(symbol)}` : "") +
+          (types ? `&types=${encodeURIComponent(types)}` : "");
+        try {
+          const j = await fetchJSON(url);
+          render(j.items || []);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      document.addEventListener("DOMContentLoaded", () => {
+        refresh();
+        const r = Number(qs("refresh") || 5);
+        if (r > 0) setInterval(refresh, r * 1000);
+      });
+    </script>
+  </head>
+  <body>
+    <div class="board" id="board"></div>
+  </body>
+</html>
