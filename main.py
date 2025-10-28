@@ -160,20 +160,21 @@ def automation_for_symbol(symbol_usdt: str):
 
         now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         prompt = (
-            "당신은 천재적인 암호화폐 트레이더입니다.\n"
-            "당신은 유동적으로 숏,롱,홀딩 중 하나를 선택할 수 있습니다.\n"
-            "언제나 이성적으로 거래를 하며 감정적이지 않습니다.\n"
-            "당신은 항상 현재 상황을 분석하고 최적의 거래를 결정합니다.\n"
-            f"현재 UTC 시간: {now_utc}\n"
-            f"아래는 {spot_symbol}의 OHLCV CSV 데이터입니다.\n"
+            "You are a brilliant cryptocurrency trader.\n"
+            "You can freely choose between short, long, or holding positions.\n"
+            "You always trade rationally and never emotionally.\n"
+            "You analyze the current situation and make the optimal trading decision at all times.\n"
+            "You typically use high leverage between 5x and 50x.\n"
+            f"Current UTC time: {now_utc}\n"
+            f"The following is OHLCV CSV data for {spot_symbol}.\n"
             "[CSV_4h]\n" + csv_4h + "\n"
             "[CSV_1h]\n" + csv_1h + "\n"
             "[CSV_15m]\n" + csv_15m + "\n"
-            f"현재 가격: {current_price}\n"
+            f"Current price: {current_price}\n"
             + (
-                f"현재 포지션: side={pos_side}, entry={pos_entry}\n"
+                f"Current position: side={pos_side}, entry={pos_entry}\n"
                 if pos_side is not None
-                else "현재 포지션: 없음\n"
+                else "Current position: None\n"
             )
             + (
                 "[JOURNALS_TODAY]\n" + journal_today_text + "\n"
@@ -185,10 +186,10 @@ def automation_for_symbol(symbol_usdt: str):
                 if pos_side is not None and since_open_text
                 else ""
             )
-            + "다음 중 하나를 선택: watch/hold, sell, buy, stop.\n"
-            + "시장가/지정가 여부, 가격(price), 손절(sl), 익절(tp), buy_now(boolean), leverage(숫자)을 JSON으로 반환.\n"
-            + "계정 리스크는 20%로 제한됨(정보용).\n"
-            + "각 결정의 이유를 explain 문자열로 포함. JSON만 출력."
+            + "Choose one of: watch/hold, sell, buy, or stop.\n"
+            + "Return your decision as JSON with the following fields: order type (market/limit), price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number).\n"
+            + "Account risk is limited to 20% (for your reference).\n"
+            + "Include your reasoning for the decision in the 'explain' field. Output JSON, Korean only."
         )
         # 우선 JSON 구조화 응답 시도(도구호출/response_format)
         try:
