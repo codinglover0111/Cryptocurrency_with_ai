@@ -49,3 +49,40 @@ def calculate_position_size(
     # 최소 수량 보정
     quantity = max(min_quantity, base_quantity)
     return float(quantity)
+
+
+def enforce_max_loss_sl(
+    *,
+    entry_price: float,
+    proposed_sl: Optional[float],
+    position: str,
+    max_loss_percent: float = 80.0,
+) -> Optional[float]:
+    """제안된 SL이 최대 손실 한도(%)를 초과할 경우 강제로 제한된 SL을 반환.
+
+    - position: "long" 또는 "short" (AI Status 기준)
+    - long: 손실% = (entry - sl)/entry*100 → sl는 최소 entry*(1 - max_loss%) 이상
+    - short: 손실% = (sl - entry)/entry*100 → sl는 최대 entry*(1 + max_loss%) 이하
+
+    proposed_sl 가 None 이면 그대로 None 반환.
+    entry_price 가 비정상(<=0)이면 proposed_sl 그대로 반환.
+    """
+    try:
+        if proposed_sl is None:
+            return None
+        e = float(entry_price)
+        if e <= 0:
+            return float(proposed_sl)
+        sl = float(proposed_sl)
+        pos = (position or "").lower()
+        limit = max(0.0, float(max_loss_percent)) / 100.0
+        if pos == "long":
+            min_allowed = e * (1.0 - limit)
+            return float(sl) if sl >= min_allowed else float(min_allowed)
+        elif pos == "short":
+            max_allowed = e * (1.0 + limit)
+            return float(sl) if sl <= max_allowed else float(max_allowed)
+        else:
+            return float(sl)
+    except Exception:
+        return proposed_sl

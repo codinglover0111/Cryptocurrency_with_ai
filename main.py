@@ -1,7 +1,7 @@
 import os
 import json
 from utils import bybit_utils, BybitUtils, Open_Position, make_to_object
-from utils.risk import calculate_position_size
+from utils.risk import calculate_position_size, enforce_max_loss_sl
 from utils.storage import TradeStore, StorageConfig
 from utils.ai_provider import AIProvider
 from dotenv import load_dotenv
@@ -217,6 +217,7 @@ def automation_for_symbol(symbol_usdt: str):
             "You analyze the current situation and make the optimal trading decision at all times.\n"
             "You typically use high leverage between 5x and 50x.\n"
             "Decide TP and SL values considering leverage.\n"
+            "If the SL (stop loss) value implies a loss over 100%, it will be limited to 80%.\n"
             "It's important to not just always watch, sometimes take quick profits or cut losses to maximize returns.\n"
             f"Current UTC time: {now_utc}\n"
             f"The following is OHLCV CSV data for {spot_symbol}.\n"
@@ -491,7 +492,19 @@ def automation_for_symbol(symbol_usdt: str):
                 except Exception as _e:
                     logging.error("AI confirm failed: %s", str(_e))
 
-            # 2) 수량 재계산(확정된 SL 반영)
+            # 2) SL 강제 제한(손실 100% 초과 시 80%로 제한)
+            try:
+                if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
+                    use_sl = enforce_max_loss_sl(
+                        entry_price=float(entry_price),
+                        proposed_sl=float(use_sl),
+                        position=ai_status,
+                        max_loss_percent=80.0,
+                    )
+            except Exception:
+                pass
+
+            # 3) 수량 재계산(확정/보정된 SL 반영)
             stop_price = use_sl or (entry_price * (0.99 if side == "buy" else 1.01))
             quantity = calculate_position_size(
                 balance_usdt=float(balance_total or 0),
