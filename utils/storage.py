@@ -278,12 +278,35 @@ class TradeStore:
                         df["ts"] - pd.to_timedelta(df["ts"].dt.weekday, unit="D")
                     ).dt.floor("D")
                 else:
+                    # month는 tz가 사라질 수 있으므로 이후 UTC 로컬라이즈 처리
                     idx = df["ts"].dt.to_period("M").dt.to_timestamp()
+
+                def _to_utc_iso_any(t):
+                    try:
+                        tt = pd.Timestamp(t)
+                        if tt.tz is None:
+                            tt = tt.tz_localize("UTC")
+                        else:
+                            tt = tt.tz_convert("UTC")
+                        return tt.isoformat()
+                    except Exception:
+                        try:
+                            from datetime import datetime, timezone
+
+                            if isinstance(t, datetime):
+                                if t.tzinfo is None:
+                                    t = t.replace(tzinfo=timezone.utc)
+                                else:
+                                    t = t.astimezone(timezone.utc)
+                                return t.isoformat()
+                        except Exception:
+                            return str(t)
+
                 gf = df.groupby(idx)
                 for t, sub in gf:
                     series.append(
                         {
-                            "t": pd.Timestamp(t).tz_convert("UTC").isoformat(),
+                            "t": _to_utc_iso_any(t),
                             "realized_pnl": float(sub["pnl"].sum()),
                             "trades": int(len(sub)),
                         }
