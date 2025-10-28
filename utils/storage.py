@@ -208,10 +208,25 @@ class TradeStore:
 
         # 필터: 실현 손익이 있는 행만
         df = df[df["pnl"].notna()].copy()
+
+        # 입력 경계값(since/until)을 안전하게 UTC로 정규화
+        def _ensure_utc(ts_val):
+            try:
+                t = pd.Timestamp(ts_val)
+                if t.tz is None:
+                    return t.tz_localize("UTC")
+                return t.tz_convert("UTC")
+            except Exception:
+                return None
+
         if since_ts is not None:
-            df = df[df["ts"] >= pd.Timestamp(since_ts, tz="UTC")]
+            _since = _ensure_utc(since_ts)
+            if _since is not None:
+                df = df[df["ts"] >= _since]
         if until_ts is not None:
-            df = df[df["ts"] < pd.Timestamp(until_ts, tz="UTC")]
+            _until = _ensure_utc(until_ts)
+            if _until is not None:
+                df = df[df["ts"] < _until]
         if symbol:
             df = df[df["symbol"].astype(str) == str(symbol)]
 
