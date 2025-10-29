@@ -1206,7 +1206,7 @@ def run_scheduler():
     current_time = datetime.now(seoul_tz)
     logging.info(f"Scheduler started at {current_time}")
 
-    # 매 30분 마다 실행: 설정된 모든 심볼을 순회
+    # 매 5분 마다 실행: 설정된 모든 심볼을 순회
     def job():
         symbols = _parse_symbols()
         for s in symbols:
@@ -1216,7 +1216,7 @@ def run_scheduler():
             except Exception as e:
                 logging.error(f"Automation error for {s}: {e}")
 
-    schedule.every().hour.at(":30").do(job)
+    schedule.every(5).minutes.do(job)
 
     # 손실 리뷰 작업: 5분마다 실행
     def review_job():
