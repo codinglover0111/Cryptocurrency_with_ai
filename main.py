@@ -679,10 +679,50 @@ def automation_for_symbol(symbol_usdt: str):
         if ai_status in ["long", "short"]:
             # 내부 CCXT 주문은 buy/sell을 사용하므로 매핑
             side = "buy" if ai_status == "long" else "sell"
-            if value.get("buy_now") is True:
-                typevalue = "market"
-            else:
-                typevalue = "limit"
+
+            # 주문 타입/즉시매수 파싱 유틸
+            def _as_true(val):
+                try:
+                    if isinstance(val, bool):
+                        return val
+                    if isinstance(val, (int, float)):
+                        return float(val) == 1.0
+                    if isinstance(val, str):
+                        return val.strip().lower() in {
+                            "1",
+                            "true",
+                            "yes",
+                            "y",
+                            "market",
+                            "now",
+                            "immediate",
+                        }
+                except Exception:
+                    pass
+                return False
+
+            def _extract_order_type(obj):
+                try:
+                    t = (
+                        obj.get("type")
+                        or obj.get("order_type")
+                        or obj.get("order type")
+                        or obj.get("orderType")
+                        or ""
+                    )
+                    t = str(t).strip().lower()
+                except Exception:
+                    t = ""
+                if t in {"market", "mkt"}:
+                    return "market"
+                if t in {"limit", "lmt"}:
+                    return "limit"
+                return None
+
+            # 1차 결정: type 필드 우선, 없으면 buy_now로 판정
+            typevalue = _extract_order_type(value) or (
+                "market" if _as_true(value.get("buy_now")) else "limit"
+            )
 
             # 리스크 기반 수량 계산
             balance_info = bybit.get_balance("USDT") or {}
@@ -794,9 +834,13 @@ def automation_for_symbol(symbol_usdt: str):
                     )
                     if confirm.get("price") is not None:
                         entry_price = float(confirm.get("price"))
-                    if confirm.get("buy_now") is not None:
+                    # 확인 단계에서 type 또는 buy_now 재반영
+                    _t2 = _extract_order_type(confirm)
+                    if _t2:
+                        typevalue = _t2
+                    elif confirm.get("buy_now") is not None:
                         typevalue = (
-                            "market" if bool(confirm.get("buy_now")) else "limit"
+                            "market" if _as_true(confirm.get("buy_now")) else "limit"
                         )
                     if confirm.get("leverage") is not None:
                         leverage = float(confirm.get("leverage"))
