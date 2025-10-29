@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.core.symbols import parse_trading_symbols, to_ccxt_symbols
 from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
 from utils.ai_provider import AIProvider
@@ -195,28 +196,12 @@ def close_all():
     return {"ok": True, "result": res}
 
 
-def _parse_symbols():
-    raw = os.getenv(
-        "TRADING_SYMBOLS",
-        "XRPUSDT,WLDUSDT,ETHUSDT,BTCUSDT,SOLUSDT,DOGEUSDT",
-    )
-    return [s.strip().upper() for s in raw.split(",") if s.strip()]
-
-
-def _to_ccxt_symbols(symbol_usdt: str):
-    s = symbol_usdt.upper().replace(":USDT", "").replace("/", "")
-    base = s[:-4] if s.endswith("USDT") else s
-    spot = f"{base}/USDT"
-    contract = f"{base}/USDT:USDT"
-    return spot, contract
-
-
 @app.get("/symbols")
 def symbols():
-    codes = _parse_symbols()
+    codes = parse_trading_symbols()
     items = []
     for c in codes:
-        spot, contract = _to_ccxt_symbols(c)
+        spot, contract = to_ccxt_symbols(c)
         items.append({"code": c, "spot": spot, "contract": contract})
     return {"symbols": items}
 
