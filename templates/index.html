@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Crypto Bot Dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
     <link rel="stylesheet" href="/static/style.css" />
     <script defer src="/static/app.js"></script>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,373 +12,151 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
       rel="stylesheet"
     />
-    <style>
-      *,
-      *::before,
-      *::after {
-        box-sizing: border-box; /* padding/보더로 인한 입력칸 겹침 방지 */
-      }
-      body {
-        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto,
-          sans-serif;
-        background: #0b1220;
-        color: #e2e8f0;
-        margin: 0;
-      }
-      .container {
-        max-width: 1100px;
-        margin: 40px auto;
-        padding: 0 16px;
-      }
-      .card {
-        background: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 16px;
-      }
-      h1 {
-        font-size: 22px;
-        margin: 0 0 16px;
-      }
-      h2 {
-        font-size: 18px;
-        margin: 0 0 12px;
-      }
-      .row {
-        display: grid;
-        grid-template-columns: 1fr 2fr; /* 좌: 잔고/포지션, 우: 통계(넓게) */
-        gap: 16px;
-      }
-      .btn {
-        background: #2563eb;
-        color: white;
-        border: none;
-        padding: 10px 14px;
-        border-radius: 8px;
-        cursor: pointer;
-      }
-      .btn.secondary {
-        background: #374151;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed; /* 열 너비 고정으로 셀 겹침 방지 */
-      }
-      th,
-      td {
-        border-bottom: 1px solid #1f2937;
-        padding: 8px;
-        text-align: left;
-        font-size: 14px;
-        white-space: nowrap; /* 긴 텍스트 줄바꿈으로 인한 겹침 방지 */
-        overflow: hidden; /* 셀 넘침 숨김 */
-        text-overflow: ellipsis; /* 넘친 텍스트 말줄임표 */
-      }
-      .muted {
-        color: #9ca3af;
-        font-size: 13px;
-      }
-      .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-      }
-      .journal-controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-        margin-bottom: 12px;
-      }
-      .journal-limit {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 13px;
-        color: #9ca3af;
-      }
-      .journal-limit input {
-        width: 90px;
-      }
-      .journal-type-filters {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 8px;
-        border: 1px solid #1f2937;
-        border-radius: 8px;
-        background: #0b1220;
-      }
-      .journal-type-filters label {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 13px;
-        color: #e2e8f0;
-      }
-      .journal-type-label {
-        font-size: 12px;
-        color: #9ca3af;
-        margin-right: 4px;
-      }
-      .kpis {
-        display: grid;
-        /* 화면 너비에 따라 자동으로 칼럼 수를 조정하여 KPI 겹침 방지 */
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 12px;
-        margin-bottom: 12px;
-      }
-      .kpi {
-        background: #0b1220;
-        border: 1px solid #1f2937;
-        border-radius: 10px;
-        padding: 12px;
-        min-height: 72px; /* 박스 높이 고정으로 시각적 안정성 */
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-      }
-      .kpi .label {
-        font-size: 12px;
-        color: #94a3b8;
-        margin-bottom: 4px;
-      }
-      .kpi .value {
-        font-size: 18px;
-        font-weight: 700;
-        color: #e2e8f0;
-      }
-      .subtle-heading {
-        margin: 0 0 6px;
-        font-size: 14px;
-        color: #9ca3af;
-      }
-      /* 통계 카드 레이아웃 개선 */
-      .stats-grid {
-        display: grid;
-        /* 각 입력 블록의 최소 너비를 보장하여 라벨/입력 겹침 방지 */
-        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-        gap: 12px;
-        margin-bottom: 10px;
-        align-items: start; /* 라벨 높이 차이로 인한 하단 정렬 겹침 방지 */
-      }
-      .stats-grid > div {
-        min-width: 0;
-      }
-      .stats-actions {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 8px;
-        flex-wrap: wrap;
-      }
-      .stats-actions .btn {
-        height: 36px;
-        display: inline-flex;
-        align-items: center;
-      }
-      @media (max-width: 1024px) {
-        .stats-grid {
-          grid-template-columns: 1fr 1fr;
-        }
-      }
-      @media (max-width: 900px) {
-        /* 중간 화면에서도 1열로 전환해 겹침 방지 */
-        .grid-2 {
-          grid-template-columns: 1fr;
-        }
-        table {
-          /* 표는 가로 스크롤 허용으로 안전 처리 */
-          display: block;
-          overflow-x: auto;
-          white-space: nowrap;
-          table-layout: auto;
-        }
-      }
-      @media (max-width: 640px) {
-        .stats-grid {
-          grid-template-columns: 1fr;
-        }
-        .kpis {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-      }
-      input,
-      select {
-        background: #0b1220;
-        color: #e2e8f0;
-        border: 1px solid #1f2937;
-        padding: 8px;
-        border-radius: 8px;
-        width: 100%;
-        max-width: 100%;
-        min-width: 0; /* 그리드 셀 내에서 내용으로 인한 확장 방지 */
-        display: block; /* inline 특성으로 인한 라인 높이 충돌 방지 */
-      }
-      label {
-        font-size: 13px;
-        color: #9ca3af;
-        display: block;
-        margin-bottom: 6px;
-      }
-      @media (max-width: 1024px) {
-        .row {
-          grid-template-columns: 1fr; /* 중간 화면 이하에서는 단일 열 */
-        }
-      }
-      @media (max-width: 640px) {
-        .row {
-          grid-template-columns: 1fr;
-        }
-        .grid-2 {
-          grid-template-columns: 1fr;
-        }
-        .container {
-          margin: 20px auto;
-          padding: 0 12px;
-        }
-        h1 {
-          font-size: 20px;
-        }
-        h2 {
-          font-size: 16px;
-        }
-        table {
-          display: block;
-          overflow-x: auto;
-        }
-        .journal-controls {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-        .journal-type-filters {
-          width: 100%;
-          flex-wrap: wrap;
-        }
-      }
-    </style>
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; connect-src 'self'"
     />
   </head>
   <body>
-    <div class="container">
-      <div class="card">
-        <h1>Crypto Bot Dashboard</h1>
-        <div class="muted">
-          상태, 통계 조회 및 저널 목록 확인 (루트 페이지는 조회 전용)
+    <div class="page-shell">
+      <header class="page-header card">
+        <div class="page-heading">
+          <h1 class="page-title">Crypto Bot Dashboard</h1>
+          <p class="page-subtitle">
+            상태와 통계를 한눈에 확인하고 최근 저널을 빠르게 탐색하세요.
+          </p>
         </div>
-      </div>
+        <div class="page-meta">
+          <span class="chip chip--accent">조회 전용</span>
+        </div>
+      </header>
 
-      <div class="row">
-        <div class="card" id="card-balance">
-          <h2>잔고 / 포지션</h2>
-          <div id="balance"></div>
-          <div id="positions"></div>
-        </div>
-        <div class="card" id="card-stats">
-          <h2>통계</h2>
-          <div class="stats-grid">
-            <div>
-              <label>시작(UTC YYYY-MM-DD)</label>
-              <input id="st-since" placeholder="2025-01-01" />
+      <main class="page-main">
+        <section class="panel-grid">
+          <article class="card panel panel--stack" id="card-balance">
+            <header class="panel-header">
+              <div>
+                <h2 class="panel-title">잔고 / 포지션</h2>
+                <p class="panel-subtitle">실시간 자산 현황</p>
+              </div>
+            </header>
+            <div class="panel-body">
+              <div class="balance-summary" id="balance"></div>
+              <div class="table-wrapper" id="positions"></div>
             </div>
-            <div>
-              <label>종료(UTC YYYY-MM-DD)</label>
-              <input id="st-until" placeholder="2025-12-31" />
-            </div>
-            <div>
-              <label>심볼(선택)</label>
-              <input id="st-symbol" placeholder="BTC/USDT:USDT" />
-            </div>
-            <div>
-              <label>그룹</label>
-              <select id="st-group">
-                <option value="">없음</option>
-                <option value="day">일별</option>
-                <option value="week">주별</option>
-                <option value="month">월별</option>
-              </select>
-            </div>
-          </div>
-          <div class="stats-actions">
-            <button class="btn secondary" id="st-refresh">조회</button>
-            <button class="btn" id="st-this-month">이번 달</button>
-            <button class="btn" id="st-last-7d">최근 7일</button>
-          </div>
-          <div id="stats"></div>
-        </div>
-        <!-- 제어 패널 제거 -->
-      </div>
+          </article>
 
-      <div class="card">
-        <h2>오픈 오더</h2>
-        <div id="orders"></div>
-      </div>
+          <article class="card panel" id="card-stats">
+            <header class="panel-header">
+              <div>
+                <h2 class="panel-title">통계</h2>
+                <p class="panel-subtitle">기간별 성과를 비교해 보세요.</p>
+              </div>
+            </header>
+            <div class="panel-body">
+              <div class="stats-grid">
+                <div class="input-field">
+                  <label for="st-since">시작 (UTC YYYY-MM-DD)</label>
+                  <input id="st-since" placeholder="2025-01-01" />
+                </div>
+                <div class="input-field">
+                  <label for="st-until">종료 (UTC YYYY-MM-DD)</label>
+                  <input id="st-until" placeholder="2025-12-31" />
+                </div>
+                <div class="input-field">
+                  <label for="st-symbol">심볼 (선택)</label>
+                  <input id="st-symbol" placeholder="BTC/USDT:USDT" />
+                </div>
+                <div class="input-field">
+                  <label for="st-group">그룹</label>
+                  <select id="st-group">
+                    <option value="">없음</option>
+                    <option value="day">일별</option>
+                    <option value="week">주별</option>
+                    <option value="month">월별</option>
+                  </select>
+                </div>
+              </div>
+              <div class="stats-actions">
+                <button class="btn btn--ghost" id="st-refresh">조회</button>
+                <button class="btn" id="st-this-month">이번 달</button>
+                <button class="btn" id="st-last-7d">최근 7일</button>
+              </div>
+              <div class="stats-output" id="stats"></div>
+            </div>
+          </article>
+        </section>
 
-      <div class="card">
-        <h2>저널 조회</h2>
-        <div class="muted" style="margin-bottom: 8px">
-          오늘 생성된 최신 기록을 시간순으로 보여줍니다. 항목의 "상세" 버튼을
-          클릭해 전체 내용을 확인하세요.
-        </div>
-        <div class="journal-controls">
-          <label class="journal-limit">
-            최근 개수
-            <input id="jr-limit" type="number" min="1" max="200" value="20" />
-          </label>
-          <label class="journal-limit">
-            타임존
-            <select id="tz-select" style="width: 120px">
-              <option value="UTC" selected>UTC</option>
-              <option value="UTC+9">UTC+9</option>
-              <option value="UTC+1">UTC+1</option>
-              <option value="UTC-5">UTC-5</option>
-            </select>
-          </label>
-          <label
-            class="journal-sort"
-            style="
-              display: flex;
-              align-items: center;
-              gap: 6px;
-              font-size: 13px;
-              color: #9ca3af;
-            "
-          >
-            정렬
-            <select id="jr-sort" style="width: 140px">
-              <option value="desc" selected>최신순</option>
-              <option value="asc">오래된순</option>
-            </select>
-          </label>
-          <div id="jr-type-filters" class="journal-type-filters">
-            <span class="journal-type-label">유형</span>
-            <label><input type="checkbox" value="thought" checked />사고</label>
-            <label
-              ><input type="checkbox" value="decision" checked />판단</label
-            >
-            <label><input type="checkbox" value="action" checked />액션</label>
-            <label><input type="checkbox" value="review" checked />리뷰</label>
+        <section class="panel-grid panel-grid--wide">
+          <article class="card panel">
+            <header class="panel-header">
+              <div>
+                <h2 class="panel-title">오픈 오더</h2>
+                <p class="panel-subtitle">현재 대기 중인 주문 내역</p>
+              </div>
+            </header>
+            <div class="panel-body">
+              <div class="table-wrapper" id="orders"></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="card panel">
+          <header class="panel-header">
+            <div>
+              <h2 class="panel-title">저널 조회</h2>
+              <p class="panel-subtitle">
+                오늘 생성된 최신 기록을 시간순으로 확인하세요.
+              </p>
+            </div>
+          </header>
+          <div class="panel-body">
+            <div class="journal-controls">
+              <label class="journal-limit">
+                최근 개수
+                <input id="jr-limit" type="number" min="1" max="200" value="20" />
+              </label>
+              <label class="journal-limit">
+                타임존
+                <select id="tz-select">
+                  <option value="UTC" selected>UTC</option>
+                  <option value="UTC+9">UTC+9</option>
+                  <option value="UTC+1">UTC+1</option>
+                  <option value="UTC-5">UTC-5</option>
+                </select>
+              </label>
+              <label class="journal-sort">
+                정렬
+                <select id="jr-sort">
+                  <option value="desc" selected>최신순</option>
+                  <option value="asc">오래된순</option>
+                </select>
+              </label>
+              <div id="jr-type-filters" class="journal-type-filters">
+                <span class="journal-type-label">유형</span>
+                <label><input type="checkbox" value="thought" checked />사고</label>
+                <label><input type="checkbox" value="decision" checked />판단</label>
+                <label><input type="checkbox" value="action" checked />액션</label>
+                <label><input type="checkbox" value="review" checked />리뷰</label>
+              </div>
+              <button class="btn btn--ghost" id="jr-refresh">조회</button>
+              <a
+                class="btn"
+                href="/overlay?limit=12&today_only=1&ascending=0&types=decision,action,review"
+                target="_blank"
+                >판단 오버레이</a
+              >
+              <a
+                class="btn"
+                href="/overlay_positions?refresh=5&fs=18"
+                target="_blank"
+                >포지션 오버레이</a
+              >
+            </div>
+            <div class="table-wrapper" id="journals"></div>
           </div>
-          <button class="btn secondary" id="jr-refresh">조회</button>
-          <a
-            class="btn"
-            href="/overlay?limit=12&today_only=1&ascending=0&types=decision,action,review"
-            target="_blank"
-            >판단 오버레이</a
-          >
-          <a
-            class="btn"
-            href="/overlay_positions?refresh=5&fs=18"
-            target="_blank"
-            >포지션 오버레이</a
-          >
-        </div>
-        <div id="journals"></div>
-      </div>
+        </section>
+      </main>
     </div>
   </body>
 </html>

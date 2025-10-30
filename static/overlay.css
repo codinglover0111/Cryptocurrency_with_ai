@@ -1,0 +1,194 @@
+:root {
+  color-scheme: dark;
+  --overlay-text: #f8fafc;
+  --overlay-muted: rgba(226, 232, 240, 0.66);
+  --overlay-surface: rgba(15, 23, 42, 0.82);
+  --overlay-border: rgba(148, 163, 184, 0.28);
+  --overlay-highlight: rgba(56, 189, 248, 0.28);
+  --overlay-radius: 16px;
+  --overlay-shadow: 0 16px 40px rgba(2, 6, 23, 0.38);
+  --overlay-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 14px;
+  background: transparent;
+  font-family: var(--overlay-font);
+  color: var(--overlay-text);
+  font-size: clamp(16px, 1.4vw, 20px);
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+.overlay-board {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.overlay-board--stack {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+
+.overlay-board--stack .card {
+  min-width: clamp(280px, 62vw, 520px);
+  max-width: clamp(280px, 62vw, 520px);
+}
+
+.card {
+  background: var(--overlay-surface);
+  border: 1px solid var(--overlay-border);
+  border-radius: var(--overlay-radius);
+  padding: 16px;
+  box-shadow: var(--overlay-shadow);
+  min-width: clamp(220px, 28vw, 320px);
+  max-width: clamp(220px, 32vw, 360px);
+  backdrop-filter: blur(14px);
+}
+
+.card h3,
+.card p {
+  margin: 0;
+}
+
+.ts {
+  font-size: 0.75em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--overlay-muted);
+  margin-bottom: 8px;
+}
+
+.title {
+  font-weight: 700;
+  font-size: 1.05em;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reason {
+  font-size: 0.92em;
+  color: rgba(148, 163, 184, 0.82);
+  margin-bottom: 6px;
+}
+
+.content {
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  color: var(--overlay-text);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0;
+  font-size: 0.96em;
+}
+
+.row span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+.pnl-pos {
+  color: #4ade80;
+}
+
+.pnl-neg {
+  color: #f87171;
+}
+
+.overlay-controls {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  box-shadow: 0 12px 30px rgba(2, 6, 23, 0.36);
+}
+
+.overlay-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--overlay-muted);
+  cursor: pointer;
+}
+
+.overlay-toggle input {
+  width: auto;
+  accent-color: rgba(56, 189, 248, 0.9);
+}
+
+.overlay-button {
+  background: rgba(56, 189, 248, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  color: var(--overlay-text);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.overlay-button:hover {
+  background: rgba(56, 189, 248, 0.26);
+  transform: translateY(-1px);
+}
+
+.overlay-button:active {
+  transform: translateY(0);
+}
+
+.empty-state {
+  min-width: 240px;
+  color: rgba(226, 232, 240, 0.72);
+  font-size: 0.95em;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 10px;
+    font-size: 15px;
+  }
+
+  .overlay-board {
+    gap: 10px;
+  }
+
+  .card {
+    min-width: calc(100% - 20px);
+    max-width: calc(100% - 20px);
+  }
+
+  .overlay-controls {
+    position: static;
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+    border-radius: var(--overlay-radius);
+    margin-top: 10px;
+  }
+}

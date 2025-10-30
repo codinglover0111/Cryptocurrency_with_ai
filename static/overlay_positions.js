@@ -19,7 +19,7 @@ function render(items) {
   const board = document.getElementById("board");
   if (!board) return;
   if (!items || items.length === 0) {
-    board.innerHTML = '<div class="card">포지션 없음</div>';
+    board.innerHTML = '<div class="card empty-state">포지션 없음</div>';
     fitToViewportHeight();
     return;
   }

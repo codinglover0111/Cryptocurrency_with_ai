@@ -42,8 +42,8 @@ def run_scheduler() -> None:
         except Exception:
             logging.exception("Loss review job error")
 
-    schedule.every(5).minutes.do(job)
-    schedule.every(5).minutes.do(review_job)
+    schedule.every(15).minutes.do(job)
+    schedule.every(15).minutes.do(review_job)
 
     review_job()
     job()

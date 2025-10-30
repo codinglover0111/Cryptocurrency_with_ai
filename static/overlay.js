@@ -13,7 +13,7 @@ function render(items) {
   const board = document.getElementById("board");
   if (!board) return;
   if (!items || items.length === 0) {
-    board.innerHTML = '<div class="card">표시할 항목 없음</div>';
+    board.innerHTML = '<div class="card empty-state">표시할 항목 없음</div>';
     return;
   }
   board.innerHTML = items
