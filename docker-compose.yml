@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    user: "1000:1000"
     container_name: crypto_bot
     env_file:
       - .env
@@ -17,6 +18,7 @@ services:
 
   web:
     build: .
+    user: "1000:1000"
     container_name: crypto_web
     depends_on:
       - app
@@ -33,4 +35,4 @@ services:
     restart: unless-stopped
     volumes:
       - ./.env:/app/.env
-      - ./data:/app/data
+      - ./data:/app/data:ro
