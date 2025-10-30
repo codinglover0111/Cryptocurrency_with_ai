@@ -561,12 +561,46 @@ class BybitUtils:
             return None
 
     def get_positions_by_symbol(self, symbol: str):
-        """지정 심볼의 포지션만 필터링해서 반환"""
+        """지정 심볼의 *활성* 포지션만 반환 (수량이 0인 항목은 제외)."""
         try:
             positions = (
                 self.exchange.fetch_positions(None, self._default_params()) or []
             )
-            return [p for p in positions if (p.get("symbol") == symbol)]
+            active_positions = []
+            for p in positions:
+                if p.get("symbol") != symbol:
+                    continue
+
+                size_candidates = [
+                    p.get("contracts"),
+                    p.get("amount"),
+                    p.get("size"),
+                ]
+
+                info = p.get("info") or {}
+                if isinstance(info, dict):
+                    size_candidates.extend(
+                        [
+                            info.get("contracts"),
+                            info.get("amount"),
+                            info.get("size"),
+                            info.get("positionAmt"),
+                        ]
+                    )
+
+                max_size = 0.0
+                for cand in size_candidates:
+                    if cand is None:
+                        continue
+                    try:
+                        max_size = max(max_size, abs(float(cand)))
+                    except Exception:
+                        continue
+
+                if max_size > 1e-8:
+                    active_positions.append(p)
+
+            return active_positions
         except Exception as e:
             print(f"Error fetching positions by symbol: {e}")
             return []
