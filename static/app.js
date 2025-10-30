@@ -222,6 +222,11 @@ function buildStatsRangeUrl() {
 
 async function manualRefreshStats() {
   try {
+    try {
+      await fetchJSON("/stats");
+    } catch (err) {
+      console.warn("/stats 호출 실패", err);
+    }
     const url = buildStatsRangeUrl();
     const data = await fetchJSON(url);
     renderStatsRange(data);
@@ -268,6 +273,22 @@ window.addEventListener("DOMContentLoaded", () => {
   if (tzSel) tzSel.addEventListener("change", refreshJournals);
   const stRefresh = document.getElementById("st-refresh");
   if (stRefresh) stRefresh.addEventListener("click", manualRefreshStats);
+  const stToday = document.getElementById("st-today");
+  if (stToday)
+    stToday.addEventListener("click", () => {
+      const now = new Date();
+      const iso = (x) =>
+        `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(
+          2,
+          "0"
+        )}-${String(x.getUTCDate()).padStart(2, "0")}`;
+      const today = iso(now);
+      const tomorrow = new Date(now.getTime() + 24 * 3600 * 1000);
+      document.getElementById("st-since").value = today;
+      document.getElementById("st-until").value = iso(tomorrow);
+      document.getElementById("st-group").value = "day";
+      manualRefreshStats();
+    });
   const stThisMonth = document.getElementById("st-this-month");
   if (stThisMonth)
     stThisMonth.addEventListener("click", () => {
