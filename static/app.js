@@ -235,6 +235,81 @@ function renderPositions(data) {
     </table>`;
 }
 
+const BALANCE_REFRESH_COOLDOWN_MS = 5000;
+let lastManualStatusRefreshTime = 0;
+
+async function refreshStatusOnly() {
+  const status = await fetchJSON("/status");
+  renderBalance(status);
+  renderPositions(status);
+  return status;
+}
+
+async function manualRefreshStatus() {
+  const btn = el("balance-refresh");
+  const hint = el("balance-refresh-hint");
+  const now = Date.now();
+  const elapsed = now - lastManualStatusRefreshTime;
+  const withinCooldown = elapsed < BALANCE_REFRESH_COOLDOWN_MS;
+  let fetchedSuccessfully = false;
+
+  if (btn) {
+    btn.disabled = true;
+  }
+
+  if (hint) {
+    if (withinCooldown) {
+      const waitMs = BALANCE_REFRESH_COOLDOWN_MS - elapsed;
+      const waitSec = Math.max(1, Math.ceil(waitMs / 1000));
+      hint.textContent = `최근에 새로고침했습니다 · ${waitSec}초 후 새로운 데이터 적용`;
+    } else {
+      hint.textContent = "새로고침 중...";
+    }
+  }
+
+  try {
+    await refreshStatusOnly();
+    fetchedSuccessfully = true;
+    if (!withinCooldown && hint) {
+      hint.textContent = "업데이트 완료";
+      setTimeout(() => {
+        if (hint.textContent === "업데이트 완료") {
+          hint.textContent = "";
+        }
+      }, 2000);
+    }
+  } catch (e) {
+    console.error(e);
+    if (hint) {
+      hint.textContent = "새로고침 실패";
+      setTimeout(() => {
+        if (hint.textContent === "새로고침 실패") {
+          hint.textContent = "";
+        }
+      }, 3000);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.blur();
+    }
+    if (withinCooldown && hint) {
+      setTimeout(() => {
+        if (
+          hint.textContent &&
+          hint.textContent.includes("최근에 새로고침했습니다")
+        ) {
+          hint.textContent = "";
+        }
+      }, 2000);
+    }
+  }
+
+  if (!withinCooldown && fetchedSuccessfully) {
+    lastManualStatusRefreshTime = now;
+  }
+}
+
 function renderStatsRange(data) {
   const fmtUSD = (n) =>
     n === null || n === undefined || Number.isNaN(n)
@@ -711,6 +786,11 @@ async function closeAll() {
 window.addEventListener("DOMContentLoaded", () => {
   ensureJournalModalDOM();
   setupJournalDetailHandler();
+  const balanceRefreshBtn = document.getElementById("balance-refresh");
+  if (balanceRefreshBtn)
+    balanceRefreshBtn.addEventListener("click", () => {
+      manualRefreshStatus();
+    });
   const refreshBtn = document.getElementById("jr-refresh");
   if (refreshBtn)
     refreshBtn.addEventListener("click", () => {

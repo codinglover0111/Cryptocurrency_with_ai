@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import json
 import math
+import time
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Tuple, Any, Dict, cast
 
@@ -31,6 +33,10 @@ PNL_EPSILON = 1e-8
 TP_TOLERANCE_RATIO = 0.0002
 # 0.02%
 SL_TOLERANCE_RATIO = 0.0002
+
+STATUS_CACHE_TTL = 5.0
+STATUS_CACHE = {"ts": 0.0, "data": None}
+STATUS_CACHE_LOCK = threading.Lock()
 
 
 def _redact_sensitive(obj):
@@ -148,29 +154,47 @@ def health():
 
 @app.get("/status")
 def status():
+    now = time.monotonic()
+    with STATUS_CACHE_LOCK:
+        cached_payload = STATUS_CACHE.get("data")
+        cached_ts = STATUS_CACHE.get("ts", 0.0)
+    if cached_payload is not None and now - cached_ts < STATUS_CACHE_TTL:
+        return cached_payload
+
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
-    data = bybit.get_account_overview()
     try:
-        if isinstance(data, dict):
-            bal = data.get("balance")
-            if isinstance(bal, dict) and "raw" in bal:
-                bal.pop("raw", None)
-            positions = (
-                data.get("positions") if isinstance(data.get("positions"), list) else []
-            )
-            try:
-                data["positionsSummary"] = _summarize_positions(
-                    bybit,
-                    positions,
-                    symbol=None,
-                    use_mark_price=False,
-                    force_exchange_pnl=False,
-                    force_roe=False,
+        data = bybit.get_account_overview()
+        try:
+            if isinstance(data, dict):
+                bal = data.get("balance")
+                if isinstance(bal, dict) and "raw" in bal:
+                    bal.pop("raw", None)
+                positions = (
+                    data.get("positions")
+                    if isinstance(data.get("positions"), list)
+                    else []
                 )
-            except Exception:
-                data["positionsSummary"] = []
+                try:
+                    data["positionsSummary"] = _summarize_positions(
+                        bybit,
+                        positions,
+                        symbol=None,
+                        use_mark_price=False,
+                        force_exchange_pnl=False,
+                        force_roe=False,
+                    )
+                except Exception:
+                    data["positionsSummary"] = []
+        except Exception:
+            pass
     except Exception:
-        pass
+        if cached_payload is not None:
+            return cached_payload
+        raise
+
+    with STATUS_CACHE_LOCK:
+        STATUS_CACHE["data"] = data
+        STATUS_CACHE["ts"] = time.monotonic()
     return data
 
 
