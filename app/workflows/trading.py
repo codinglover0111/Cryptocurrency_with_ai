@@ -14,7 +14,11 @@ from utils.ai_provider import AIProvider
 from utils.risk import calculate_position_size, enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
 
-from app.core.symbols import parse_trading_symbols, per_symbol_allocation, to_ccxt_symbols
+from app.core.symbols import (
+    parse_trading_symbols,
+    per_symbol_allocation,
+    to_ccxt_symbols,
+)
 from app.services.journal import JournalService
 
 
@@ -57,7 +61,9 @@ class PromptContext:
     since_open_text: str
 
 
-def _init_dependencies(symbol_usdt: str, symbols: Sequence[str] | None) -> AutomationDependencies:
+def _init_dependencies(
+    symbol_usdt: str, symbols: Sequence[str] | None
+) -> AutomationDependencies:
     is_testnet = bool(int(os.getenv("TESTNET", "1")))
     all_symbols = list(symbols) if symbols else parse_trading_symbols()
     spot_symbol, contract_symbol = to_ccxt_symbols(symbol_usdt)
@@ -214,7 +220,9 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
             lines = []
             for _, row in recent_df.iterrows():
                 ts = row.get("ts")
-                ts_str = ts.strftime("%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
+                ts_str = (
+                    ts.strftime("%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
+                )
                 lines.append(
                     f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
                 )
@@ -277,6 +285,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     prompt = (
         f"당신은 암호화폐 트레이딩 보조 도구입니다. 한국어로 답변하세요.\n"
+        f"당신은 1~최대 75배까지 레버리지를 사용할 수 있습니다.\n"
         f"현재 UTC 시간: {now_utc}\n"
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
@@ -291,16 +300,24 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"{ctx.csv_15m}\n"
         "[/CSV_15M]\n"
         "[CURRENT_POSITIONS]\n"
-        + ("\n".join(ctx.current_positions_lines) if ctx.current_positions_lines else "(none)")
+        + (
+            "\n".join(ctx.current_positions_lines)
+            if ctx.current_positions_lines
+            else "(none)"
+        )
         + "\n[/CURRENT_POSITIONS]\n"
     )
 
     if ctx.reviews_text:
         prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
     if ctx.recent_reports_text:
-        prompt += "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
+        prompt += (
+            "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
+        )
     if ctx.journal_today_text:
-        prompt += "[JOURNALS_TODAY]\n" + ctx.journal_today_text + "\n[/JOURNALS_TODAY]\n"
+        prompt += (
+            "[JOURNALS_TODAY]\n" + ctx.journal_today_text + "\n[/JOURNALS_TODAY]\n"
+        )
     if ctx.pos_side is not None and ctx.since_open_text:
         prompt += "[SINCE_LAST_OPEN]\n" + ctx.since_open_text + "\n[/SINCE_LAST_OPEN]\n"
 
@@ -503,7 +520,9 @@ def _run_confirm_step(
     use_tp: Optional[float],
     use_sl: Optional[float],
     leverage: float,
-) -> Tuple[str, float, Optional[float], Optional[float], float, Optional[Dict[str, Any]], bool]:
+) -> Tuple[
+    str, float, Optional[float], Optional[float], float, Optional[Dict[str, Any]], bool
+]:
     confirm_meta: Optional[Dict[str, Any]] = None
 
     try:
@@ -616,16 +635,14 @@ def _execute_trade(
     balance_free = balance_info.get("free") or 0
 
     risk_percent = 20.0
-    max_alloc = float(
-        os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct))
-    )
+    max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct)))
     leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
 
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
-        symbol_min_qty = (
-            (market.get("limits", {}) or {}).get("amount", {}) or {}
-        ).get("min")
+        symbol_min_qty = ((market.get("limits", {}) or {}).get("amount", {}) or {}).get(
+            "min"
+        )
     except Exception:
         market = None
         symbol_min_qty = None
@@ -849,19 +866,16 @@ def _execute_trade(
     price_precision = None
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
-        price_precision = (
-            (market.get("precision", {}) or {}).get("price")
-            or (market.get("limits", {}) or {}).get("price", {}).get("min")
-        )
+        price_precision = (market.get("precision", {}) or {}).get("price") or (
+            market.get("limits", {}) or {}
+        ).get("price", {}).get("min")
     except Exception:
         market = None
 
     if position_params.type == "limit":
         try:
             price_precision_digits = (
-                int(price_precision)
-                if isinstance(price_precision, int)
-                else None
+                int(price_precision) if isinstance(price_precision, int) else None
             )
             if price_precision_digits is not None:
                 position_params.price = round(
@@ -961,16 +975,14 @@ def _execute_trade(
     balance_free = balance_info.get("free") or 0
 
     risk_percent = 20.0
-    max_alloc = float(
-        os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct))
-    )
+    max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct)))
     leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
 
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
-        symbol_min_qty = (
-            (market.get("limits", {}) or {}).get("amount", {}) or {}
-        ).get("min")
+        symbol_min_qty = ((market.get("limits", {}) or {}).get("amount", {}) or {}).get(
+            "min"
+        )
     except Exception:
         symbol_min_qty = None
     env_min_qty = os.getenv("MIN_QTY")
@@ -1002,9 +1014,7 @@ def _execute_trade(
         except Exception:
             take_profit = None
 
-    stop_price = stop_loss or (
-        entry_price * (0.99 if side == "buy" else 1.01)
-    )
+    stop_price = stop_loss or (entry_price * (0.99 if side == "buy" else 1.01))
 
     quantity = calculate_position_size(
         balance_usdt=float(balance_total or 0),
@@ -1121,7 +1131,9 @@ def _execute_trade(
         pass
 
     try:
-        quantity = float(deps.bybit.exchange.amount_to_precision(deps.contract_symbol, quantity))
+        quantity = float(
+            deps.bybit.exchange.amount_to_precision(deps.contract_symbol, quantity)
+        )
     except Exception:
         quantity = float(quantity)
 
@@ -1152,10 +1164,9 @@ def _execute_trade(
     price_precision = None
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
-        price_precision = (
-            (market.get("precision", {}) or {}).get("price")
-            or (market.get("limits", {}) or {}).get("price", {}).get("min")
-        )
+        price_precision = (market.get("precision", {}) or {}).get("price") or (
+            market.get("limits", {}) or {}
+        ).get("price", {}).get("min")
     except Exception:
         market = None
 
@@ -1172,9 +1183,7 @@ def _execute_trade(
     if position_params.type == "limit":
         try:
             price_precision_digits = (
-                int(price_precision)
-                if isinstance(price_precision, int)
-                else None
+                int(price_precision) if isinstance(price_precision, int) else None
             )
             if price_precision_digits is not None:
                 position_params.price = round(
@@ -1287,9 +1296,7 @@ def _handle_non_trade_actions(
             for p in positions:
                 try:
                     entry = float(
-                        p.get("entryPrice")
-                        or p.get("info", {}).get("avgPrice")
-                        or 0
+                        p.get("entryPrice") or p.get("info", {}).get("avgPrice") or 0
                     )
                     amount = float(
                         p.get("contracts") or p.get("amount") or p.get("size") or 0
@@ -1368,7 +1375,9 @@ def _record_skip(
         pass
 
 
-def automation_for_symbol(symbol_usdt: str, *, symbols: Sequence[str] | None = None) -> None:
+def automation_for_symbol(
+    symbol_usdt: str, *, symbols: Sequence[str] | None = None
+) -> None:
     try:
         deps = _init_dependencies(symbol_usdt, symbols)
         ctx = _gather_prompt_context(deps)
@@ -1381,7 +1390,9 @@ def automation_for_symbol(symbol_usdt: str, *, symbols: Sequence[str] | None = N
         LOGGER.error("Error in automation: %s", exc)
 
 
-def run_loss_review(symbols: Sequence[str] | None = None, since_minutes: int = 600) -> None:
+def run_loss_review(
+    symbols: Sequence[str] | None = None, since_minutes: int = 600
+) -> None:
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
