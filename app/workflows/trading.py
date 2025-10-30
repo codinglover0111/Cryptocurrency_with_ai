@@ -302,7 +302,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     prompt = (
         f"당신은 암호화폐 트레이딩 보조 도구입니다. 한국어로 답변하세요.\n"
-        f"당신은 1~최대 75배까지 레버리지를 사용할 수 있습니다.\n"
+        f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
         f"현재 UTC 시간: {now_utc}\n"
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
