@@ -38,7 +38,10 @@ def run_scheduler() -> None:
     def review_job() -> None:
         try:
             symbols = parse_trading_symbols()
+            for symbol in symbols:
+                logging.info("Run loss review for %s", symbol)
             run_loss_review(symbols=symbols)
+
         except Exception:
             logging.exception("Loss review job error")
 
