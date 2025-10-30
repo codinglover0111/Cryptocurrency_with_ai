@@ -44,6 +44,7 @@ function renderPositions(data) {
   };
 
   const fmtPct = (value) => {
+    if (value === null || value === undefined) return "-";
     const num = Number(value);
     if (!Number.isFinite(num)) return "-";
     const digits = Math.abs(num) >= 100 ? 1 : 2;
@@ -116,18 +117,120 @@ function renderPositions(data) {
 
   const list = (data.positions || [])
     .map((p) => {
-      const sym = p.symbol || (p.info && p.info.symbol) || "-";
-      const side = p.side || (p.info && p.info.side) || "-";
-      const entry = p.entryPrice || (p.info && p.info.avgPrice) || "-";
-      const size = p.contracts || p.amount || p.size || "-";
-      return `<tr><td>${sym}</td><td>${side}</td><td>${entry}</td><td>${size}</td></tr>`;
+      const info = p.info && typeof p.info === "object" ? p.info : {};
+      const sym = p.symbol || info.symbol || "-";
+      const sideRaw = p.side || info.side || "-";
+      const side = fmtSide(sideRaw);
+      const entryRaw = firstAvailableNumber([
+        p.entryPrice,
+        info.entryPrice,
+        info.avgPrice,
+        info.averagePrice,
+      ]);
+      const sizeRaw = firstAvailableNumber([
+        p.contracts,
+        p.amount,
+        p.size,
+        info.contracts,
+        info.amount,
+        info.size,
+        info.positionAmt,
+      ]);
+      const lastRaw = firstAvailableNumber([
+        p.lastPrice,
+        p.markPrice,
+        info.lastPrice,
+        info.markPrice,
+        info.price,
+      ]);
+      let pnlRaw = firstAvailableNumber([
+        p.pnl,
+        p.unrealizedPnl,
+        info.unrealisedPnl,
+        info.unrealizedPnl,
+      ]);
+      const sideLower = String(sideRaw || "").toLowerCase();
+      if (
+        pnlRaw == null &&
+        entryRaw != null &&
+        sizeRaw != null &&
+        lastRaw != null &&
+        (sideLower === "long" || sideLower === "buy" || sideLower === "short" || sideLower === "sell")
+      ) {
+        if (sideLower === "long" || sideLower === "buy") {
+          pnlRaw = (lastRaw - entryRaw) * sizeRaw;
+        } else {
+          pnlRaw = (entryRaw - lastRaw) * sizeRaw;
+        }
+      }
+      let pnlPctRaw = firstAvailableNumber([
+        p.pnlPct,
+        p.percentage,
+        p.roe,
+        info.pnlPct,
+        info.unrealisedPnlPcnt,
+        info.roe,
+        info.percentage,
+      ]);
+      if (pnlPctRaw == null && pnlRaw != null) {
+        const initMargin = firstAvailableNumber([
+          p.initialMargin,
+          p.margin,
+          info.positionIM,
+          info.positionInitialMargin,
+          info.positionMargin,
+        ]);
+        if (initMargin != null && initMargin !== 0) {
+          pnlPctRaw = (pnlRaw / initMargin) * 100;
+        } else if (
+          entryRaw != null &&
+          lastRaw != null &&
+          (sideLower === "long" || sideLower === "buy" || sideLower === "short" || sideLower === "sell")
+        ) {
+          if (sideLower === "long" || sideLower === "buy") {
+            pnlPctRaw = ((lastRaw - entryRaw) / entryRaw) * 100;
+          } else {
+            pnlPctRaw = ((entryRaw - lastRaw) / entryRaw) * 100;
+          }
+        }
+      }
+
+      const entry = entryRaw != null ? fmtNumber(entryRaw) : "-";
+      const size = sizeRaw != null ? fmtNumber(sizeRaw) : "-";
+      const pnlNum = pnlRaw == null ? NaN : Number(pnlRaw);
+      const pnlClass = Number.isFinite(pnlNum)
+        ? pnlNum > 0
+          ? "pnl-positive"
+          : pnlNum < 0
+          ? "pnl-negative"
+          : ""
+        : "";
+      const pnlText = fmtUSD(pnlRaw);
+      const pctNum = pnlPctRaw == null ? NaN : Number(pnlPctRaw);
+      const pctClass = Number.isFinite(pctNum)
+        ? pctNum > 0
+          ? "pnl-positive"
+          : pctNum < 0
+          ? "pnl-negative"
+          : ""
+        : "";
+      const pctText = fmtPct(pnlPctRaw);
+
+      return `<tr>
+        <td>${sym}</td>
+        <td>${side}</td>
+        <td class="text-right">${entry}</td>
+        <td class="text-right">${size}</td>
+        <td class="text-right ${pnlClass}">${pnlText}</td>
+        <td class="text-right ${pctClass}">${pctText}</td>
+      </tr>`;
     })
     .join("");
   el("positions").innerHTML = `
     <table>
-      <thead><tr><th>심볼</th><th>사이드</th><th>진입가</th><th>수량</th></tr></thead>
+      <thead><tr><th>심볼</th><th>사이드</th><th>진입가</th><th>수량</th><th>PNL (USDT)</th><th>수익률</th></tr></thead>
       <tbody>${
-        list || '<tr><td colspan="4" class="muted">없음</td></tr>'
+        list || '<tr><td colspan="6" class="muted">없음</td></tr>'
       }</tbody>
     </table>`;
 }
@@ -501,11 +604,26 @@ async function refreshAll() {
     renderBalance(status);
     renderPositions(status);
     renderStatsRange(stats);
-    const dl = el("symbols");
-    if (dl && syms && Array.isArray(syms.symbols)) {
-      dl.innerHTML = syms.symbols
-        .map((s) => `<option value="${s.contract}">${s.code}</option>`)
-        .join("");
+    const statsSymbolSelect = el("st-symbol");
+    if (statsSymbolSelect && syms && Array.isArray(syms.symbols)) {
+      const previousValue = statsSymbolSelect.value;
+      const options = ['<option value="">전체</option>'];
+      syms.symbols.forEach((s) => {
+        const contract = s.contract || s.code || "";
+        const label = s.code || contract || "-";
+        options.push(
+          `<option value="${contract}" data-code="${s.code || ""}" data-spot="${
+            s.spot || ""
+          }">${label}</option>`
+        );
+      });
+      statsSymbolSelect.innerHTML = options.join("");
+      if (previousValue) {
+        const hasPrevious = syms.symbols.some(
+          (s) => s.contract === previousValue || s.code === previousValue
+        );
+        statsSymbolSelect.value = hasPrevious ? previousValue : "";
+      }
     }
     const journalSymbolSelect = el("jr-symbol");
     if (journalSymbolSelect && syms && Array.isArray(syms.symbols)) {
@@ -630,6 +748,11 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   const stRefresh = document.getElementById("st-refresh");
   if (stRefresh) stRefresh.addEventListener("click", manualRefreshStats);
+  const stSymbolSelect = document.getElementById("st-symbol");
+  if (stSymbolSelect)
+    stSymbolSelect.addEventListener("change", () => {
+      manualRefreshStats();
+    });
   const stToday = document.getElementById("st-today");
   if (stToday)
     stToday.addEventListener("click", () => {
