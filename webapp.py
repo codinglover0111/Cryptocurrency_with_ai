@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, Request
@@ -395,6 +395,8 @@ def list_journals_filtered(
     today_only: int = 1,
     limit: int = 20,
     ascending: int = 0,
+    decision_statuses: Optional[str] = None,
+    recent_minutes: Optional[int] = None,
 ):
     """안전 공개용 저널 API: types는 SQL에 직접 반영하지 않고 서버에서 필터링.
 
@@ -410,17 +412,49 @@ def list_journals_filtered(
     )
 
     allowed_types = {"thought", "decision", "action", "review"}
-    req_types: Optional[List[str]] = (
-        [t.strip() for t in types.split(",") if t.strip()] if types else None
+    raw_types: List[str] = (
+        [t.strip() for t in types.split(",") if t.strip()] if types else []
     )
-    if req_types:
-        req_types = [t for t in req_types if t in allowed_types]
+    req_types = tuple(t for t in raw_types if t in allowed_types)
+
+    minutes_window: Optional[int] = None
+    if recent_minutes is not None:
+        try:
+            minutes_window = max(1, min(int(recent_minutes), 24 * 60))
+        except Exception:
+            minutes_window = None
+
+    since_ts: Optional[datetime] = None
+    if minutes_window:
+        since_ts = datetime.utcnow() - timedelta(minutes=minutes_window)
+
+    effective_today_only = bool(today_only) if since_ts is None else False
+
+    status_filters: Optional[set[str]] = None
+    if decision_statuses is not None:
+        raw_statuses = str(decision_statuses).strip()
+        if not raw_statuses or raw_statuses == "__none__":
+            status_filters = set()
+        else:
+            normalized: set[str] = set()
+            for token in raw_statuses.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                norm = _normalize_decision_status(token)
+                if norm:
+                    normalized.add(norm)
+            status_filters = normalized if normalized else set()
+
+    if status_filters is not None and not status_filters:
+        return {"items": []}
 
     # DB에서는 타입 미적용으로 조회 (SQL에 types 직접 반영하지 않음)
     df = store.fetch_journals(
         symbol=symbol,
         types=None,
-        today_only=bool(today_only),
+        today_only=effective_today_only,
+        since_ts=since_ts,
         limit=max(1, min(int(limit), 200)),
         ascending=bool(ascending),
     )

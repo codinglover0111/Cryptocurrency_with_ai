@@ -63,6 +63,67 @@ class PromptContext:
     chart_images: Dict[str, str] = field(default_factory=dict)
 
 
+def _compute_tp_sl_percentages(
+    *,
+    entry_price: float,
+    tp: Optional[float],
+    sl: Optional[float],
+    ai_status: str,
+    leverage: float,
+) -> Dict[str, Optional[float]]:
+    """Calculate tp/sl percentages (raw and leverage-adjusted)."""
+
+    result: Dict[str, Optional[float]] = {
+        "tp_pct": None,
+        "sl_pct": None,
+        "tp_pct_leverage": None,
+        "sl_pct_leverage": None,
+    }
+
+    try:
+        e = float(entry_price)
+        if e <= 0:
+            return result
+
+        lev = abs(float(leverage or 0.0))
+
+        def _safe(value: Optional[float]) -> Optional[float]:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        tp_v = _safe(tp)
+        sl_v = _safe(sl)
+        status = (ai_status or "").lower()
+
+        if tp_v is not None:
+            if status == "long":
+                result["tp_pct"] = (tp_v - e) / e * 100.0
+            elif status == "short":
+                result["tp_pct"] = (e - tp_v) / e * 100.0
+
+        if sl_v is not None:
+            if status == "long":
+                result["sl_pct"] = (e - sl_v) / e * 100.0
+            elif status == "short":
+                result["sl_pct"] = (sl_v - e) / e * 100.0
+
+        if lev > 0:
+            tp_pct = result["tp_pct"]
+            sl_pct = result["sl_pct"]
+            if tp_pct is not None:
+                result["tp_pct_leverage"] = tp_pct * lev
+            if sl_pct is not None:
+                result["sl_pct_leverage"] = sl_pct * lev
+    except Exception:
+        return result
+
+    return result
+
+
 def _init_dependencies(
     symbol_usdt: str, symbols: Sequence[str] | None
 ) -> AutomationDependencies:
@@ -574,21 +635,28 @@ def _run_confirm_step(
         e = float(entry_price)
         tp_v = float(use_tp)
         sl_v = float(use_sl)
-        if ai_status == "long":
-            tp_pct = (tp_v - e) / e * 100.0
-            sl_pct = (e - sl_v) / e * 100.0
-        else:
-            tp_pct = (e - tp_v) / e * 100.0
-            sl_pct = (sl_v - e) / e * 100.0
+
+        pct_info = _compute_tp_sl_percentages(
+            entry_price=e,
+            tp=tp_v,
+            sl=sl_v,
+            ai_status=ai_status,
+            leverage=leverage,
+        )
+        tp_pct = float(pct_info.get("tp_pct") or 0.0)
+        sl_pct = float(pct_info.get("sl_pct") or 0.0)
+        tp_pct_leverage = float(pct_info.get("tp_pct_leverage") or 0.0)
+        sl_pct_leverage = float(pct_info.get("sl_pct_leverage") or 0.0)
 
         confirm_prompt = (
             "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
             f"심볼: {deps.contract_symbol}\n"
             f"포지션: {ai_status} (내부 side={side})\n"
             f"진입가(entry): {float(e)}\n"
-            f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}%)\n"
-            f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}%)\n"
+            f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}% | 레버리지 기준: {tp_pct_leverage:.4f}%)\n"
+            f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
             f"레버리지: {float(leverage)}x\n"
+            "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
             "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
         )
@@ -738,6 +806,7 @@ def _execute_trade(
         return
 
     max_loss_env = os.getenv("MAX_LOSS_PERCENT")
+    leverage_factor = max(1.0, float(leverage or 1.0))
     if max_loss_env is not None:
         try:
             max_loss_pct = float(max_loss_env)
@@ -745,7 +814,6 @@ def _execute_trade(
             max_loss_pct = 80.0
     else:
         base_max_loss_pct = 4.0
-        leverage_factor = max(1.0, float(leverage or 1.0))
         max_loss_pct = base_max_loss_pct * leverage_factor
         cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
         cap_value: Optional[float]
@@ -758,6 +826,20 @@ def _execute_trade(
             cap_value = 95.0
         if cap_value is not None:
             max_loss_pct = min(max_loss_pct, cap_value)
+
+    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "85")
+    try:
+        leveraged_cap = float(leveraged_cap_env)
+    except Exception:
+        leveraged_cap = 85.0
+    if leveraged_cap > 0:
+        leveraged_raw_cap = (
+            leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
+        )
+        if leveraged_raw_cap > 0:
+            max_loss_pct = min(max_loss_pct, leveraged_raw_cap)
+
+    max_loss_pct = max(0.0, max_loss_pct)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
         try:
             use_sl = enforce_max_loss_sl(
@@ -955,6 +1037,9 @@ def _execute_trade(
         )
         return
 
+    executed_qty = quantity
+    order_id: Optional[Any] = None
+    fill_price = float(entry_price)
     try:
         executed_qty = order.get("amount") or order.get("filled") or quantity
         order_id = order.get("id") or order.get("orderId")
@@ -983,16 +1068,41 @@ def _execute_trade(
     except Exception as exc:
         LOGGER.error("Trade store write failed: %s", exc)
 
+    try:
+        entry_for_pct = float(fill_price)
+        if entry_for_pct <= 0:
+            entry_for_pct = float(position_params.price)
+    except Exception:
+        entry_for_pct = float(position_params.price)
+
+    pct_info_final = _compute_tp_sl_percentages(
+        entry_price=entry_for_pct,
+        tp=position_params.tp,
+        sl=position_params.sl,
+        ai_status=ai_status,
+        leverage=leverage,
+    )
+
     meta_payload: Dict[str, Any] = {
         "decision": decision,
         "status": ai_status,
         "side": side,
         "order_type": order_type,
         "entry_price": float(entry_price),
+        "actual_entry_price": entry_for_pct,
+        "executed_qty": float(executed_qty),
         "tp": position_params.tp,
         "sl": position_params.sl,
         "leverage": leverage,
     }
+    meta_payload.update(
+        {
+            "tp_percent": pct_info_final.get("tp_pct"),
+            "sl_percent": pct_info_final.get("sl_pct"),
+            "tp_percent_leverage": pct_info_final.get("tp_pct_leverage"),
+            "sl_percent_leverage": pct_info_final.get("sl_pct_leverage"),
+        }
+    )
     if confirm_meta is not None:
         meta_payload["confirm"] = confirm_meta
 
@@ -1008,9 +1118,14 @@ def _execute_trade(
                         "side": side,
                         "type": order_type,
                         "price": float(entry_price),
+                        "actual_price": entry_for_pct,
                         "tp": position_params.tp,
                         "sl": position_params.sl,
                         "leverage": leverage,
+                        "tp_percent": pct_info_final.get("tp_pct"),
+                        "sl_percent": pct_info_final.get("sl_pct"),
+                        "tp_percent_leverage": pct_info_final.get("tp_pct_leverage"),
+                        "sl_percent_leverage": pct_info_final.get("sl_pct_leverage"),
                     },
                     ensure_ascii=False,
                 ),
@@ -1022,7 +1137,7 @@ def _execute_trade(
             {
                 "symbol": deps.contract_symbol,
                 "entry_type": "action",
-                "content": f"open {side} {order_type} price={float(entry_price)} qty={float(executed_qty)}",
+                "content": f"open {side} {order_type} price={float(entry_for_pct)} qty={float(executed_qty)}",
                 "reason": decision.get("explain"),
                 "meta": {"order_id": order_id, "confirm": confirm_meta},
                 "ref_order_id": order_id,
