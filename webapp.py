@@ -20,6 +20,11 @@ from utils.ai_provider import AIProvider
 app = FastAPI(title="Crypto Bot UI")
 
 
+CLOSED_BY_TARGET_PROFIT = "목표수익달성"
+CLOSED_BY_STOP_LOSS = "SL 실행으로 인한 손절"
+CLOSED_BY_UNKNOWN = "unknown"
+
+
 def _redact_sensitive(obj):
     """Recursively redact sensitive-looking keys in dict/list structures."""
     sensitive_keys = (
@@ -791,7 +796,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         # 거래/주문 히스토리 기반으로 청산가(VWAP) 산출
         vwap_close = None
         order_id = None
-        closed_by = "unknown"
+        closed_by = CLOSED_BY_UNKNOWN
         reduce_side = "sell" if side == "buy" else "buy"
         since_ms = None
         try:
@@ -851,9 +856,9 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                     order_id = order_id or o.get("id")
                     info_str = (str(o.get("type")) + " " + str(o.get("info"))).lower()
                     if "take" in info_str and "profit" in info_str:
-                        closed_by = "tp"
+                        closed_by = CLOSED_BY_TARGET_PROFIT
                     elif "stop" in info_str and "loss" in info_str:
-                        closed_by = "sl"
+                        closed_by = CLOSED_BY_STOP_LOSS
                     break
             except Exception:
                 pass
@@ -882,22 +887,26 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
 
         if side == "buy":
             pnl = (vwap_close - entry_price) * amount
-            if closed_by == "unknown":
+            if closed_by == CLOSED_BY_UNKNOWN:
                 closed_by = (
-                    "tp"
+                    CLOSED_BY_TARGET_PROFIT
                     if (tp_f is not None and vwap_close >= tp_f)
                     else (
-                        "sl" if (sl_f is not None and vwap_close <= sl_f) else "unknown"
+                        CLOSED_BY_STOP_LOSS
+                        if (sl_f is not None and vwap_close <= sl_f)
+                        else CLOSED_BY_UNKNOWN
                     )
                 )
         else:
             pnl = (entry_price - vwap_close) * amount
-            if closed_by == "unknown":
+            if closed_by == CLOSED_BY_UNKNOWN:
                 closed_by = (
-                    "tp"
+                    CLOSED_BY_TARGET_PROFIT
                     if (tp_f is not None and vwap_close <= tp_f)
                     else (
-                        "sl" if (sl_f is not None and vwap_close >= sl_f) else "unknown"
+                        CLOSED_BY_STOP_LOSS
+                        if (sl_f is not None and vwap_close >= sl_f)
+                        else CLOSED_BY_UNKNOWN
                     )
                 )
 
