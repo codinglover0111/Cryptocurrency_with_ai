@@ -44,7 +44,9 @@ class JournalService:
             for _, row in df.iterrows():
                 ts = row.get("ts")
                 ts_str = (
-                    ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else str(ts)
+                    ts.strftime("%Y-%m-%d %H:%M:%S")
+                    if hasattr(ts, "strftime")
+                    else str(ts)
                 )
                 reason = row.get("reason") or ""
                 content = row.get("content") or ""
@@ -64,7 +66,7 @@ class JournalService:
 
             trades_df["ts"] = pd.to_datetime(trades_df["ts"], errors="coerce", utc=True)
 
-            now_utc = pd.Timestamp.utcnow().tz_localize("UTC")
+            now_utc = pd.Timestamp.now(tz="UTC")
             since_ts = now_utc - pd.Timedelta(minutes=int(since_minutes))
 
             closed_recent = trades_df[
