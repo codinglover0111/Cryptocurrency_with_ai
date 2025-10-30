@@ -35,4 +35,4 @@ services:
     restart: unless-stopped
     volumes:
       - ./.env:/app/.env
-      - ./data:/app/data:ro
+      - ./data:/app/data
