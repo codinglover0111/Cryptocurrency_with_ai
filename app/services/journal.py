@@ -31,6 +31,78 @@ class JournalService:
             self.ai_provider = AIProvider()
         return self.ai_provider
 
+    def _collect_entry_notes(
+        self,
+        contract_symbol: str,
+        *,
+        open_ts: pd.Timestamp,
+        close_ts: pd.Timestamp,
+    ) -> str:
+        """Gather decision/action journals around the position entry."""
+
+        try:
+            open_ts_pd = pd.Timestamp(open_ts)
+        except Exception:
+            return ""
+
+        try:
+            close_ts_pd = pd.Timestamp(close_ts)
+        except Exception:
+            close_ts_pd = open_ts_pd
+
+        if open_ts_pd.tz is None:
+            open_ts_pd = open_ts_pd.tz_localize("UTC")
+        if close_ts_pd.tz is None:
+            close_ts_pd = close_ts_pd.tz_localize("UTC")
+
+        since_ts = open_ts_pd - pd.Timedelta(minutes=30)
+        until_ts = close_ts_pd + pd.Timedelta(minutes=5)
+
+        try:
+            df = self.store.fetch_journals(
+                symbol=contract_symbol,
+                types=["decision", "action"],
+                since_ts=since_ts,
+                until_ts=until_ts,
+                limit=50,
+                ascending=True,
+            )
+        except Exception:
+            df = None
+
+        if df is None or getattr(df, "empty", True):
+            return ""
+
+        lines = []
+        for _, row in df.sort_values("ts").iterrows():
+            ts_val = row.get("ts")
+            try:
+                ts_pd = pd.Timestamp(ts_val)
+                if ts_pd.tz is None:
+                    ts_pd = ts_pd.tz_localize("UTC")
+                ts_str = ts_pd.tz_convert("Asia/Seoul").strftime("%m-%d %H:%M:%S")
+            except Exception:
+                ts_str = str(ts_val)
+
+            entry_type = (row.get("entry_type") or "").strip()
+            reason = (row.get("reason") or "").strip()
+            content = (row.get("content") or "").strip()
+
+            if len(content) > 200:
+                content = content[:200] + "..."
+
+            line_parts = [f"[{ts_str}]"]
+            if entry_type:
+                line_parts.append(f"({entry_type})")
+            if reason:
+                line_parts.append(reason)
+            if content:
+                line_parts.append(f"| {content}")
+
+            lines.append(" ".join(line_parts).strip())
+
+        return "\n".join(lines)
+
     def format_trade_reviews_for_prompt(self, contract_symbol: str) -> str:
         """Return the latest trade reviews as prompt-ready text."""
         try:
@@ -149,9 +221,21 @@ class JournalService:
                     f"기간: {open_ts_str} ~ {close_ts_str}\n"
                     + (f"진입가(추정): {entry_price}\n" if entry_price else "")
                     + task_line
-                    + "[CSV_1m_BETWEEN]\n"
-                    + (csv_1m or "(no data)")
                 )
+
+                if is_loss:
+                    entry_notes = self._collect_entry_notes(
+                        contract_symbol,
+                        open_ts=open_ts,
+                        close_ts=close_ts,
+                    )
+                    prompt += (
+                        "포지션 진입 판단/액션 기록:\n"
+                        + (entry_notes if entry_notes else "(관련 기록 없음)")
+                        + "\n"
+                    )
+
+                prompt += "[CSV_1m_BETWEEN]\n" + (csv_1m or "(no data)")
 
                 try:
                     review_text = ai_provider.decide(prompt)
