@@ -397,12 +397,13 @@ def list_journals_filtered(
     ascending: int = 0,
     decision_statuses: Optional[str] = None,
     recent_minutes: Optional[int] = None,
+    page: Optional[int] = None,
 ):
-    """안전 공개용 저널 API: types는 SQL에 직접 반영하지 않고 서버에서 필터링.
+    """안전 공개용 저널 API.
 
-    - 허용 타입만 필터: thought | decision | action | review
-    - today_only, limit, ascending 등은 DB 쿼리 파라미터로 전달
-    - meta는 문자열일 경우 JSON 파싱 후 마스킹
+    - 허용 타입만 SQL에 반영하여 안전하게 필터링
+    - 페이지네이션 메타데이터(page, page_size, total) 제공
+    - 결정 상태 필터는 서버 측에서 적용
     """
     store = TradeStore(
         StorageConfig(
@@ -430,6 +431,27 @@ def list_journals_filtered(
 
     effective_today_only = bool(today_only) if since_ts is None else False
 
+    allowed_page_sizes: Tuple[int, ...] = (10, 30, 50, 100)
+    try:
+        requested_limit = int(limit)
+    except Exception:
+        requested_limit = 0
+
+    page_number: Optional[int] = None
+    page_size = max(1, min(requested_limit if requested_limit > 0 else 20, 200))
+    limit_choices: Optional[Tuple[int, ...]] = None
+    if page is not None:
+        try:
+            page_number = max(1, int(page))
+        except Exception:
+            page_number = 1
+        page_size = allowed_page_sizes[0]
+        for option in allowed_page_sizes:
+            if requested_limit == option:
+                page_size = option
+                break
+        limit_choices = allowed_page_sizes
+
     status_filters: Optional[set[str]] = None
     if decision_statuses is not None:
         raw_statuses = str(decision_statuses).strip()
@@ -447,29 +469,14 @@ def list_journals_filtered(
             status_filters = normalized if normalized else set()
 
     if status_filters is not None and not status_filters:
-        return {"items": []}
+        empty_payload = {"items": []}
+        if page_number is not None:
+            empty_payload.update(
+                {"page": page_number, "page_size": page_size, "total": 0}
+            )
+        return empty_payload
 
-    # DB에서는 타입 미적용으로 조회 (SQL에 types 직접 반영하지 않음)
-    df = store.fetch_journals(
-        symbol=symbol,
-        types=None,
-        today_only=effective_today_only,
-        since_ts=since_ts,
-        limit=max(1, min(int(limit), 200)),
-        ascending=bool(ascending),
-    )
-
-    if df.empty:
-        return {"items": []}
-
-    try:
-        if req_types:
-            df = df[df["entry_type"].astype(str).isin(req_types)]
-    except Exception:
-        pass
-
-    items = []
-    for _, row in df.iterrows():
+    def _serialize_row(row):
         ts_iso = _to_utc_iso(row.get("ts"))
         meta_val = row.get("meta")
         if isinstance(meta_val, str):
@@ -538,21 +545,160 @@ def list_journals_filtered(
         )
 
         safe_meta = _redact_sensitive(meta_val)
-        items.append(
-            {
-                "ts": ts_iso,
-                "symbol": row.get("symbol"),
-                "entry_type": row.get("entry_type"),
-                "content": row.get("content"),
-                "reason": row.get("reason"),
-                "meta": safe_meta,
-                "ref_order_id": row.get("ref_order_id"),
-                "decision_status": decision_status,
-                "decision_entry": decision_entry,
-                "decision_tp": decision_tp,
-                "decision_sl": decision_sl,
+        payload = {
+            "ts": ts_iso,
+            "symbol": row.get("symbol"),
+            "entry_type": row.get("entry_type"),
+            "content": row.get("content"),
+            "reason": row.get("reason"),
+            "meta": safe_meta,
+            "ref_order_id": row.get("ref_order_id"),
+            "decision_status": decision_status,
+            "decision_entry": decision_entry,
+            "decision_tp": decision_tp,
+            "decision_sl": decision_sl,
+        }
+        entry_type_lower = str(row.get("entry_type") or "").strip().lower()
+        return payload, entry_type_lower, decision_status
+
+    fetch_types = list(req_types) if req_types else None
+
+    if page_number is not None:
+        offset_value = (page_number - 1) * page_size
+        if status_filters is None:
+            df, total_count = store.fetch_journals(
+                symbol=symbol,
+                types=fetch_types,
+                today_only=effective_today_only,
+                since_ts=since_ts,
+                limit=page_size,
+                ascending=bool(ascending),
+                offset=offset_value,
+                return_total=True,
+                limit_choices=limit_choices,
+            )
+            total_count_int = int(total_count)
+            total_pages = (
+                ((total_count_int - 1) // page_size) + 1
+                if page_size > 0 and total_count_int > 0
+                else 0
+            )
+
+            if total_pages and page_number > total_pages:
+                page_number = total_pages
+                offset_value = (page_number - 1) * page_size
+                df, total_count = store.fetch_journals(
+                    symbol=symbol,
+                    types=fetch_types,
+                    today_only=effective_today_only,
+                    since_ts=since_ts,
+                    limit=page_size,
+                    ascending=bool(ascending),
+                    offset=offset_value,
+                    return_total=True,
+                    limit_choices=limit_choices,
+                )
+                total_count_int = int(total_count)
+
+            if df.empty:
+                return {
+                    "items": [],
+                    "page": page_number,
+                    "page_size": page_size,
+                    "total": total_count_int,
+                }
+
+            items = []
+            for _, row in df.iterrows():
+                payload, entry_type_lower, decision_status = _serialize_row(row)
+                if status_filters:
+                    if entry_type_lower != "decision" or not decision_status:
+                        continue
+                    if decision_status not in status_filters:
+                        continue
+                items.append(payload)
+
+            return {
+                "items": items,
+                "page": page_number,
+                "page_size": page_size,
+                "total": total_count_int,
             }
-        )
+
+        # status_filters exists -> chunked scan to respect pagination
+        chunk_limit = 200
+        chunk_offset = 0
+        rows: List[dict] = []
+        matched_count = 0
+        target_start = (page_number - 1) * page_size
+
+        while True:
+            chunk = store.fetch_journals(
+                symbol=symbol,
+                types=fetch_types,
+                today_only=effective_today_only,
+                since_ts=since_ts,
+                limit=chunk_limit,
+                ascending=bool(ascending),
+                offset=chunk_offset,
+            )
+
+            if isinstance(chunk, tuple):
+                chunk = chunk[0]
+
+            if chunk is None or getattr(chunk, "empty", True):
+                break
+
+            for _, row in chunk.iterrows():
+                payload, entry_type_lower, decision_status = _serialize_row(row)
+                if entry_type_lower != "decision" or not decision_status:
+                    continue
+                if decision_status not in status_filters:
+                    continue
+
+                if matched_count >= target_start and len(rows) < page_size:
+                    rows.append(payload)
+
+                matched_count += 1
+
+            if len(chunk) < chunk_limit:
+                break
+            chunk_offset += chunk_limit
+
+        return {
+            "items": rows,
+            "page": page_number,
+            "page_size": page_size,
+            "total": matched_count,
+        }
+
+    # 비 페이지네이션 (기존 동작 유지)
+    df = store.fetch_journals(
+        symbol=symbol,
+        types=fetch_types,
+        today_only=effective_today_only,
+        since_ts=since_ts,
+        limit=page_size,
+        ascending=bool(ascending),
+        limit_choices=limit_choices,
+    )
+
+    if isinstance(df, tuple):
+        df = df[0]
+
+    if df is None or getattr(df, "empty", True):
+        return {"items": []}
+
+    items = []
+    for _, row in df.iterrows():
+        payload, entry_type_lower, decision_status = _serialize_row(row)
+        if status_filters:
+            if entry_type_lower != "decision" or not decision_status:
+                continue
+            if decision_status not in status_filters:
+                continue
+        items.append(payload)
+
     return {"items": items}
 
 

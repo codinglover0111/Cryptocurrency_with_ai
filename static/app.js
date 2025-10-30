@@ -269,6 +269,116 @@ function formatNumberBrief(value) {
   return num.toLocaleString("en-US", options);
 }
 
+const JR_ALLOWED_PAGE_SIZES = [10, 30, 50, 100];
+const JR_DEFAULT_PAGE_SIZE = 30;
+
+function getJournalState() {
+  if (!window.__jrPaging) {
+    window.__jrPaging = { page: 1, pageSize: JR_DEFAULT_PAGE_SIZE, total: 0 };
+  }
+  return window.__jrPaging;
+}
+
+function setJournalPage(page) {
+  const state = getJournalState();
+  const next = Number(page);
+  state.page = Number.isFinite(next) && next > 0 ? Math.floor(next) : 1;
+}
+
+function setJournalPageSize(size) {
+  const state = getJournalState();
+  const next = Number(size);
+  state.pageSize = JR_ALLOWED_PAGE_SIZES.includes(next)
+    ? next
+    : JR_DEFAULT_PAGE_SIZE;
+  state.page = 1;
+}
+
+function buildJournalPageList(current, totalPages, maxLength = 7) {
+  if (totalPages <= maxLength) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages = [1];
+  let start = Math.max(2, current - 2);
+  let end = Math.min(totalPages - 1, current + 2);
+
+  if (start <= 2) {
+    start = 2;
+    end = Math.min(totalPages - 1, start + 4);
+  }
+
+  if (end >= totalPages - 1) {
+    end = totalPages - 1;
+    start = Math.max(2, end - 4);
+  }
+
+  if (start > 2) {
+    pages.push("...");
+  }
+  for (let i = start; i <= end; i += 1) {
+    pages.push(i);
+  }
+  if (end < totalPages - 1) {
+    pages.push("...");
+  }
+
+  pages.push(totalPages);
+  return pages;
+}
+
+function renderJournalPagination(meta) {
+  const container = el("jr-pagination");
+  if (!container) return;
+
+  const total = Number(meta.total || 0);
+  const pageSize = Number(meta.pageSize || JR_DEFAULT_PAGE_SIZE);
+  const rawPage = Number(meta.page || 1);
+
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(pageSize) || pageSize <= 0) {
+    container.innerHTML = "";
+    container.hidden = true;
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1) {
+    container.innerHTML = "";
+    container.hidden = true;
+    return;
+  }
+
+  const safePage = Math.min(Math.max(1, rawPage), totalPages);
+  const pages = buildJournalPageList(safePage, totalPages);
+  const buttons = [];
+
+  if (safePage > 1) {
+    buttons.push(
+      `<button type="button" class="pager-btn" data-page="${safePage - 1}">이전</button>`
+    );
+  }
+
+  pages.forEach((p) => {
+    if (p === "...") {
+      buttons.push('<span class="pager-ellipsis">…</span>');
+      return;
+    }
+    const isActive = p === safePage;
+    const cls = isActive ? "pager-btn pager-btn--active" : "pager-btn";
+    buttons.push(
+      `<button type="button" class="${cls}" data-page="${p}">${p}</button>`
+    );
+  });
+
+  if (safePage < totalPages) {
+    buttons.push(
+      `<button type="button" class="pager-btn" data-page="${safePage + 1}">다음</button>`
+    );
+  }
+
+  container.innerHTML = buttons.join("");
+  container.hidden = false;
+}
+
 function statusLabel(status) {
   switch (status) {
     case "long":
@@ -389,13 +499,40 @@ window.addEventListener("DOMContentLoaded", () => {
   ensureJournalModalDOM();
   setupJournalDetailHandler();
   const refreshBtn = document.getElementById("jr-refresh");
-  if (refreshBtn) refreshBtn.addEventListener("click", refreshJournals);
+  if (refreshBtn)
+    refreshBtn.addEventListener("click", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
   const tzSel = document.getElementById("tz-select");
-  if (tzSel) tzSel.addEventListener("change", refreshJournals);
+  if (tzSel)
+    tzSel.addEventListener("change", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
   const jrSymbol = document.getElementById("jr-symbol");
-  if (jrSymbol) jrSymbol.addEventListener("change", refreshJournals);
+  if (jrSymbol)
+    jrSymbol.addEventListener("change", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
   const jrRange = document.getElementById("jr-range");
-  if (jrRange) jrRange.addEventListener("change", refreshJournals);
+  if (jrRange)
+    jrRange.addEventListener("change", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
+  const jrLimit = document.getElementById("jr-limit");
+  if (jrLimit) {
+    const state = getJournalState();
+    if (!JR_ALLOWED_PAGE_SIZES.includes(Number(jrLimit.value))) {
+      jrLimit.value = String(state.pageSize || JR_DEFAULT_PAGE_SIZE);
+    }
+    jrLimit.addEventListener("change", () => {
+      setJournalPageSize(Number(jrLimit.value));
+      refreshJournals();
+    });
+  }
   const stRefresh = document.getElementById("st-refresh");
   if (stRefresh) stRefresh.addEventListener("click", manualRefreshStats);
   const stToday = document.getElementById("st-today");
@@ -456,6 +593,18 @@ window.addEventListener("DOMContentLoaded", () => {
     // 자동 적용 대신 조회 버튼으로만 실행
     // typeFilters.addEventListener("change", refreshJournals);
   }
+  const pagination = document.getElementById("jr-pagination");
+  if (pagination && !pagination.__jrPagerAttached) {
+    pagination.__jrPagerAttached = true;
+    pagination.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-page]");
+      if (!btn) return;
+      const nextPage = Number(btn.dataset.page);
+      if (!Number.isFinite(nextPage) || nextPage < 1) return;
+      setJournalPage(nextPage);
+      refreshJournals();
+    });
+  }
   refreshAll();
   // 초기 자동 조회 1회는 유지
   refreshJournals();
@@ -483,8 +632,21 @@ async function submitJournal() {
 }
 
 async function refreshJournals() {
+  const state = getJournalState();
   try {
-    const limit = Number(el("jr-limit")?.value || 20);
+    const limitSelect = document.getElementById("jr-limit");
+    if (limitSelect) {
+      const selectedSize = Number(limitSelect.value);
+      if (JR_ALLOWED_PAGE_SIZES.includes(selectedSize)) {
+        if (state.pageSize !== selectedSize) {
+          state.pageSize = selectedSize;
+          state.page = 1;
+        }
+      } else {
+        limitSelect.value = String(state.pageSize || JR_DEFAULT_PAGE_SIZE);
+      }
+    }
+
     const typeCheckboxes = getJournalTypeCheckboxes();
     const selectedTypes = typeCheckboxes
       .filter((cb) => cb.checked)
@@ -496,8 +658,13 @@ async function refreshJournals() {
     const sort = document.getElementById("jr-sort")?.value || "desc";
     const ascFlag = sort === "asc" ? "1" : "0";
     const rangeValue = document.getElementById("jr-range")?.value || "today";
+
+    const pageSize = state.pageSize || JR_DEFAULT_PAGE_SIZE;
+    const currentPage = state.page || 1;
+
     const q = new URLSearchParams({
-      limit: String(limit),
+      limit: String(pageSize),
+      page: String(currentPage),
       today_only: rangeValue === "today" ? "1" : "0",
       ascending: ascFlag,
     });
@@ -521,9 +688,47 @@ async function refreshJournals() {
         q.set("decision_statuses", selectedStatuses.join(","));
       }
     }
-    // 안전 공개용 필터 API 사용 (types는 서버에서 필터링)
+
     const j = await fetchJSON(`/api/journals_filtered?${q.toString()}`);
     const items = j.items || [];
+
+    const pageFromResponse = Number(j.page);
+    if (Number.isFinite(pageFromResponse) && pageFromResponse > 0) {
+      state.page = Math.floor(pageFromResponse);
+    }
+    const pageSizeFromResponse = Number(j.page_size);
+    if (JR_ALLOWED_PAGE_SIZES.includes(pageSizeFromResponse)) {
+      state.pageSize = pageSizeFromResponse;
+      if (limitSelect && limitSelect.value !== String(pageSizeFromResponse)) {
+        limitSelect.value = String(pageSizeFromResponse);
+      }
+    }
+    const totalFromResponse = Number(j.total);
+    if (Number.isFinite(totalFromResponse) && totalFromResponse >= 0) {
+      state.total = totalFromResponse;
+    } else {
+      state.total = items.length;
+    }
+
+    const totalPages =
+      state.pageSize > 0 ? Math.ceil(state.total / state.pageSize) : 0;
+    if (
+      items.length === 0 &&
+      state.total > 0 &&
+      totalPages > 0 &&
+      state.page > totalPages &&
+      !refreshJournals.__adjusting
+    ) {
+      refreshJournals.__adjusting = true;
+      try {
+        setJournalPage(totalPages);
+        await refreshJournals();
+      } finally {
+        refreshJournals.__adjusting = false;
+      }
+      return;
+    }
+
     const statusFilterEmpty =
       statusCheckboxes.length > 0 && selectedStatuses.length === 0;
     const statusFilterSet =
@@ -595,10 +800,18 @@ async function refreshJournals() {
           rowsHtml || '<tr><td colspan="3" class="muted">기록 없음</td></tr>'
         }</tbody>
       </table>`;
+
+    renderJournalPagination({
+      page: state.page,
+      pageSize: state.pageSize,
+      total: state.total,
+    });
   } catch (e) {
     console.error(e);
   }
 }
+
+refreshJournals.__adjusting = false;
 
 function escapeHtml(value) {
   const str = String(value ?? "");

@@ -100,14 +100,13 @@
           <div class="panel-body">
             <div class="journal-controls">
               <label class="journal-limit">
-                최근 개수
-                <input
-                  id="jr-limit"
-                  type="number"
-                  min="1"
-                  max="200"
-                  value="20"
-                />
+                페이지당 개수
+                <select id="jr-limit">
+                  <option value="10">10개</option>
+                  <option value="30" selected>30개</option>
+                  <option value="50">50개</option>
+                  <option value="100">100개</option>
+                </select>
               </label>
               <label class="journal-limit">
                 타임존
@@ -176,6 +175,7 @@
               >
             </div>
             <div class="table-wrapper" id="journals"></div>
+            <div class="journal-pagination" id="jr-pagination" hidden></div>
           </div>
         </section>
       </main>

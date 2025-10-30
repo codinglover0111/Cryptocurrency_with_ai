@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Union
 
 import pandas as pd
 import sqlalchemy as sa
@@ -386,23 +386,33 @@ class TradeStore:
         until_ts: Optional[datetime] = None,
         limit: int = 20,
         ascending: bool = True,
-    ) -> pd.DataFrame:
-        """Fetch journal entries with filters. Returns a DataFrame.
+        *,
+        offset: int = 0,
+        return_total: bool = False,
+        limit_choices: Optional[Tuple[int, ...]] = None,
+    ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, int]]:
+        """Fetch journal entries with filters.
+
+        Returns:
+            - DataFrame: 기본 반환값
+            - (DataFrame, total_count): ``return_total=True`` 일 때
 
         Note: This reads from MySQL only. If engine is not set, returns empty DataFrame.
         """
+        empty_df = pd.DataFrame(
+            columns=[
+                "ts",
+                "symbol",
+                "entry_type",
+                "content",
+                "reason",
+                "meta",
+                "ref_order_id",
+            ]
+        )
+
         if self._engine is None:
-            return pd.DataFrame(
-                columns=[
-                    "ts",
-                    "symbol",
-                    "entry_type",
-                    "content",
-                    "reason",
-                    "meta",
-                    "ref_order_id",
-                ]
-            )
+            return (empty_df, 0) if return_total else empty_df
         try:
             # Build SQL dynamically using SQLAlchemy text for safety
             from sqlalchemy import text
@@ -442,26 +452,54 @@ class TradeStore:
 
             where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             order_sql = " ORDER BY ts ASC" if ascending else " ORDER BY ts DESC"
-            limit_sql = " LIMIT :limit"
-            params["limit"] = int(limit)
+            limit_options: Optional[Tuple[int, ...]] = None
+            if limit_choices:
+                try:
+                    limit_options = tuple(int(x) for x in limit_choices if int(x) > 0)
+                    if not limit_options:
+                        limit_options = None
+                except Exception:
+                    limit_options = None
+
+            try:
+                limit_value = int(limit)
+            except Exception:
+                limit_value = 0
+
+            if limit_options:
+                if limit_value not in limit_options:
+                    limit_value = limit_options[0]
+            else:
+                limit_value = max(1, min(limit_value if limit_value > 0 else 1, 200))
+
+            try:
+                offset_value = int(offset)
+            except Exception:
+                offset_value = 0
+            if offset_value < 0:
+                offset_value = 0
+
+            limit_sql = f" LIMIT {limit_value}"
+            offset_sql = f" OFFSET {offset_value}" if offset_value else ""
 
             sql = text(
-                f"SELECT ts, symbol, entry_type, content, reason, meta, ref_order_id FROM journals{where_sql}{order_sql}{limit_sql}"
+                f"SELECT ts, symbol, entry_type, content, reason, meta, ref_order_id FROM journals{where_sql}{order_sql}{limit_sql}{offset_sql}"
             )
+
+            total_count = 0
             with self._engine.connect() as conn:
+                if return_total:
+                    count_sql = text(f"SELECT COUNT(*) AS cnt FROM journals{where_sql}")
+                    total_raw = conn.execute(count_sql, params).scalar()
+                    try:
+                        total_count = int(total_raw or 0)
+                    except Exception:
+                        total_count = 0
+
                 rows = conn.execute(sql, params).mappings().all()
-            # Convert to DataFrame
-            return pd.DataFrame(rows)
+
+            df = pd.DataFrame(rows)
+            return (df, total_count) if return_total else df
         except Exception as e:
             print(f"Error reading journals: {e}")
-            return pd.DataFrame(
-                columns=[
-                    "ts",
-                    "symbol",
-                    "entry_type",
-                    "content",
-                    "reason",
-                    "meta",
-                    "ref_order_id",
-                ]
-            )
+            return (empty_df, 0) if return_total else empty_df
