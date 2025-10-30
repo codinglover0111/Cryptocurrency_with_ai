@@ -697,7 +697,27 @@ def _execute_trade(
     if should_skip:
         return
 
-    max_loss_pct = float(os.getenv("MAX_LOSS_PERCENT", "80"))
+    max_loss_env = os.getenv("MAX_LOSS_PERCENT")
+    if max_loss_env is not None:
+        try:
+            max_loss_pct = float(max_loss_env)
+        except Exception:
+            max_loss_pct = 80.0
+    else:
+        base_max_loss_pct = 4.0
+        leverage_factor = max(1.0, float(leverage or 1.0))
+        max_loss_pct = base_max_loss_pct * leverage_factor
+        cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
+        cap_value: Optional[float]
+        if cap_env is not None:
+            try:
+                cap_value = float(cap_env)
+            except Exception:
+                cap_value = None
+        else:
+            cap_value = 95.0
+        if cap_value is not None:
+            max_loss_pct = min(max_loss_pct, cap_value)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
         try:
             use_sl = enforce_max_loss_sl(
