@@ -23,6 +23,11 @@ app = FastAPI(title="Crypto Bot UI")
 CLOSED_BY_TARGET_PROFIT = "목표수익달성"
 CLOSED_BY_STOP_LOSS = "SL 실행으로 인한 손절"
 CLOSED_BY_UNKNOWN = "unknown"
+PNL_EPSILON = 1e-8
+# 0.02%
+TP_TOLERANCE_RATIO = 0.0002
+# 0.02%
+SL_TOLERANCE_RATIO = 0.0002
 
 
 def _redact_sensitive(obj):
@@ -887,28 +892,31 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
 
         if side == "buy":
             pnl = (vwap_close - entry_price) * amount
-            if closed_by == CLOSED_BY_UNKNOWN:
-                closed_by = (
-                    CLOSED_BY_TARGET_PROFIT
-                    if (tp_f is not None and vwap_close >= tp_f)
-                    else (
-                        CLOSED_BY_STOP_LOSS
-                        if (sl_f is not None and vwap_close <= sl_f)
-                        else CLOSED_BY_UNKNOWN
-                    )
-                )
         else:
             pnl = (entry_price - vwap_close) * amount
-            if closed_by == CLOSED_BY_UNKNOWN:
-                closed_by = (
-                    CLOSED_BY_TARGET_PROFIT
-                    if (tp_f is not None and vwap_close <= tp_f)
-                    else (
-                        CLOSED_BY_STOP_LOSS
-                        if (sl_f is not None and vwap_close >= sl_f)
-                        else CLOSED_BY_UNKNOWN
-                    )
+
+        if closed_by == CLOSED_BY_UNKNOWN:
+            is_profit = pnl > PNL_EPSILON
+            is_loss = pnl < -PNL_EPSILON
+            close_to_tp = False
+            close_to_sl = False
+
+            if tp_f is not None:
+                tp_denominator = max(abs(tp_f), PNL_EPSILON)
+                close_to_tp = (
+                    abs(vwap_close - tp_f) / tp_denominator <= TP_TOLERANCE_RATIO
                 )
+
+            if sl_f is not None:
+                sl_denominator = max(abs(sl_f), PNL_EPSILON)
+                close_to_sl = (
+                    abs(vwap_close - sl_f) / sl_denominator <= SL_TOLERANCE_RATIO
+                )
+
+            if is_profit and close_to_tp:
+                closed_by = CLOSED_BY_TARGET_PROFIT
+            elif is_loss and close_to_sl:
+                closed_by = CLOSED_BY_STOP_LOSS
 
         # closed 레코드 기록
         try:
