@@ -696,11 +696,10 @@ class BybitUtils:
         try:
             balance = self.get_balance("USDT")
             positions = self.get_positions() or []
-            orders = self.get_orders() or []
             return {
                 "balance": balance,
                 "positions": positions,
-                "openOrders": orders,
+                "openOrders": None,
             }
         except Exception as e:
             print(f"Error building account overview: {e}")

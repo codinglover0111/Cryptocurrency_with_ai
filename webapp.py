@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import math
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -75,6 +76,41 @@ def _to_utc_iso(value: Any) -> str:
     except Exception:
         pass
     return str(value)
+
+
+def _normalize_decision_status(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        raw = str(value).strip().lower()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    if raw in {"long", "buy"}:
+        return "long"
+    if raw in {"short", "sell"}:
+        return "short"
+    if raw in {"hold", "watch"}:
+        return "hold"
+    if raw in {"stop"}:
+        return "stop"
+    if raw in {"skip"}:
+        return "skip"
+    return raw
+
+
+def _first_number(values: List[Any]) -> Optional[float]:
+    for val in values:
+        if val is None:
+            continue
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(num):
+            return float(num)
+    return None
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -268,16 +304,72 @@ def list_journals(
     for _, row in df.iterrows():
         ts_iso = _to_utc_iso(row.get("ts"))
         meta_val = row.get("meta")
-        # 문자열이면 JSON 파싱 시도 후 민감 정보 마스킹
-        try:
-            if isinstance(meta_val, str):
-                try:
-                    meta_val = json.loads(meta_val)
-                except Exception:
-                    pass
-            meta_val = _redact_sensitive(meta_val)
-        except Exception:
-            pass
+        if isinstance(meta_val, str):
+            try:
+                meta_val = json.loads(meta_val)
+            except Exception:
+                pass
+        content_val = row.get("content")
+        content_obj = None
+        if isinstance(content_val, str):
+            try:
+                content_obj = json.loads(content_val)
+            except Exception:
+                content_obj = None
+        decision_meta = meta_val.get("decision") if isinstance(meta_val, dict) else None
+        decision_status = None
+        status_candidates = [
+            row.get("decision_status"),
+            meta_val.get("status") if isinstance(meta_val, dict) else None,
+            meta_val.get("side") if isinstance(meta_val, dict) else None,
+            decision_meta.get("status") if isinstance(decision_meta, dict) else None,
+            decision_meta.get("Status") if isinstance(decision_meta, dict) else None,
+            decision_meta.get("ai_status") if isinstance(decision_meta, dict) else None,
+            decision_meta.get("side") if isinstance(decision_meta, dict) else None,
+            content_obj.get("status") if isinstance(content_obj, dict) else None,
+            content_obj.get("side") if isinstance(content_obj, dict) else None,
+        ]
+        for cand in status_candidates:
+            norm = _normalize_decision_status(cand)
+            if norm:
+                decision_status = norm
+                break
+
+        decision_entry = _first_number(
+            [
+                row.get("decision_entry"),
+                meta_val.get("entry_price") if isinstance(meta_val, dict) else None,
+                meta_val.get("entry") if isinstance(meta_val, dict) else None,
+                decision_meta.get("entry") if isinstance(decision_meta, dict) else None,
+                decision_meta.get("entry_price")
+                if isinstance(decision_meta, dict)
+                else None,
+                decision_meta.get("price") if isinstance(decision_meta, dict) else None,
+                content_obj.get("entry") if isinstance(content_obj, dict) else None,
+                content_obj.get("entry_price")
+                if isinstance(content_obj, dict)
+                else None,
+                content_obj.get("price") if isinstance(content_obj, dict) else None,
+            ]
+        )
+        decision_tp = _first_number(
+            [
+                row.get("decision_tp"),
+                meta_val.get("tp") if isinstance(meta_val, dict) else None,
+                decision_meta.get("tp") if isinstance(decision_meta, dict) else None,
+                content_obj.get("tp") if isinstance(content_obj, dict) else None,
+            ]
+        )
+        decision_sl = _first_number(
+            [
+                row.get("decision_sl"),
+                meta_val.get("sl") if isinstance(meta_val, dict) else None,
+                decision_meta.get("sl") if isinstance(decision_meta, dict) else None,
+                content_obj.get("sl") if isinstance(content_obj, dict) else None,
+            ]
+        )
+
+        safe_meta = _redact_sensitive(meta_val)
         items.append(
             {
                 "ts": ts_iso,
@@ -285,8 +377,12 @@ def list_journals(
                 "entry_type": row.get("entry_type"),
                 "content": row.get("content"),
                 "reason": row.get("reason"),
-                "meta": meta_val,
+                "meta": safe_meta,
                 "ref_order_id": row.get("ref_order_id"),
+                "decision_status": decision_status,
+                "decision_entry": decision_entry,
+                "decision_tp": decision_tp,
+                "decision_sl": decision_sl,
             }
         )
     return {"items": items}
@@ -342,15 +438,72 @@ def list_journals_filtered(
     for _, row in df.iterrows():
         ts_iso = _to_utc_iso(row.get("ts"))
         meta_val = row.get("meta")
-        try:
-            if isinstance(meta_val, str):
-                try:
-                    meta_val = json.loads(meta_val)
-                except Exception:
-                    pass
-            meta_val = _redact_sensitive(meta_val)
-        except Exception:
-            pass
+        if isinstance(meta_val, str):
+            try:
+                meta_val = json.loads(meta_val)
+            except Exception:
+                pass
+        content_val = row.get("content")
+        content_obj = None
+        if isinstance(content_val, str):
+            try:
+                content_obj = json.loads(content_val)
+            except Exception:
+                content_obj = None
+        decision_meta = meta_val.get("decision") if isinstance(meta_val, dict) else None
+        decision_status = None
+        status_candidates = [
+            row.get("decision_status"),
+            meta_val.get("status") if isinstance(meta_val, dict) else None,
+            meta_val.get("side") if isinstance(meta_val, dict) else None,
+            decision_meta.get("status") if isinstance(decision_meta, dict) else None,
+            decision_meta.get("Status") if isinstance(decision_meta, dict) else None,
+            decision_meta.get("ai_status") if isinstance(decision_meta, dict) else None,
+            decision_meta.get("side") if isinstance(decision_meta, dict) else None,
+            content_obj.get("status") if isinstance(content_obj, dict) else None,
+            content_obj.get("side") if isinstance(content_obj, dict) else None,
+        ]
+        for cand in status_candidates:
+            norm = _normalize_decision_status(cand)
+            if norm:
+                decision_status = norm
+                break
+
+        decision_entry = _first_number(
+            [
+                row.get("decision_entry"),
+                meta_val.get("entry_price") if isinstance(meta_val, dict) else None,
+                meta_val.get("entry") if isinstance(meta_val, dict) else None,
+                decision_meta.get("entry") if isinstance(decision_meta, dict) else None,
+                decision_meta.get("entry_price")
+                if isinstance(decision_meta, dict)
+                else None,
+                decision_meta.get("price") if isinstance(decision_meta, dict) else None,
+                content_obj.get("entry") if isinstance(content_obj, dict) else None,
+                content_obj.get("entry_price")
+                if isinstance(content_obj, dict)
+                else None,
+                content_obj.get("price") if isinstance(content_obj, dict) else None,
+            ]
+        )
+        decision_tp = _first_number(
+            [
+                row.get("decision_tp"),
+                meta_val.get("tp") if isinstance(meta_val, dict) else None,
+                decision_meta.get("tp") if isinstance(decision_meta, dict) else None,
+                content_obj.get("tp") if isinstance(content_obj, dict) else None,
+            ]
+        )
+        decision_sl = _first_number(
+            [
+                row.get("decision_sl"),
+                meta_val.get("sl") if isinstance(meta_val, dict) else None,
+                decision_meta.get("sl") if isinstance(decision_meta, dict) else None,
+                content_obj.get("sl") if isinstance(content_obj, dict) else None,
+            ]
+        )
+
+        safe_meta = _redact_sensitive(meta_val)
         items.append(
             {
                 "ts": ts_iso,
@@ -358,8 +511,12 @@ def list_journals_filtered(
                 "entry_type": row.get("entry_type"),
                 "content": row.get("content"),
                 "reason": row.get("reason"),
-                "meta": meta_val,
+                "meta": safe_meta,
                 "ref_order_id": row.get("ref_order_id"),
+                "decision_status": decision_status,
+                "decision_entry": decision_entry,
+                "decision_tp": decision_tp,
+                "decision_sl": decision_sl,
             }
         )
     return {"items": items}

@@ -88,20 +88,6 @@
           </article>
         </section>
 
-        <section class="panel-grid panel-grid--wide">
-          <article class="card panel">
-            <header class="panel-header">
-              <div>
-                <h2 class="panel-title">오픈 오더</h2>
-                <p class="panel-subtitle">현재 대기 중인 주문 내역</p>
-              </div>
-            </header>
-            <div class="panel-body">
-              <div class="table-wrapper" id="orders"></div>
-            </div>
-          </article>
-        </section>
-
         <section class="card panel">
           <header class="panel-header">
             <div>
@@ -115,7 +101,13 @@
             <div class="journal-controls">
               <label class="journal-limit">
                 최근 개수
-                <input id="jr-limit" type="number" min="1" max="200" value="20" />
+                <input
+                  id="jr-limit"
+                  type="number"
+                  min="1"
+                  max="200"
+                  value="20"
+                />
               </label>
               <label class="journal-limit">
                 타임존
@@ -135,10 +127,18 @@
               </label>
               <div id="jr-type-filters" class="journal-type-filters">
                 <span class="journal-type-label">유형</span>
-                <label><input type="checkbox" value="thought" checked />사고</label>
-                <label><input type="checkbox" value="decision" checked />판단</label>
-                <label><input type="checkbox" value="action" checked />액션</label>
-                <label><input type="checkbox" value="review" checked />리뷰</label>
+                <label
+                  ><input type="checkbox" value="thought" checked />사고</label
+                >
+                <label
+                  ><input type="checkbox" value="decision" checked />판단</label
+                >
+                <label
+                  ><input type="checkbox" value="action" checked />액션</label
+                >
+                <label
+                  ><input type="checkbox" value="review" checked />리뷰</label
+                >
               </div>
               <button class="btn btn--ghost" id="jr-refresh">조회</button>
               <a

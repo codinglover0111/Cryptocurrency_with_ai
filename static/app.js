@@ -37,23 +37,6 @@ function renderPositions(data) {
     </table>`;
 }
 
-function renderOrders(data) {
-  const list = (data.openOrders || [])
-    .map((o) => {
-      return `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.type}</td><td>${
-        o.price ?? "-"
-      }</td><td>${o.amount ?? "-"}</td></tr>`;
-    })
-    .join("");
-  el("orders").innerHTML = `
-    <table>
-      <thead><tr><th>심볼</th><th>사이드</th><th>타입</th><th>가격</th><th>수량</th></tr></thead>
-      <tbody>${
-        list || '<tr><td colspan="5" class="muted">없음</td></tr>'
-      }</tbody>
-    </table>`;
-}
-
 function renderStatsRange(data) {
   const fmtUSD = (n) =>
     n === null || n === undefined || Number.isNaN(n)
@@ -185,6 +168,124 @@ function formatTimeWithTZ(tsISO, opts = {}) {
   }
 }
 
+function maybeParseJSON(value) {
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeDecisionStatus(value) {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+  if (["long", "buy"].includes(raw)) return "long";
+  if (["short", "sell"].includes(raw)) return "short";
+  if (["hold", "watch"].includes(raw)) return "hold";
+  if (["stop"].includes(raw)) return "stop";
+  if (["skip"].includes(raw)) return "skip";
+  return raw;
+}
+
+function firstAvailableNumber(values) {
+  for (const v of values) {
+    if (v === null || v === undefined || v === "") continue;
+    const num = Number(v);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+function extractDecisionInfo(item) {
+  const info = {
+    status: null,
+    entry: null,
+    tp: null,
+    sl: null,
+  };
+  if (!item) return info;
+
+  const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+  const decisionMeta =
+    meta.decision && typeof meta.decision === "object" ? meta.decision : null;
+  const contentObj = maybeParseJSON(item.content);
+
+  const statusCandidates = [
+    item.decision_status,
+    meta.status,
+    meta.side,
+    decisionMeta && (decisionMeta.status || decisionMeta.Status),
+    decisionMeta && (decisionMeta.ai_status || decisionMeta.side),
+    contentObj && contentObj.status,
+  ];
+  for (const cand of statusCandidates) {
+    const norm = normalizeDecisionStatus(cand);
+    if (norm) {
+      info.status = norm;
+      break;
+    }
+  }
+
+  const entryCandidates = [
+    item.decision_entry,
+    meta.entry_price,
+    meta.entry,
+    decisionMeta &&
+      (decisionMeta.entry || decisionMeta.entry_price || decisionMeta.price),
+    contentObj &&
+      (contentObj.entry || contentObj.entry_price || contentObj.price),
+  ];
+  info.entry = firstAvailableNumber(entryCandidates);
+
+  const tpCandidates = [
+    item.decision_tp,
+    meta.tp,
+    decisionMeta && decisionMeta.tp,
+    contentObj && contentObj.tp,
+  ];
+  info.tp = firstAvailableNumber(tpCandidates);
+
+  const slCandidates = [
+    item.decision_sl,
+    meta.sl,
+    decisionMeta && decisionMeta.sl,
+    contentObj && contentObj.sl,
+  ];
+  info.sl = firstAvailableNumber(slCandidates);
+
+  return info;
+}
+
+function formatNumberBrief(value) {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const abs = Math.abs(num);
+  const options = {
+    maximumFractionDigits: abs >= 100 ? 2 : abs >= 10 ? 4 : 6,
+  };
+  return num.toLocaleString("en-US", options);
+}
+
+function statusLabel(status) {
+  switch (status) {
+    case "long":
+      return "롱";
+    case "short":
+      return "숏";
+    case "hold":
+      return "홀드";
+    case "stop":
+      return "정지";
+    case "skip":
+      return "스킵";
+    default:
+      return status ? status.toUpperCase() : "";
+  }
+}
+
 async function refreshAll() {
   try {
     const [status, stats, syms] = await Promise.all([
@@ -194,7 +295,6 @@ async function refreshAll() {
     ]);
     renderBalance(status);
     renderPositions(status);
-    renderOrders(status);
     renderStatsRange(stats);
     const dl = el("symbols");
     if (dl && syms && Array.isArray(syms.symbols)) {
@@ -383,9 +483,29 @@ async function refreshJournals() {
     const rows = items
       .map((it, idx) => {
         const tsStr = formatTimeWithTZ(it.ts);
-        const title = `${(it.entry_type || "").toUpperCase()}${
-          it.symbol ? " · " + it.symbol : ""
-        }`;
+        const entryType = (it.entry_type || "").toUpperCase();
+        const symbol = it.symbol ? " · " + it.symbol : "";
+        let extra = "";
+        if ((it.entry_type || "").toLowerCase() === "decision") {
+          const decision = extractDecisionInfo(it);
+          const label = statusLabel(decision.status);
+          if (label) {
+            extra += ` · ${label}`;
+          }
+          if (decision.status === "long" || decision.status === "short") {
+            const parts = [];
+            const entryFmt = formatNumberBrief(decision.entry);
+            if (entryFmt) parts.push(`진입 ${entryFmt}`);
+            const tpFmt = formatNumberBrief(decision.tp);
+            if (tpFmt) parts.push(`TP ${tpFmt}`);
+            const slFmt = formatNumberBrief(decision.sl);
+            if (slFmt) parts.push(`SL ${slFmt}`);
+            if (parts.length) {
+              extra += ` · ${parts.join(" / ")}`;
+            }
+          }
+        }
+        const title = `${entryType}${symbol}${extra}`;
         return `
           <tr>
             <td style="width: 220px" class="muted" title="${escapeHtml(
@@ -475,6 +595,7 @@ function showJournalModal(it) {
   try {
     const tsStr = formatTimeWithTZ(it.ts, {});
     const symbol = it.symbol || "";
+    const decision = extractDecisionInfo(it);
     const body = `
       <div><strong>시간</strong>: ${escapeHtml(tsStr)}</div>
       <div><strong>유형</strong>: ${escapeHtml(it.entry_type)}</div>
@@ -492,11 +613,6 @@ function showJournalModal(it) {
     `;
     openJournalModal(body);
 
-    // 우선 meta에 값이 있으면 우선 사용
-    const meta = it.meta || {};
-    let entry = meta.entry ?? meta.entry_price ?? meta.entryPrice;
-    let tp = meta.tp ?? meta.take_profit ?? meta.takeProfit;
-    let sl = meta.sl ?? meta.stop_loss ?? meta.stopLoss;
     const tradeInfoEl = document.getElementById("jr-trade-info");
 
     const setTradeInfo = (e, t, s) => {
@@ -510,28 +626,16 @@ function showJournalModal(it) {
       )} · <strong>SL</strong>: ${escapeHtml(fmt(s))}`;
     };
 
-    if (entry != null || tp != null || sl != null) {
-      setTradeInfo(entry, tp, sl);
+    if (decision.entry != null || decision.tp != null || decision.sl != null) {
+      setTradeInfo(
+        formatNumberBrief(decision.entry) || decision.entry,
+        formatNumberBrief(decision.tp) || decision.tp,
+        formatNumberBrief(decision.sl) || decision.sl
+      );
       return;
     }
-
-    // meta에 없으면 현재 포지션에서 조회
-    if (symbol) {
-      fetchJSON(`/api/positions_summary?symbol=${encodeURIComponent(symbol)}`)
-        .then((j) => {
-          const items = (j && j.items) || [];
-          const pos = items[0];
-          if (pos) {
-            setTradeInfo(pos.entryPrice, pos.tp, pos.sl);
-          } else if (tradeInfoEl) {
-            tradeInfoEl.textContent = "거래 정보 없음";
-          }
-        })
-        .catch(() => {
-          if (tradeInfoEl) tradeInfoEl.textContent = "거래 정보 조회 실패";
-        });
-    } else if (tradeInfoEl) {
-      tradeInfoEl.textContent = "심볼 정보 없음";
+    if (tradeInfoEl) {
+      tradeInfoEl.textContent = "거래 정보 없음";
     }
   } catch (e) {
     alert("보기 중 오류: " + e.message);

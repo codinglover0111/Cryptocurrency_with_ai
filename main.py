@@ -37,17 +37,20 @@ def run_scheduler() -> None:
 
     def review_job() -> None:
         try:
+            logging.info("Run loss review job")
             symbols = parse_trading_symbols()
             run_loss_review(symbols=symbols)
 
         except Exception:
             logging.exception("Loss review job error")
 
-    schedule.every(15).minutes.do(job)
-    schedule.every(15).minutes.do(review_job)
-
-    review_job()
-    # job()
+    # 매시각 58분 13분 28분 43분에 실행
+    schedule.every().hour.at(":58").do(job)
+    schedule.every().hour.at(":13").do(job)
+    schedule.every().hour.at(":28").do(job)
+    schedule.every().hour.at(":43").do(job)
+    # 5분 주기로 실행
+    schedule.every(5).minutes.do(review_job)
 
     while True:
         try:

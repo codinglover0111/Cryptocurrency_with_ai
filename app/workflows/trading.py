@@ -983,7 +983,16 @@ def _execute_trade(
     except Exception as exc:
         LOGGER.error("Trade store write failed: %s", exc)
 
-    meta_payload: Dict[str, Any] = {"decision": decision}
+    meta_payload: Dict[str, Any] = {
+        "decision": decision,
+        "status": ai_status,
+        "side": side,
+        "order_type": order_type,
+        "entry_price": float(entry_price),
+        "tp": position_params.tp,
+        "sl": position_params.sl,
+        "leverage": leverage,
+    }
     if confirm_meta is not None:
         meta_payload["confirm"] = confirm_meta
 
@@ -994,8 +1003,9 @@ def _execute_trade(
                 "entry_type": "decision",
                 "content": json.dumps(
                     {
-                        "status": side,
+                        "status": ai_status,
                         "ai_status": ai_status,
+                        "side": side,
                         "type": order_type,
                         "price": float(entry_price),
                         "tp": position_params.tp,
@@ -1032,13 +1042,19 @@ def _handle_non_trade_actions(
     if ai_status == "hold":
         LOGGER.info("No trading signal generated")
         try:
+            meta_payload: Dict[str, Any]
+            if isinstance(decision, dict):
+                meta_payload = dict(decision)
+            else:
+                meta_payload = {"decision": decision}
+            meta_payload.setdefault("status", "hold")
             deps.store.record_journal(
                 {
                     "symbol": deps.contract_symbol,
                     "entry_type": "decision",
                     "content": json.dumps({"status": "hold"}, ensure_ascii=False),
                     "reason": decision.get("explain"),
-                    "meta": decision,
+                    "meta": meta_payload,
                 }
             )
         except Exception as exc:
