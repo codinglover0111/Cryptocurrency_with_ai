@@ -118,11 +118,24 @@
                   <option value="UTC-5">UTC-5</option>
                 </select>
               </label>
+              <label class="journal-limit">
+                코인
+                <select id="jr-symbol">
+                  <option value="">전체</option>
+                </select>
+              </label>
               <label class="journal-sort">
                 정렬
                 <select id="jr-sort">
                   <option value="desc" selected>최신순</option>
                   <option value="asc">오래된순</option>
+                </select>
+              </label>
+              <label class="journal-sort">
+                기간
+                <select id="jr-range">
+                  <option value="today" selected>오늘</option>
+                  <option value="recent15">최근 15분</option>
                 </select>
               </label>
               <div id="jr-type-filters" class="journal-type-filters">
@@ -139,6 +152,14 @@
                 <label
                   ><input type="checkbox" value="review" checked />리뷰</label
                 >
+              </div>
+              <div id="jr-status-filters" class="journal-type-filters">
+                <span class="journal-type-label">포지션</span>
+                <label><input type="checkbox" value="long" checked />롱</label>
+                <label
+                  ><input type="checkbox" value="hold" checked />홀딩</label
+                >
+                <label><input type="checkbox" value="short" checked />숏</label>
               </div>
               <button class="btn btn--ghost" id="jr-refresh">조회</button>
               <a
