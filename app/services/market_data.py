@@ -1,5 +1,7 @@
 """Utilities for fetching and formatting market data."""
 
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 from __future__ import annotations
 
 import ccxt
@@ -31,7 +33,9 @@ def ohlcv_csv_between(
         exchange = ccxt.bybit()
         rows = exchange.fetch_ohlcv(spot_symbol, timeframe, since=since_ms, limit=limit)
         rows = [
-            r for r in rows if len(r) >= 6 and r[0] <= until_ms  # type: ignore[index]
+            r
+            for r in rows
+            if len(r) >= 6 and r[0] <= until_ms  # type: ignore[index]
         ]
         if not rows:
             return ""

@@ -1,10 +1,12 @@
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 from __future__ import annotations
 
 import os
 import json
 import math
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Tuple, Any, Dict, cast
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -153,6 +155,20 @@ def status():
             bal = data.get("balance")
             if isinstance(bal, dict) and "raw" in bal:
                 bal.pop("raw", None)
+            positions = (
+                data.get("positions") if isinstance(data.get("positions"), list) else []
+            )
+            try:
+                data["positionsSummary"] = _summarize_positions(
+                    bybit,
+                    positions,
+                    symbol=None,
+                    use_mark_price=False,
+                    force_exchange_pnl=False,
+                    force_roe=False,
+                )
+            except Exception:
+                data["positionsSummary"] = []
     except Exception:
         pass
     return data
@@ -209,11 +225,7 @@ def stats_range(
         try:
             # YYYY-MM-DD 또는 ISO8601 허용, UTC 가정
             if len(ts) == 10:
-                from datetime import datetime
-
                 return datetime.fromisoformat(ts + "T00:00:00+00:00")
-            from datetime import datetime
-
             return datetime.fromisoformat(ts)
         except Exception:
             return None
@@ -611,7 +623,7 @@ def list_journals_filtered(
             items = []
             for _, row in df.iterrows():
                 payload, entry_type_lower, decision_status = _serialize_row(row)
-                if status_filters:
+                if status_filters is not None:
                     if entry_type_lower != "decision" or not decision_status:
                         continue
                     if decision_status not in status_filters:
@@ -631,6 +643,7 @@ def list_journals_filtered(
         rows: List[dict] = []
         matched_count = 0
         target_start = (page_number - 1) * page_size
+        filters = cast(set[str], status_filters)
 
         while True:
             chunk = store.fetch_journals(
@@ -653,7 +666,7 @@ def list_journals_filtered(
                 payload, entry_type_lower, decision_status = _serialize_row(row)
                 if entry_type_lower != "decision" or not decision_status:
                     continue
-                if decision_status not in status_filters:
+                if decision_status not in filters:
                     continue
 
                 if matched_count >= target_start and len(rows) < page_size:
@@ -690,12 +703,13 @@ def list_journals_filtered(
         return {"items": []}
 
     items = []
+    filters_opt = cast(Optional[set[str]], status_filters)
     for _, row in df.iterrows():
         payload, entry_type_lower, decision_status = _serialize_row(row)
-        if status_filters:
+        if filters_opt is not None:
             if entry_type_lower != "decision" or not decision_status:
                 continue
-            if decision_status not in status_filters:
+            if decision_status not in filters_opt:
                 continue
         items.append(payload)
 
@@ -891,169 +905,14 @@ def positions_summary(
 ):
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
     positions = bybit.get_positions() or []
-    items = []
-    for p in positions:
-        try:
-            sym = p.get("symbol") or (p.get("info", {}) or {}).get("symbol")
-            if not sym:
-                continue
-            if symbol and sym != symbol:
-                continue
-            side = p.get("side") or (p.get("info", {}) or {}).get("side")
-            entry = p.get("entryPrice") or (p.get("info", {}) or {}).get("avgPrice")
-            # 수량: size(기본 단위) 우선, 없으면 contracts * contractSize 로 환산
-            contract_size = p.get("contractSize") or (p.get("info", {}) or {}).get(
-                "contractSize"
-            )
-            size_raw = p.get("size") or p.get("contracts") or p.get("amount")
-            try:
-                size_f = float(size_raw) if size_raw is not None else None
-            except Exception:
-                size_f = None
-            if size_f is None and size_raw is not None:
-                # 방어적 캐스팅 실패 대비
-                try:
-                    size_f = float(size_raw)
-                except Exception:
-                    size_f = None
-            # contracts만 있는 경우 contractSize 곱해 기본 단위로 변환
-            if (
-                size_f is not None
-                and p.get("size") is None
-                and p.get("contracts") is not None
-                and contract_size is not None
-            ):
-                try:
-                    size_f = size_f * float(contract_size)
-                except Exception:
-                    pass
-            tp = (
-                p.get("takeProfit")
-                or (p.get("info", {}) or {}).get("takeProfit")
-                or None
-            )
-            sl = p.get("stopLoss") or (p.get("info", {}) or {}).get("stopLoss") or None
-            lev = p.get("leverage") or (p.get("info", {}) or {}).get("leverage")
-            try:
-                lev = float(lev) if lev is not None else None
-            except Exception:
-                lev = None
-
-            # 가격 소스: 강제 옵션(force_mark) 시 마크 프라이스 고정, 아니면 마크 우선
-            mark = p.get("markPrice") or (p.get("info", {}) or {}).get("markPrice")
-            if force_mark:
-                last = mark if mark is not None else bybit.get_last_price(sym)
-            else:
-                last = mark if mark is not None else bybit.get_last_price(sym)
-
-            entry_f = float(entry) if entry is not None else None
-            last_f = float(last) if last is not None else None
-
-            pnl = None
-            pnl_pct = None
-
-            # 거래소 제공 미실현손익(가능 시 우선 사용)
-            unreal = p.get("unrealizedPnl") or (p.get("info", {}) or {}).get(
-                "unrealisedPnl"
-            )
-            try:
-                unreal_f = float(unreal) if unreal is not None else None
-            except Exception:
-                unreal_f = None
-
-            # 거래소 제공 퍼센트(가능 시)
-            pct = p.get("percentage") or (p.get("info", {}) or {}).get(
-                "unrealisedPnlPcnt"
-            )
-            try:
-                pct_f = float(pct) if pct is not None else None
-            except Exception:
-                pct_f = None
-
-            # ROE 계산을 위한 명목가치/초기증거금 산출
-            notional = p.get("notional") or (p.get("info", {}) or {}).get(
-                "positionValue"
-            )
-            try:
-                notional_f = float(notional) if notional is not None else None
-            except Exception:
-                notional_f = None
-            if notional_f is None and entry_f is not None and size_f is not None:
-                notional_f = abs(entry_f * size_f)
-
-            # 초기증거금: 격리/크로스 모두 커버하도록 다양한 필드 참조
-            initial_margin = (
-                p.get("initialMargin")
-                or p.get("margin")
-                or (p.get("info", {}) or {}).get("positionIM")
-                or (p.get("info", {}) or {}).get("positionInitialMargin")
-                or (p.get("info", {}) or {}).get("positionMargin")
-            )
-            try:
-                initial_margin_f = (
-                    float(initial_margin) if initial_margin is not None else None
-                )
-            except Exception:
-                initial_margin_f = None
-            if (initial_margin_f is None) and (notional_f is not None):
-                try:
-                    initial_margin_f = notional_f / float(lev) if lev else None
-                except Exception:
-                    initial_margin_f = None
-
-            # PnL 값 결정: 거래소 제공치 → 자체 계산(마크/라스트)
-            if force_exchange_pnl:
-                pnl = unreal_f  # 폴백 금지
-            else:
-                if unreal_f is not None:
-                    pnl = unreal_f
-                elif (
-                    entry_f is not None
-                    and size_f is not None
-                    and last_f is not None
-                    and side
-                ):
-                    if (side or "").lower() in ("long", "buy"):
-                        pnl = (last_f - entry_f) * size_f
-                    else:
-                        pnl = (entry_f - last_f) * size_f
-
-            # 퍼센트: 강제 ROE면 ROE만, 아니면 거래소 percentage 우선 → ROE → 가격 변화율
-            if force_roe:
-                if pnl is not None and initial_margin_f and initial_margin_f > 0:
-                    pnl_pct = (float(pnl) / initial_margin_f) * 100.0
-                elif pnl is not None and entry_f and last_f is not None:
-                    if (side or "").lower() in ("long", "buy"):
-                        pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
-                    else:
-                        pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
-            else:
-                if pct_f is not None:
-                    pnl_pct = pct_f
-                elif pnl is not None:
-                    if initial_margin_f and initial_margin_f > 0:
-                        pnl_pct = (float(pnl) / initial_margin_f) * 100.0
-                    elif entry_f and last_f is not None:
-                        if (side or "").lower() in ("long", "buy"):
-                            pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
-                        else:
-                            pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
-            items.append(
-                {
-                    "symbol": sym,
-                    "side": side,
-                    "entryPrice": entry_f,
-                    "lastPrice": last_f,
-                    "size": size_f,
-                    "tp": float(tp) if tp is not None else None,
-                    "sl": float(sl) if sl is not None else None,
-                    "leverage": lev,
-                    "pnl": pnl,
-                    "pnlPct": pnl_pct,
-                }
-            )
-        except Exception:
-            continue
+    items = _summarize_positions(
+        bybit,
+        positions,
+        symbol=symbol,
+        use_mark_price=bool(force_mark),
+        force_exchange_pnl=bool(force_exchange_pnl),
+        force_roe=bool(force_roe),
+    )
     return {"items": items}
 
 
@@ -1360,6 +1219,205 @@ def _try_ai_review(
         return (text or "").strip()[:2000]
     except Exception:
         return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_float_with_key(
+    candidates: list[tuple[str, Any]],
+) -> tuple[Optional[float], Optional[str]]:
+    for key, val in candidates:
+        result = _safe_float(val)
+        if result is not None:
+            return result, key
+    return None, None
+
+
+def _compute_position_summary_item(
+    bybit: BybitUtils,
+    position: Dict[str, Any],
+    *,
+    use_mark_price: bool,
+    force_exchange_pnl: bool,
+    force_roe: bool,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(position, dict):
+        return None
+
+    info_raw = position.get("info")
+    info = info_raw if isinstance(info_raw, dict) else {}
+
+    sym = position.get("symbol") or info.get("symbol")
+    if not sym:
+        return None
+
+    side = position.get("side") or info.get("side")
+    entry = position.get("entryPrice") or info.get("avgPrice")
+    contract_size = position.get("contractSize") or info.get("contractSize")
+
+    size_candidates: list[tuple[str, Any]] = [
+        ("size", position.get("size")),
+        ("contracts", position.get("contracts")),
+        ("amount", position.get("amount")),
+    ]
+    if info:
+        size_candidates.extend(
+            [
+                ("info.contracts", info.get("contracts")),
+                ("info.amount", info.get("amount")),
+                ("info.size", info.get("size")),
+                ("info.positionAmt", info.get("positionAmt")),
+            ]
+        )
+
+    size_f, size_key = _first_float_with_key(size_candidates)
+    if (
+        size_f is not None
+        and size_key
+        and "contracts" in size_key
+        and contract_size is not None
+    ):
+        contract_size_f = _safe_float(contract_size)
+        if contract_size_f is not None:
+            size_f = size_f * contract_size_f
+
+    tp = position.get("takeProfit") or info.get("takeProfit")
+    sl = position.get("stopLoss") or info.get("stopLoss")
+    lev = _safe_float(position.get("leverage") or info.get("leverage"))
+    mark_price = position.get("markPrice") or info.get("markPrice")
+
+    entry_f = _safe_float(entry)
+
+    if use_mark_price and mark_price is not None:
+        last_source = mark_price
+    else:
+        last_source = (
+            mark_price if mark_price is not None else bybit.get_last_price(sym)
+        )
+    last_f = _safe_float(last_source)
+
+    unreal = position.get("unrealizedPnl") or info.get("unrealisedPnl")
+    unreal_f = _safe_float(unreal)
+
+    pct = position.get("percentage") or info.get("unrealisedPnlPcnt")
+    pct_f = _safe_float(pct)
+
+    notional = position.get("notional") or info.get("positionValue")
+    notional_f = _safe_float(notional)
+    if notional_f is None and entry_f is not None and size_f is not None:
+        notional_f = abs(entry_f * size_f)
+
+    initial_margin = (
+        position.get("initialMargin")
+        or position.get("margin")
+        or info.get("positionIM")
+        or info.get("positionInitialMargin")
+        or info.get("positionMargin")
+    )
+    initial_margin_f = _safe_float(initial_margin)
+    if initial_margin_f is None and notional_f is not None:
+        if lev:
+            try:
+                initial_margin_f = notional_f / lev
+            except Exception:
+                initial_margin_f = None
+
+    side_norm = (side or "").lower() if isinstance(side, str) else None
+
+    pnl = None
+    if force_exchange_pnl and unreal_f is not None:
+        pnl = unreal_f
+    else:
+        if unreal_f is not None:
+            pnl = unreal_f
+        elif (
+            entry_f is not None
+            and size_f is not None
+            and last_f is not None
+            and side_norm
+        ):
+            if side_norm in ("long", "buy"):
+                pnl = (last_f - entry_f) * size_f
+            else:
+                pnl = (entry_f - last_f) * size_f
+
+    pnl_pct = None
+    if force_roe:
+        if pnl is not None and initial_margin_f and initial_margin_f > 0:
+            pnl_pct = (float(pnl) / initial_margin_f) * 100.0
+        elif (
+            pnl is not None and entry_f is not None and last_f is not None and side_norm
+        ):
+            if side_norm in ("long", "buy"):
+                pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
+            else:
+                pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
+    else:
+        if pct_f is not None:
+            pnl_pct = pct_f
+        elif pnl is not None:
+            if initial_margin_f and initial_margin_f > 0:
+                pnl_pct = (float(pnl) / initial_margin_f) * 100.0
+            elif entry_f is not None and last_f is not None and side_norm:
+                if side_norm in ("long", "buy"):
+                    pnl_pct = ((last_f - entry_f) / entry_f) * 100.0
+                else:
+                    pnl_pct = ((entry_f - last_f) / entry_f) * 100.0
+
+    return {
+        "symbol": sym,
+        "side": side,
+        "entryPrice": entry_f,
+        "lastPrice": last_f,
+        "size": size_f,
+        "tp": _safe_float(tp),
+        "sl": _safe_float(sl),
+        "leverage": lev,
+        "pnl": pnl,
+        "pnlPct": pnl_pct,
+    }
+
+
+def _summarize_positions(
+    bybit: BybitUtils,
+    positions: Any,
+    *,
+    symbol: Optional[str],
+    use_mark_price: bool,
+    force_exchange_pnl: bool,
+    force_roe: bool,
+) -> List[Dict[str, Any]]:
+    if not positions:
+        return []
+
+    items: List[Dict[str, Any]] = []
+    for position in positions:
+        if not isinstance(position, dict):
+            continue
+        info_raw = position.get("info")
+        info = info_raw if isinstance(info_raw, dict) else {}
+        sym = position.get("symbol") or info.get("symbol")
+        if not sym:
+            continue
+        if symbol and sym != symbol:
+            continue
+        item = _compute_position_summary_item(
+            bybit,
+            position,
+            use_mark_price=use_mark_price,
+            force_exchange_pnl=force_exchange_pnl,
+            force_roe=force_roe,
+        )
+        if item:
+            items.append(item)
+    return items
 
 
 @app.get("/overlay_positions", response_class=HTMLResponse)

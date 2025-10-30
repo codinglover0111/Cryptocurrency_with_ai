@@ -1,5 +1,7 @@
 """Automated trading workflow orchestration."""
 
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 from __future__ import annotations
 
 import json
@@ -1281,6 +1283,7 @@ def automation_for_symbol(
 def run_loss_review(
     symbols: Sequence[str] | None = None, since_minutes: int = 600
 ) -> None:
+    del symbols
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),

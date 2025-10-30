@@ -19,6 +19,101 @@ function renderBalance(data) {
 }
 
 function renderPositions(data) {
+  const summary = Array.isArray(data.positionsSummary)
+    ? data.positionsSummary
+    : null;
+
+  const fmtSide = (side) => {
+    const raw = String(side || "").toLowerCase();
+    if (raw === "long" || raw === "buy") return "롱";
+    if (raw === "short" || raw === "sell") return "숏";
+    return side || "-";
+  };
+
+  const usdFormatter = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  });
+
+  const fmtUSD = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    const formatted = usdFormatter.format(num);
+    return num > 0 && !formatted.startsWith("+") ? `+${formatted}` : formatted;
+  };
+
+  const fmtPct = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    const digits = Math.abs(num) >= 100 ? 1 : 2;
+    const body = num.toFixed(digits);
+    return `${num > 0 ? "+" : ""}${body}%`;
+  };
+
+  const fmtNumber = (value) => {
+    const brief = formatNumberBrief(value);
+    if (brief != null) return brief;
+    const num = Number(value);
+    if (Number.isFinite(num)) return num.toString();
+    return value ?? "-";
+  };
+
+  if (summary) {
+    const rows = summary
+      .map((item) => {
+        const sym = item.symbol || "-";
+        const side = fmtSide(item.side);
+        const entry = fmtNumber(item.entryPrice);
+        const size = fmtNumber(item.size);
+        const pnlNum = Number(item.pnl);
+        const pnlClass = Number.isFinite(pnlNum)
+          ? pnlNum > 0
+            ? "pnl-positive"
+            : pnlNum < 0
+            ? "pnl-negative"
+            : ""
+          : "";
+        const pnlText = fmtUSD(item.pnl);
+        const pctNum = Number(item.pnlPct);
+        const pctClass = Number.isFinite(pctNum)
+          ? pctNum > 0
+            ? "pnl-positive"
+            : pctNum < 0
+            ? "pnl-negative"
+            : ""
+          : "";
+        const pctText = fmtPct(item.pnlPct);
+        return `<tr>
+          <td>${sym}</td>
+          <td>${side}</td>
+          <td class="text-right">${entry}</td>
+          <td class="text-right">${size}</td>
+          <td class="text-right ${pnlClass}">${pnlText}</td>
+          <td class="text-right ${pctClass}">${pctText}</td>
+        </tr>`;
+      })
+      .join("");
+
+    el("positions").innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>심볼</th>
+            <th>사이드</th>
+            <th>진입가</th>
+            <th>수량</th>
+            <th>PNL (USDT)</th>
+            <th>수익률</th>
+          </tr>
+        </thead>
+        <tbody>${
+          rows || '<tr><td colspan="6" class="muted">없음</td></tr>'
+        }</tbody>
+      </table>`;
+    return;
+  }
+
   const list = (data.positions || [])
     .map((p) => {
       const sym = p.symbol || (p.info && p.info.symbol) || "-";

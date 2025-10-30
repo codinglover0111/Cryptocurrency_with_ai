@@ -1,3 +1,5 @@
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 import os
 import ccxt
 from dotenv import load_dotenv
@@ -78,6 +80,7 @@ class BybitUtils:
                     },
                 }
             )
+            self.positions: Optional[dict] = None
             # 기본 recv_window 헤더 보장
             try:
                 recv_ms = int(os.getenv("BYBIT_RECV_WINDOW_MS", "15000"))
@@ -432,8 +435,6 @@ class BybitUtils:
     #     except Exception as e:
     #         print(f"Error editing position: {e}")
     #         return None
-
-    # TODO: OrderID 저장?
 
     def close_position(self, symbol, order_id):
         try:

@@ -1,3 +1,5 @@
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 import base64
 import io
 from typing import Optional
@@ -15,11 +17,10 @@ class bybit_utils:
         self.symbol = symbol
         self.timeframe = timeframe
         self.limit = limit
-        pass
+        self.df: Optional[pd.DataFrame] = None
 
     def set_timeframe(self, timeframe):
         self.timeframe = timeframe
-        pass
 
     def get_ohlcv(self):
         ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=self.limit)

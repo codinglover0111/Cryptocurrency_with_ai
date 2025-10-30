@@ -1,8 +1,10 @@
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime
+import datetime as dt
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, Union
 
@@ -81,7 +83,7 @@ class TradeStore:
             return
         if trade.get("ts") is None:
             trade = dict(trade)
-            trade["ts"] = datetime.utcnow()
+            trade["ts"] = dt.datetime.utcnow()
         if trade.get("order_id") is not None:
             trade["order_id"] = str(trade["order_id"])
         try:
@@ -172,8 +174,8 @@ class TradeStore:
     def compute_stats_range(
         self,
         *,
-        since_ts: Optional[datetime] = None,
-        until_ts: Optional[datetime] = None,
+        since_ts: Optional[dt.datetime] = None,
+        until_ts: Optional[dt.datetime] = None,
         symbol: Optional[str] = None,
         group: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -291,13 +293,11 @@ class TradeStore:
                         return tt.isoformat()
                     except Exception:
                         try:
-                            from datetime import datetime, timezone
-
-                            if isinstance(t, datetime):
+                            if isinstance(t, dt.datetime):
                                 if t.tzinfo is None:
-                                    t = t.replace(tzinfo=timezone.utc)
+                                    t = t.replace(tzinfo=dt.timezone.utc)
                                 else:
-                                    t = t.astimezone(timezone.utc)
+                                    t = t.astimezone(dt.timezone.utc)
                                 return t.isoformat()
                         except Exception:
                             return str(t)
@@ -347,10 +347,7 @@ class TradeStore:
         try:
             data = dict(entry)
             if data.get("ts") is None:
-                # Lazy import to avoid global dependency
-                from datetime import datetime
-
-                data["ts"] = datetime.utcnow()
+                data["ts"] = dt.datetime.utcnow()
             # Normalize
             data.setdefault("symbol", None)
             data.setdefault("entry_type", None)
@@ -382,8 +379,8 @@ class TradeStore:
         symbol: Optional[str] = None,
         types: Optional[list] = None,
         today_only: bool = False,
-        since_ts: Optional[datetime] = None,
-        until_ts: Optional[datetime] = None,
+        since_ts: Optional[dt.datetime] = None,
+        until_ts: Optional[dt.datetime] = None,
         limit: int = 20,
         ascending: bool = True,
         *,
