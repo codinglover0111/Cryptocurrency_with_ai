@@ -1,3 +1,7 @@
+import base64
+import io
+from typing import Optional
+
 import ccxt
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -6,36 +10,42 @@ import mplfinance as mpf
 
 
 class bybit_utils:
-    def __init__(self,symbol = 'XRP/USDT', timeframe = '4h', limit = 100):
+    def __init__(self, symbol="XRP/USDT", timeframe="4h", limit=100):
         self.exchange = ccxt.bybit()
         self.symbol = symbol
         self.timeframe = timeframe
         self.limit = limit
         pass
-    
+
     def set_timeframe(self, timeframe):
         self.timeframe = timeframe
         pass
-    
+
     def get_ohlcv(self):
         ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=self.limit)
-        self.df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        self.df['timestamp'] = pd.to_datetime(self.df['timestamp'], unit='ms')
-        self.df.set_index('timestamp', inplace=True)
+        self.df = pd.DataFrame(
+            ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+        self.df["timestamp"] = pd.to_datetime(self.df["timestamp"], unit="ms")
+        self.df.set_index("timestamp", inplace=True)
         return self.df
-    
+
     def get_current_price(self):
-        current_price = self.df['close'].iloc[-1]
+        current_price = self.df["close"].iloc[-1]
         return current_price
-    
+
     def get_bollinger_band(self):
-        self.df['bb_upper'], self.df['bb_middle'], self.df['bb_lower'] = ta.volatility.bollinger_hband(self.df['close']), ta.volatility.bollinger_mavg(self.df['close']), ta.volatility.bollinger_lband(self.df['close'])
+        self.df["bb_upper"], self.df["bb_middle"], self.df["bb_lower"] = (
+            ta.volatility.bollinger_hband(self.df["close"]),
+            ta.volatility.bollinger_mavg(self.df["close"]),
+            ta.volatility.bollinger_lband(self.df["close"]),
+        )
         return self.df
-    
+
     def get_rsi(self):
-        self.df['rsi'] = ta.momentum.rsi(self.df['close'])
+        self.df["rsi"] = ta.momentum.rsi(self.df["close"])
         return self.df
-    
+
     def plot_candlestick(self):
         self.get_ohlcv()
         self.get_ohlcv()
@@ -43,22 +53,71 @@ class bybit_utils:
         self.get_bollinger_band()
         self.get_rsi()
         apds = [
-            mpf.make_addplot(self.df['bb_upper'], color='red', linestyle='--'),  # 볼린저 밴드 상단
-            mpf.make_addplot(self.df['bb_middle'], color='green', linestyle='--'),  # 볼린저 밴드 중간
-            mpf.make_addplot(self.df['bb_lower'], color='red', linestyle='--'),  # 볼린저 밴드 하단
+            mpf.make_addplot(
+                self.df["bb_upper"], color="red", linestyle="--"
+            ),  # 볼린저 밴드 상단
+            mpf.make_addplot(
+                self.df["bb_middle"], color="green", linestyle="--"
+            ),  # 볼린저 밴드 중간
+            mpf.make_addplot(
+                self.df["bb_lower"], color="red", linestyle="--"
+            ),  # 볼린저 밴드 하단
         ]
-        file_name = self.symbol.replace('/','_')
-        mpf.plot(self.df, type='candle', addplot=apds, style='charles', title=f'{self.symbol} Price with Bollinger Bands', volume=True, savefig=f'{file_name}_{self.timeframe}_candlestick.png')
+        file_name = self.symbol.replace("/", "_")
+        mpf.plot(
+            self.df,
+            type="candle",
+            addplot=apds,
+            style="charles",
+            title=f"{self.symbol} Price with Bollinger Bands",
+            volume=True,
+            savefig=f"{file_name}_{self.timeframe}_candlestick.png",
+        )
         return self.df
 
-if __name__ == '__main__':
+
+def dataframe_to_candlestick_base64(
+    df: pd.DataFrame,
+    symbol: str,
+    timeframe: str,
+    *,
+    volume: bool = True,
+    style: str = "charles",
+) -> Optional[str]:
+    """OHLCV 데이터프레임을 캔들차트 PNG(base64)로 변환."""
+
+    if df is None or getattr(df, "empty", True):
+        return None
+
+    buf = io.BytesIO()
+    try:
+        mpf.plot(
+            df,
+            type="candle",
+            style=style,
+            volume=volume,
+            title=f"{symbol} {timeframe} OHLCV",
+            datetime_format="%m-%d %H:%M",
+            savefig={"fname": buf, "dpi": 150, "format": "png", "bbox_inches": "tight"},
+        )
+        buf.seek(0)
+        encoded = base64.b64encode(buf.read()).decode("ascii")
+        return encoded
+    except Exception:
+        return None
+    finally:
+        buf.close()
+        plt.close("all")
+
+
+if __name__ == "__main__":
     bybit = bybit_utils()
     bybit.get_ohlcv()
     bybit.get_current_price()
     bybit.get_bollinger_band()
     bybit.get_rsi()
     bybit.plot_candlestick()
-    bybit = bybit_utils(timeframe='1h')
+    bybit = bybit_utils(timeframe="1h")
     bybit.get_ohlcv()
     bybit.get_current_price()
     bybit.get_bollinger_band()

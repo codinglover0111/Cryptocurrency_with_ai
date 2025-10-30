@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
+from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
 from utils.risk import calculate_position_size, enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
@@ -59,6 +60,7 @@ class PromptContext:
     recent_reports_text: str
     reviews_text: str
     since_open_text: str
+    chart_images: Dict[str, str] = field(default_factory=dict)
 
 
 def _init_dependencies(
@@ -186,6 +188,20 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     csv_15m = df_15m.to_csv()
     current_price = df_15m["close"].iloc[-1]
 
+    chart_images: Dict[str, str] = {}
+    if deps.ai_provider.provider == "gemini":
+        for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
+            try:
+                image_b64 = dataframe_to_candlestick_base64(
+                    frame_df.tail(120),
+                    deps.spot_symbol,
+                    timeframe,
+                )
+                if image_b64:
+                    chart_images[timeframe] = image_b64
+            except Exception as exc:
+                LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
+
     current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
     position_lines, pos_side = _summarize_positions(
         current_position, deps.contract_symbol, current_price
@@ -278,6 +294,7 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         recent_reports_text=recent_reports_text,
         reviews_text=reviews_text,
         since_open_text=since_open_text,
+        chart_images=chart_images,
     )
 
 
@@ -337,9 +354,32 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
 def _request_trade_decision(
     deps: AutomationDependencies,
     prompt: str,
+    ctx: PromptContext,
 ) -> Dict[str, Any]:
+    images_payload: Optional[List[Dict[str, Any]]] = None
+    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
+        images_payload = []
+        for timeframe in ("4h", "1h", "15m"):
+            chart_b64 = ctx.chart_images.get(timeframe)
+            if not chart_b64:
+                continue
+            images_payload.append(
+                {
+                    "b64": chart_b64,
+                    "mime": "image/png",
+                    "metadata": {
+                        "symbol": deps.spot_symbol,
+                        "contract_symbol": deps.contract_symbol,
+                        "timeframe": timeframe,
+                        "type": "candlestick",
+                    },
+                }
+            )
+        if not images_payload:
+            images_payload = None
+
     try:
-        parsed = deps.ai_provider.decide_json(prompt)
+        parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
         LOGGER.info(
             json.dumps(
                 {
@@ -352,7 +392,7 @@ def _request_trade_decision(
         )
         return parsed
     except Exception:
-        response = deps.ai_provider.decide(prompt)
+        response = deps.ai_provider.decide(prompt, images=images_payload)
         try:
             LOGGER.info(
                 json.dumps(
@@ -1099,7 +1139,7 @@ def automation_for_symbol(
         deps = _init_dependencies(symbol_usdt, symbols)
         ctx = _gather_prompt_context(deps)
         prompt = _build_prompt(deps, ctx)
-        decision = _request_trade_decision(deps, prompt)
+        decision = _request_trade_decision(deps, prompt, ctx)
         if _handle_close_now(deps, ctx, decision):
             return
         _execute_trade(deps, ctx, decision)
