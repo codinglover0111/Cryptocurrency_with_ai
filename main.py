@@ -45,8 +45,8 @@ def run_scheduler() -> None:
     schedule.every(15).minutes.do(job)
     schedule.every(15).minutes.do(review_job)
 
-    review_job()
-    job()
+    # review_job()
+    # job()
 
     while True:
         try:
