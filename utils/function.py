@@ -1,51 +1,76 @@
-"""JSON 파싱 헬퍼 - LLM 텍스트 응답을 구조화된 객체로 변환."""
-
+from google.ai.generativelanguage_v1beta.types import content
+import google.generativeai as genai
 import json
-from typing import Any, Dict
 
 
 class make_to_object:
-    """LLM의 텍스트 응답을 JSON 객체로 변환하는 폴백 파서.
-    
-    OpenAI의 JSON 모드가 실패할 경우 사용되는 간단한 파서입니다.
-    """
-
     def __init__(self):
-        """초기화 - 현재는 빈 클래스입니다."""
-        pass
+        generation_config = {
+            "temperature": 0,
+            "top_p": 0.0,
+            "top_k": 40,
+            "max_output_tokens": 400,
+            "response_schema": content.Schema(
+                type=content.Type.OBJECT,
+                required=["Status", "explain"],
+                properties={
+                    "Status": content.Schema(
+                        type=content.Type.STRING,
+                        enum=["hold", "short", "long", "stop"],
+                    ),
+                    "tp": content.Schema(
+                        type=content.Type.NUMBER,
+                    ),
+                    "sl": content.Schema(
+                        type=content.Type.NUMBER,
+                    ),
+                    "price": content.Schema(
+                        type=content.Type.NUMBER,
+                    ),
+                    "buy_now": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
+                    "stop_order": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
+                    "leverage": content.Schema(
+                        type=content.Type.NUMBER,
+                    ),
+                    "close_now": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
+                    "close_percent": content.Schema(
+                        type=content.Type.NUMBER,
+                    ),
+                    "reduce_only": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
+                    "update_existing": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
+                    "explain": content.Schema(
+                        type=content.Type.STRING,
+                    ),
+                },
+            ),
+            "response_mime_type": "application/json",
+        }
+        self.model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash-exp",
+            generation_config=generation_config,
+            system_instruction=(
+                "입력된 트레이딩 결론을 JSON 오브젝트로 변환하시오.\n"
+                "필수: Status in [hold,short,long,stop]. 선택: price, sl, tp, buy_now, leverage.\n"
+                "시장가의 경우 buy_now를 true로 설정합니다.\n"
+                "레버리지를 숫자로 제안할 수 있습니다(예: 3, 5, 10).\n"
+                "기존 포지션의 TP/SL만 수정하려면 update_existing를 true로 설정하고 leverage는 비우십시오."
+            ),
+        )
+        self.chat_session = self.model.start_chat(history=[])
 
-    def make_it_object(self, inputs: str) -> Dict[str, Any]:
-        """텍스트 입력을 JSON 객체로 변환.
-        
-        Args:
-            inputs: LLM의 텍스트 응답 (JSON 형식일 것으로 예상)
-            
-        Returns:
-            파싱된 JSON 딕셔너리
-            
-        Raises:
-            json.JSONDecodeError: 입력이 유효한 JSON이 아닌 경우
-        """
-        # JSON 코드 블록에서 JSON 추출 시도
-        if "```json" in inputs:
-            start = inputs.find("```json") + 7
-            end = inputs.find("```", start)
-            if end > start:
-                inputs = inputs[start:end].strip()
-        elif "```" in inputs:
-            start = inputs.find("```") + 3
-            end = inputs.find("```", start)
-            if end > start:
-                inputs = inputs[start:end].strip()
-        
-        # JSON 객체 추출 시도
-        if "{" in inputs:
-            start = inputs.find("{")
-            end = inputs.rfind("}") + 1
-            if end > start:
-                inputs = inputs[start:end].strip()
-        
-        obj = json.loads(inputs)
+    def make_it_object(self, inputs: str):
+        response = self.chat_session.send_message(inputs)
+        obj = json.loads(response.text)
         return obj
 
 

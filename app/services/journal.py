@@ -4,6 +4,7 @@
 # ruff: noqa: E722, BLE001
 from __future__ import annotations
 
+import io
 import json
 import logging
 import time
@@ -33,6 +34,48 @@ class JournalService:
         if self.ai_provider is None:
             self.ai_provider = AIProvider()
         return self.ai_provider
+
+    @staticmethod
+    def _compute_rsi(close_series: pd.Series, period: int = 14) -> pd.Series:
+        if close_series.empty:
+            return pd.Series(dtype="float64")
+
+        delta = close_series.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+
+        alpha = 1 / period
+        avg_gain = gain.ewm(alpha=alpha, adjust=False, min_periods=period).mean()
+        avg_loss = loss.ewm(alpha=alpha, adjust=False, min_periods=period).mean()
+
+        avg_loss = avg_loss.replace(0, pd.NA)
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.clip(0, 100)
+
+    @classmethod
+    def _rsi_csv_from_ohlcv(cls, csv_text: str, *, period: int = 14) -> str:
+        if not csv_text:
+            return ""
+
+        try:
+            df = pd.read_csv(io.StringIO(csv_text))
+            if "close" not in df.columns:
+                return ""
+
+            rsi_series = cls._compute_rsi(pd.Series(df["close"]), period=period)
+            if "timestamp" in df.columns:
+                out_df = pd.DataFrame({"timestamp": df["timestamp"], "rsi": rsi_series})
+            else:
+                out_df = pd.DataFrame({"rsi": rsi_series})
+
+            out_df = out_df.dropna()
+            if out_df.empty:
+                return ""
+
+            return out_df.to_csv(index=False)
+        except Exception:
+            return ""
 
     def _collect_entry_notes(
         self,
@@ -206,6 +249,13 @@ class JournalService:
                 since_ms = int(pd.Timestamp(open_ts).timestamp() * 1000)
                 until_ms = int(pd.Timestamp(close_ts).timestamp() * 1000)
                 csv_1m = ohlcv_csv_between(spot_symbol, "1m", since_ms, until_ms)
+                csv_15m = ohlcv_csv_between(spot_symbol, "15m", since_ms, until_ms)
+                csv_1h = ohlcv_csv_between(spot_symbol, "1h", since_ms, until_ms)
+                csv_4h = ohlcv_csv_between(spot_symbol, "4h", since_ms, until_ms)
+
+                rsi_15m = self._rsi_csv_from_ohlcv(csv_15m)
+                rsi_1h = self._rsi_csv_from_ohlcv(csv_1h)
+                rsi_4h = self._rsi_csv_from_ohlcv(csv_4h)
 
                 open_ts_str = pd.Timestamp(open_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
                 close_ts_str = pd.Timestamp(close_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -238,7 +288,24 @@ class JournalService:
                         + "\n"
                     )
 
-                prompt += "[CSV_1m_BETWEEN]\n" + (csv_1m or "(no data)")
+                sections = [
+                    "[CSV_1m_BETWEEN]("
+                    + (csv_1m or "(no data)")
+                    + ")[/CSV_1m_BETWEEN]",
+                    "[CSV_15m_BETWEEN]("
+                    + (csv_15m or "(no data)")
+                    + ")[/CSV_15m_BETWEEN]",
+                    "[CSV_1h_BETWEEN]("
+                    + (csv_1h or "(no data)")
+                    + ")[/CSV_1h_BETWEEN]",
+                    "[CSV_4h_BETWEEN]("
+                    + (csv_4h or "(no data)")
+                    + ")[/CSV_4h_BETWEEN]",
+                    "[RSI_15m](" + (rsi_15m or "(no data)") + ")[/RSI_15m]",
+                    "[RSI_1h](" + (rsi_1h or "(no data)") + ")[/RSI_1h]",
+                    "[RSI_4h](" + (rsi_4h or "(no data)") + ")[/RSI_4h]",
+                ]
+                prompt += "\n".join(sections)
 
                 delays = [5, 10, 60]
                 max_attempts = len(delays) + 1
