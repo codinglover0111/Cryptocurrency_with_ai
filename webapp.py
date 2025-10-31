@@ -1048,6 +1048,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                 if val:
                     existing_close_ids.add(str(val))
 
+    processed_close_keys: set[tuple[str, str]] = set()
     history_cache: Dict[str, List[Dict[str, Any]]] = {}
     used_history_ids: set[str] = set()
 
@@ -1311,6 +1312,18 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             order_id = synthetic_id
             existing_close_ids.add(synthetic_id)
 
+        if order_id is not None:
+            order_id = str(order_id)
+
+        order_key: Optional[tuple[str, str]] = None
+        should_log_for_order = True
+        if symbol and order_id:
+            order_key = (str(symbol), order_id)
+            if order_key in processed_close_keys:
+                should_log_for_order = False
+            else:
+                processed_close_keys.add(order_key)
+
         try:
             store.record_trade(
                 {
@@ -1345,6 +1358,8 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             "side": side,
             "pnl": float(pnl),
         }
+        if order_id:
+            meta_payload["order_id"] = order_id
         if open_fee is not None:
             meta_payload["open_fee"] = open_fee
         if close_fee is not None:
@@ -1352,37 +1367,38 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         if funding_fee is not None:
             meta_payload["funding_fee"] = funding_fee
 
-        try:
-            store.record_journal(
-                {
-                    "symbol": symbol,
-                    "entry_type": "action",
-                    "content": f"auto_close ({closed_by}) price={close_str} qty={qty_str} realized={pnl_str}",
-                    "reason": f"Position closed by exchange due to {closed_by} or manual without signal.",
-                    "meta": dict(meta_payload),
-                }
-            )
-        except Exception:
-            pass
-
-        try:
-            review = _try_ai_review(
-                symbol, side, entry_price, float(vwap_close), tp_f, sl_f, float(pnl)
-            )
-            if review:
-                review_meta = dict(meta_payload)
-                review_meta["reason"] = closed_by
+        if should_log_for_order:
+            try:
                 store.record_journal(
                     {
                         "symbol": symbol,
-                        "entry_type": "review",
-                        "content": review,
-                        "reason": "auto_close_review",
-                        "meta": review_meta,
+                        "entry_type": "action",
+                        "content": f"auto_close ({closed_by}) price={close_str} qty={qty_str} realized={pnl_str}",
+                        "reason": f"Position closed by exchange due to {closed_by} or manual without signal.",
+                        "meta": dict(meta_payload),
                     }
                 )
-        except Exception:
-            pass
+            except Exception:
+                pass
+
+            try:
+                review = _try_ai_review(
+                    symbol, side, entry_price, float(vwap_close), tp_f, sl_f, float(pnl)
+                )
+                if review:
+                    review_meta = dict(meta_payload)
+                    review_meta["reason"] = closed_by
+                    store.record_journal(
+                        {
+                            "symbol": symbol,
+                            "entry_type": "review",
+                            "content": review,
+                            "reason": "auto_close_review",
+                            "meta": review_meta,
+                        }
+                    )
+            except Exception:
+                pass
 
 
 def _try_ai_review(

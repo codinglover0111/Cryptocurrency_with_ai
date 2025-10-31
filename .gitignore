@@ -6,3 +6,4 @@ __pycache__
 .env.local
 trading.log
 data/trading.sqlite
+trading.sqlite
