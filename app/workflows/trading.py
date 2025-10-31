@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -1311,19 +1312,73 @@ def _record_skip(
         pass
 
 
+def _record_journal_fetch_error(
+    deps: Optional[AutomationDependencies],
+    symbol_usdt: str,
+    symbols: Sequence[str] | None,
+    exc: Exception,
+) -> None:
+    try:
+        use_deps = deps or _init_dependencies(symbol_usdt, symbols)
+    except Exception as init_exc:
+        LOGGER.error(
+            "Failed to prepare dependencies for journal error logging: %s",
+            init_exc,
+        )
+        return
+
+    try:
+        use_deps.store.record_journal(
+            {
+                "symbol": use_deps.contract_symbol,
+                "entry_type": "error",
+                "content": "저널 조회에 오류가 발생했습니다.",
+                "reason": str(exc),
+                "meta": {"error": str(exc)},
+            }
+        )
+    except Exception as journal_exc:
+        LOGGER.error(
+            "Journal write failed while recording automation error: %s",
+            journal_exc,
+        )
+
+
 def automation_for_symbol(
     symbol_usdt: str, *, symbols: Sequence[str] | None = None
 ) -> None:
-    try:
-        deps = _init_dependencies(symbol_usdt, symbols)
-        ctx = _gather_prompt_context(deps)
-        prompt = _build_prompt(deps, ctx)
-        decision = _request_trade_decision(deps, prompt, ctx)
-        if _handle_close_now(deps, ctx, decision):
+    delays = [5, 10, 60]
+
+    for attempt in range(len(delays) + 1):
+        deps: Optional[AutomationDependencies] = None
+        try:
+            deps = _init_dependencies(symbol_usdt, symbols)
+            ctx = _gather_prompt_context(deps)
+            prompt = _build_prompt(deps, ctx)
+            decision = _request_trade_decision(deps, prompt, ctx)
+            if _handle_close_now(deps, ctx, decision):
+                return
+            _execute_trade(deps, ctx, decision)
             return
-        _execute_trade(deps, ctx, decision)
-    except Exception as exc:
-        LOGGER.error("Error in automation: %s", exc)
+        except Exception as exc:
+            LOGGER.error(
+                "Error in automation (attempt %s/%s): %s",
+                attempt + 1,
+                len(delays) + 1,
+                exc,
+            )
+            if attempt == len(delays):
+                LOGGER.error("저널 조회에 오류가 발생했습니다.")
+                _record_journal_fetch_error(deps, symbol_usdt, symbols, exc)
+                return
+
+            delay = delays[attempt]
+            LOGGER.info(
+                "Retrying automation for %s in %s seconds",
+                symbol_usdt,
+                delay,
+            )
+            time.sleep(delay)
 
 
 def run_loss_review(

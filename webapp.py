@@ -448,7 +448,7 @@ def list_journals_filtered(
         )
     )
 
-    allowed_types = {"thought", "decision", "action", "review"}
+    allowed_types = {"thought", "decision", "action", "review", "error"}
     raw_types: List[str] = (
         [t.strip() for t in types.split(",") if t.strip()] if types else []
     )
