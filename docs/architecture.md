@@ -39,18 +39,19 @@
 - **Position State**: 보유 포지션, 진입가, 증거금, 미실현 손익 등 현재 상태를 전달합니다.
 - **Journal & Decisions**: 직전 결정, 실행 결과, 피드백/리뷰 내용을 포함해 LLM이 과거 맥락을 학습하도록 합니다.
 - **Task Definition**: 신규 진입, 유지, 청산 중 선택하도록 지시하며, `close_now`, `entries`, `stop_loss`, `take_profit` 필드를 요구합니다.
+- **JSON Contract**: LLM 응답은 `Status`(대문자)와 `status`(소문자) 필드가 반드시 포함되어야 합니다. 워크플로는 외부 프로바이더 스키마 호환을 위해 `Status`를 요구하고, 내부 로직은 이를 소문자로 정규화한 `status`를 사용하므로 두 필드를 동시에 유지해야 합니다.
 
 Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제공하며, TP/SL 유효성 검증, 포지션 사이즈 조정 등에 대해 "검토" 역할을 주도록 짧은 프롬프트를 생성합니다.
 
 ## Module Breakdown
 
-| 경로 | 역할 | 주요 함수 |
-|------|------|-----------|
-| `app/core/symbols.py` | 심볼 관련 유틸리티 | `parse_trading_symbols`, `to_ccxt_symbols`, `per_symbol_allocation` |
-| `app/services/market_data.py` | OHLCV 수집 래퍼 | `ohlcv_csv_between` |
-| `app/services/journal.py` | 저널/리뷰 도메인 서비스 | `JournalService.format_trade_reviews_for_prompt`, `JournalService.review_losing_trades` |
-| `app/workflows/trading.py` | 자동매매 파이프라인 | `_gather_prompt_context`, `_build_prompt`, `_run_confirm_step`, `_execute_trade`, `automation_for_symbol` |
-| `utils/` | 거래소/AI/스토리지 레거시 모듈 | `BybitUtils`, `AIProvider`, `TradeStore`, etc. |
+| 경로                          | 역할                           | 주요 함수                                                                                                 |
+| ----------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `app/core/symbols.py`         | 심볼 관련 유틸리티             | `parse_trading_symbols`, `to_ccxt_symbols`, `per_symbol_allocation`                                       |
+| `app/services/market_data.py` | OHLCV 수집 래퍼                | `ohlcv_csv_between`                                                                                       |
+| `app/services/journal.py`     | 저널/리뷰 도메인 서비스        | `JournalService.format_trade_reviews_for_prompt`, `JournalService.review_losing_trades`                   |
+| `app/workflows/trading.py`    | 자동매매 파이프라인            | `_gather_prompt_context`, `_build_prompt`, `_run_confirm_step`, `_execute_trade`, `automation_for_symbol` |
+| `utils/`                      | 거래소/AI/스토리지 레거시 모듈 | `BybitUtils`, `AIProvider`, `TradeStore`, etc.                                                            |
 
 ## Data Persistence
 
