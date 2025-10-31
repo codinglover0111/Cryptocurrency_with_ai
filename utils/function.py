@@ -44,6 +44,9 @@ class make_to_object:
                     "reduce_only": content.Schema(
                         type=content.Type.BOOLEAN,
                     ),
+                    "update_existing": content.Schema(
+                        type=content.Type.BOOLEAN,
+                    ),
                 },
             ),
             "response_mime_type": "application/json",
@@ -55,7 +58,8 @@ class make_to_object:
                 "입력된 트레이딩 결론을 JSON 오브젝트로 변환하시오.\n"
                 "필수: Status in [hold,short,long,stop]. 선택: price, sl, tp, buy_now, leverage.\n"
                 "시장가의 경우 buy_now를 true로 설정합니다.\n"
-                "레버리지를 숫자로 제안할 수 있습니다(예: 3, 5, 10)."
+                "레버리지를 숫자로 제안할 수 있습니다(예: 3, 5, 10).\n"
+                "기존 포지션의 TP/SL만 수정하려면 update_existing를 true로 설정하고 leverage는 비우십시오."
             ),
         )
         self.chat_session = self.model.start_chat(history=[])

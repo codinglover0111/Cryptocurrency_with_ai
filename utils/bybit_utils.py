@@ -497,6 +497,73 @@ class BybitUtils:
             print(f"Error setting leverage: {e}")
             return None
 
+    def update_symbol_tpsl(
+        self,
+        symbol: str,
+        *,
+        take_profit: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        side: Optional[str] = None,
+        position_idx: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        if take_profit is None and stop_loss is None:
+            return {"status": "noop"}
+
+        idx = position_idx
+        if idx is None and side is not None:
+            try:
+                side_norm = str(side).strip().lower()
+                if side_norm in {"long", "buy"}:
+                    idx = 1
+                elif side_norm in {"short", "sell"}:
+                    idx = 2
+            except Exception:
+                idx = position_idx
+
+        params: Dict[str, Any] = {}
+        if idx is not None:
+            params["positionIdx"] = idx
+
+        last_error: Optional[str] = None
+
+        if hasattr(self.exchange, "set_trading_stop"):
+            try:
+                merged = self._merge_params(params)
+                response = self.exchange.set_trading_stop(
+                    symbol,
+                    stopLoss=stop_loss,
+                    takeProfit=take_profit,
+                    params=merged,
+                )
+                return {"status": "ok", "raw": response}
+            except Exception as exc:
+                last_error = str(exc)
+
+        private_method = getattr(self.exchange, "privatePostV5PositionTradingStop", None)
+        if callable(private_method):
+            try:
+                request: Dict[str, Any] = {}
+                market_id = self._symbol_to_market_id(symbol)
+                if market_id:
+                    request["symbol"] = market_id
+                if take_profit is not None:
+                    request["takeProfit"] = str(take_profit)
+                if stop_loss is not None:
+                    request["stopLoss"] = str(stop_loss)
+                if idx is not None:
+                    request["positionIdx"] = idx
+                response = private_method(self._merge_params(request))
+                return {"status": "ok", "raw": response}
+            except Exception as exc:
+                last_error = str(exc)
+
+        if last_error:
+            print(f"Error updating TP/SL: {last_error}")
+            return {"status": "error", "error": last_error}
+
+        print("update_symbol_tpsl not supported on this ccxt version")
+        return {"status": "error", "error": "unsupported"}
+
     def get_last_price(self, symbol: str) -> Optional[float]:
         try:
             ticker = self.exchange.fetch_ticker(symbol, self._default_params())
@@ -541,7 +608,22 @@ class BybitUtils:
     def open_position(self, position: Open_Position):
         try:
             # 레버리지 설정 (선택)
+            skip_leverage = False
+            existing_positions: List[Dict[str, Any]] = []
             if position.leverage is not None:
+                try:
+                    existing_positions = (
+                        self.get_positions_by_symbol(position.symbol) or []
+                    )
+                    skip_leverage = len(existing_positions) > 0
+                except Exception:
+                    skip_leverage = False
+
+            if position.leverage is not None and skip_leverage:
+                print(
+                    f"Skipping leverage change for {position.symbol} because an active position already exists."
+                )
+            elif position.leverage is not None:
                 try:
                     self.set_leverage(position.symbol, position.leverage)
                 except Exception as le:

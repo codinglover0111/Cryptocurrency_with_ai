@@ -114,6 +114,9 @@ class AIProvider:
                         "reduce_only": genai.protos.Schema(
                             type=genai.protos.Type.BOOLEAN
                         ),
+                        "update_existing": genai.protos.Schema(
+                            type=genai.protos.Type.BOOLEAN
+                        ),
                         "explain": genai.protos.Schema(type=genai.protos.Type.STRING),
                     },
                 ),
@@ -148,6 +151,7 @@ class AIProvider:
                                 "close_now": {"type": "boolean"},
                                 "close_percent": {"type": "number"},
                                 "reduce_only": {"type": "boolean"},
+                                "update_existing": {"type": "boolean"},
                                 "explain": {"type": "string"},
                             },
                             "required": ["Status"],
@@ -189,7 +193,7 @@ class AIProvider:
             messages=[
                 {
                     "role": "system",
-                    "content": "Return strictly a JSON object with keys: Status, price, sl, tp, buy_now, leverage, explain. Status must be one of [hold, short, long, stop]",
+                    "content": "Return strictly a JSON object with keys: Status, price, sl, tp, buy_now, leverage, explain, update_existing. Status must be one of [hold, short, long, stop]",
                 },
                 {"role": "user", "content": prompt},
             ],

@@ -414,6 +414,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
         f"이미 진입한 포지션의 레버리지는 조절할 수 없습니다.\n"
         f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
+        "기존 포지션의 TP/SL만 조정하려면 update_existing=true 로 표시하고 tp/sl 값만 제시하세요. 이때 leverage는 비워 두세요.\n"
         f"현재 UTC 시간: {now_utc}\n"
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
@@ -452,7 +453,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     prompt += (
         "Choose one of: watch/hold, short, long, or stop.\n"
         "Return your decision as JSON with the following fields: order type (market/limit), "
-        "price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number).\n"
+        "price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number), update_existing (boolean).\n"
         "If you want to immediately take profit or cut loss on an existing position, set close_now=true "
         "and optionally close_percent (1~100).\n"
         "When close_now is true, we will reduceOnly market-close the current position(s) without opening a new one in this cycle.\n"
@@ -557,6 +558,57 @@ def _normalize_bool(val: Any) -> bool:
     return False
 
 
+def _normalize_position_side(value: Any) -> Optional[str]:
+    try:
+        if value is None:
+            return None
+        side = str(value).strip().lower()
+    except Exception:
+        return None
+    if side in {"long", "buy"}:
+        return "long"
+    if side in {"short", "sell"}:
+        return "short"
+    return None
+
+
+def _compute_max_loss_percent(leverage: float) -> float:
+    leverage_factor = max(1.0, float(leverage or 1.0))
+    max_loss_env = os.getenv("MAX_LOSS_PERCENT")
+    if max_loss_env is not None:
+        try:
+            max_loss_pct = float(max_loss_env)
+        except Exception:
+            max_loss_pct = 80.0
+    else:
+        base_max_loss_pct = 4.0
+        max_loss_pct = base_max_loss_pct * leverage_factor
+        cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
+        if cap_env is not None:
+            try:
+                cap_value = float(cap_env)
+            except Exception:
+                cap_value = None
+        else:
+            cap_value = 95.0
+        if cap_value is not None:
+            max_loss_pct = min(max_loss_pct, cap_value)
+
+    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "85")
+    try:
+        leveraged_cap = float(leveraged_cap_env)
+    except Exception:
+        leveraged_cap = 85.0
+    if leveraged_cap > 0:
+        leveraged_raw_cap = (
+            leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
+        )
+        if leveraged_raw_cap > 0:
+            max_loss_pct = min(max_loss_pct, leveraged_raw_cap)
+
+    return max(0.0, max_loss_pct)
+
+
 def _extract_order_type(data: Dict[str, Any]) -> Optional[str]:
     try:
         value = (
@@ -658,6 +710,200 @@ def _handle_close_now(
     except Exception as exc:
         LOGGER.error("close_now failed: %s", exc)
     return True
+
+
+def _handle_update_existing_positions(
+    *,
+    deps: AutomationDependencies,
+    ctx: PromptContext,
+    decision: Dict[str, Any],
+    ai_status: str,
+    use_tp: Optional[float],
+    use_sl: Optional[float],
+) -> None:
+    tp_val = float(use_tp) if isinstance(use_tp, (int, float)) else None
+    sl_val = float(use_sl) if isinstance(use_sl, (int, float)) else None
+
+    if tp_val is None and sl_val is None:
+        LOGGER.info("update_existing 요청이지만 TP/SL 값이 없습니다.")
+        _record_skip(
+            deps,
+            reason="update_missing_tp_sl",
+            decision=decision,
+            meta={"decision": decision},
+            reason_text="update_existing=true 이지만 tp/sl 값이 제공되지 않았습니다.",
+        )
+        return
+
+    positions = list(ctx.current_position or [])
+    if not positions:
+        try:
+            positions = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
+        except Exception:
+            positions = []
+
+    if not positions:
+        LOGGER.info("update_existing 요청이지만 활성 포지션이 없습니다.")
+        _record_skip(
+            deps,
+            reason="update_no_position",
+            decision=decision,
+            meta={"decision": decision},
+            reason_text="update_existing=true 이지만 활성 포지션이 없습니다.",
+        )
+        return
+
+    target_side = _normalize_position_side(ai_status)
+
+    def _safe_float(value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _extract_position_idx(position: Dict[str, Any]) -> Optional[int]:
+        candidates = [
+            position.get("positionIdx"),
+            (position.get("info", {}) or {}).get("positionIdx"),
+            (position.get("info", {}) or {}).get("position_idx"),
+        ]
+        for cand in candidates:
+            try:
+                if cand is None:
+                    continue
+                idx_val = int(float(cand))
+                if idx_val >= 0:
+                    return idx_val
+            except Exception:
+                continue
+        return None
+
+    matching: List[Tuple[Dict[str, Any], Optional[str]]] = []
+    for pos in positions:
+        info = pos.get("info") if isinstance(pos.get("info"), dict) else {}
+        pos_side = _normalize_position_side(pos.get("side"))
+        if pos_side is None:
+            pos_side = _normalize_position_side((info or {}).get("side"))
+        if target_side is not None and pos_side is not None and pos_side != target_side:
+            continue
+        matching.append((pos, pos_side))
+
+    if not matching:
+        matching = [
+            (pos, _normalize_position_side(pos.get("side"))) for pos in positions
+        ]
+
+    updates: List[Dict[str, Any]] = []
+    success = False
+
+    for pos, pos_side in matching:
+        info = pos.get("info") if isinstance(pos.get("info"), dict) else {}
+
+        entry_price: Optional[float] = None
+        for candidate in (
+            pos.get("entryPrice"),
+            info.get("avgPrice"),
+            info.get("entryPrice"),
+        ):
+            entry_price = _safe_float(candidate)
+            if entry_price is not None and entry_price > 0:
+                break
+        if entry_price is None or entry_price <= 0:
+            entry_price = _safe_float(ctx.current_price)
+
+        leverage_val: float = 1.0
+        for candidate in (pos.get("leverage"), info.get("leverage")):
+            cand_val = _safe_float(candidate)
+            if cand_val is not None and cand_val > 0:
+                leverage_val = cand_val
+                break
+
+        applied_sl = sl_val
+        if (
+            sl_val is not None
+            and entry_price is not None
+            and entry_price > 0
+            and pos_side is not None
+        ):
+            try:
+                applied_sl = enforce_max_loss_sl(
+                    entry_price=float(entry_price),
+                    proposed_sl=float(sl_val),
+                    position=pos_side,
+                    max_loss_percent=_compute_max_loss_percent(leverage_val),
+                )
+            except Exception:
+                applied_sl = sl_val
+
+        try:
+            result = deps.bybit.update_symbol_tpsl(
+                deps.contract_symbol,
+                take_profit=tp_val,
+                stop_loss=applied_sl,
+                side=pos_side,
+                position_idx=_extract_position_idx(pos),
+            )
+        except Exception as exc:
+            LOGGER.error("TP/SL 업데이트 실패: %s", exc)
+            result = {"status": "error", "error": str(exc)}
+
+        status = (result or {}).get("status") if isinstance(result, dict) else None
+        success = success or status in {"ok", "noop"}
+
+        meta_result: Any
+        if isinstance(result, dict):
+            try:
+                meta_result = json.loads(json.dumps(result, default=str))
+            except Exception:
+                meta_result = {"status": result.get("status"), "error": str(result)}
+        else:
+            meta_result = str(result)
+
+        updates.append(
+            {
+                "side": pos_side,
+                "position_idx": _extract_position_idx(pos),
+                "entry_price": entry_price,
+                "leverage": leverage_val,
+                "requested_tp": tp_val,
+                "requested_sl": sl_val,
+                "applied_sl": applied_sl,
+                "result": meta_result,
+            }
+        )
+
+    if not success:
+        LOGGER.error("update_existing 요청으로 TP/SL을 수정하지 못했습니다.")
+        _record_skip(
+            deps,
+            reason="update_failed",
+            decision=decision,
+            meta={"decision": decision, "updates": updates},
+            reason_text="TP/SL 업데이트 API 호출에 실패했습니다.",
+        )
+        return
+
+    try:
+        deps.store.record_journal(
+            {
+                "symbol": deps.contract_symbol,
+                "entry_type": "action",
+                "content": "update_tp_sl",
+                "reason": decision.get("explain"),
+                "meta": {
+                    "decision": decision,
+                    "tp": tp_val,
+                    "sl": sl_val,
+                    "updates": updates,
+                },
+            }
+        )
+    except Exception as exc:
+        LOGGER.error("Journal write failed: %s", exc)
+
+    LOGGER.info("기존 포지션 TP/SL 업데이트 완료: %s", updates)
 
 
 def _run_confirm_step(
@@ -838,6 +1084,22 @@ def _execute_trade(
         except Exception:
             use_sl = None
 
+    update_existing = _normalize_bool(
+        decision.get("update_existing")
+        or decision.get("modify_existing")
+        or decision.get("update_tp_sl")
+    )
+    if update_existing:
+        _handle_update_existing_positions(
+            deps=deps,
+            ctx=ctx,
+            decision=decision,
+            ai_status=ai_status,
+            use_tp=use_tp,
+            use_sl=use_sl,
+        )
+        return
+
     (
         order_type,
         entry_price,
@@ -860,41 +1122,7 @@ def _execute_trade(
     if should_skip:
         return
 
-    max_loss_env = os.getenv("MAX_LOSS_PERCENT")
-    leverage_factor = max(1.0, float(leverage or 1.0))
-    if max_loss_env is not None:
-        try:
-            max_loss_pct = float(max_loss_env)
-        except Exception:
-            max_loss_pct = 80.0
-    else:
-        base_max_loss_pct = 4.0
-        max_loss_pct = base_max_loss_pct * leverage_factor
-        cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
-        cap_value: Optional[float]
-        if cap_env is not None:
-            try:
-                cap_value = float(cap_env)
-            except Exception:
-                cap_value = None
-        else:
-            cap_value = 95.0
-        if cap_value is not None:
-            max_loss_pct = min(max_loss_pct, cap_value)
-
-    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "85")
-    try:
-        leveraged_cap = float(leveraged_cap_env)
-    except Exception:
-        leveraged_cap = 85.0
-    if leveraged_cap > 0:
-        leveraged_raw_cap = (
-            leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
-        )
-        if leveraged_raw_cap > 0:
-            max_loss_pct = min(max_loss_pct, leveraged_raw_cap)
-
-    max_loss_pct = max(0.0, max_loss_pct)
+    max_loss_pct = _compute_max_loss_percent(leverage)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
         try:
             use_sl = enforce_max_loss_sl(
