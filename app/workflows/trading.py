@@ -1077,7 +1077,19 @@ def _require_explain(decision: Any) -> str:
 
     if not explain_normalized:
         LOGGER.warning("LLM trade decision missing explain field: %r", decision)
-        raise InvalidDecisionError("LLM trade decision must include a non-empty 'explain' field")
+        raise InvalidDecisionError(
+            "LLM trade decision must include a non-empty 'explain' field"
+        )
+
+    if len(explain_normalized) <= 30:
+        LOGGER.warning(
+            "LLM trade decision explain too short (%s chars): %r",
+            len(explain_normalized),
+            decision,
+        )
+        raise InvalidDecisionError(
+            "LLM trade decision must include an 'explain' field longer than 30 characters"
+        )
 
     decision["explain"] = explain_normalized
     if "Explain" in decision:

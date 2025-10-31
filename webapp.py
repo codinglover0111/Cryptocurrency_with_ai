@@ -1049,6 +1049,16 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                     existing_close_ids.add(str(val))
 
     processed_close_keys: set[tuple[str, str]] = set()
+    if not closed_df.empty:
+        try:
+            for _, closed_row in closed_df.iterrows():
+                sym_val = closed_row.get("symbol")
+                oid_val = closed_row.get("order_id")
+                if not sym_val or oid_val is None:
+                    continue
+                processed_close_keys.add((str(sym_val), str(oid_val)))
+        except Exception:
+            pass
     history_cache: Dict[str, List[Dict[str, Any]]] = {}
     used_history_ids: set[str] = set()
 
@@ -1125,7 +1135,33 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             return candidate
         return None
 
-    for _, row in opened_df.iterrows():
+    try:
+        opened_iter_df = opened_df.copy()
+        tp_series = opened_iter_df.get("tp")
+        sl_series = opened_iter_df.get("sl")
+        opened_iter_df["_tp_missing"] = (
+            tp_series.isna() if tp_series is not None else True
+        )
+        opened_iter_df["_sl_missing"] = (
+            sl_series.isna() if sl_series is not None else True
+        )
+        sort_by: list[str] = ["symbol", "_tp_missing", "_sl_missing"]
+        ascending_flags: list[bool] = [True, True, True]
+        if "ts" in opened_iter_df.columns:
+            sort_by.append("ts")
+            ascending_flags.append(True)
+        opened_iter_df = opened_iter_df.sort_values(
+            by=sort_by,
+            ascending=ascending_flags,
+            kind="mergesort",
+        )
+        opened_iter_df = opened_iter_df.drop(
+            columns=["_tp_missing", "_sl_missing"], errors="ignore"
+        )
+    except Exception:
+        opened_iter_df = opened_df
+
+    for _, row in opened_iter_df.iterrows():
         symbol = row.get("symbol")
         side = (row.get("side") or "").lower()
         if not symbol or side not in ("buy", "sell"):
@@ -1312,17 +1348,18 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             order_id = synthetic_id
             existing_close_ids.add(synthetic_id)
 
-        if order_id is not None:
-            order_id = str(order_id)
-
+        order_id_str: Optional[str] = str(order_id) if order_id is not None else None
+        already_processed = False
         order_key: Optional[tuple[str, str]] = None
-        should_log_for_order = True
-        if symbol and order_id:
-            order_key = (str(symbol), order_id)
+        if symbol and order_id_str:
+            order_key = (str(symbol), order_id_str)
             if order_key in processed_close_keys:
-                should_log_for_order = False
+                already_processed = True
             else:
                 processed_close_keys.add(order_key)
+
+        if already_processed:
+            continue
 
         try:
             store.record_trade(
@@ -1337,7 +1374,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                     "sl": sl_f,
                     "leverage": row.get("leverage"),
                     "status": "closed",
-                    "order_id": order_id,
+                    "order_id": order_id_str,
                     "pnl": float(pnl),
                 }
             )
@@ -1358,8 +1395,8 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             "side": side,
             "pnl": float(pnl),
         }
-        if order_id:
-            meta_payload["order_id"] = order_id
+        if order_id_str:
+            meta_payload["order_id"] = order_id_str
         if open_fee is not None:
             meta_payload["open_fee"] = open_fee
         if close_fee is not None:
@@ -1367,38 +1404,37 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         if funding_fee is not None:
             meta_payload["funding_fee"] = funding_fee
 
-        if should_log_for_order:
-            try:
+        try:
+            store.record_journal(
+                {
+                    "symbol": symbol,
+                    "entry_type": "action",
+                    "content": f"auto_close ({closed_by}) price={close_str} qty={qty_str} realized={pnl_str}",
+                    "reason": f"Position closed by exchange due to {closed_by} or manual without signal.",
+                    "meta": dict(meta_payload),
+                }
+            )
+        except Exception:
+            pass
+
+        try:
+            review = _try_ai_review(
+                symbol, side, entry_price, float(vwap_close), tp_f, sl_f, float(pnl)
+            )
+            if review:
+                review_meta = dict(meta_payload)
+                review_meta["reason"] = closed_by
                 store.record_journal(
                     {
                         "symbol": symbol,
-                        "entry_type": "action",
-                        "content": f"auto_close ({closed_by}) price={close_str} qty={qty_str} realized={pnl_str}",
-                        "reason": f"Position closed by exchange due to {closed_by} or manual without signal.",
-                        "meta": dict(meta_payload),
+                        "entry_type": "review",
+                        "content": review,
+                        "reason": "auto_close_review",
+                        "meta": review_meta,
                     }
                 )
-            except Exception:
-                pass
-
-            try:
-                review = _try_ai_review(
-                    symbol, side, entry_price, float(vwap_close), tp_f, sl_f, float(pnl)
-                )
-                if review:
-                    review_meta = dict(meta_payload)
-                    review_meta["reason"] = closed_by
-                    store.record_journal(
-                        {
-                            "symbol": symbol,
-                            "entry_type": "review",
-                            "content": review,
-                            "reason": "auto_close_review",
-                            "meta": review_meta,
-                        }
-                    )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
 
 def _try_ai_review(

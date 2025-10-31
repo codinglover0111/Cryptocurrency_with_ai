@@ -110,6 +110,30 @@ class TradeStore:
         except Exception as e:
             print(f"Error writing database: {e}")
 
+    @staticmethod
+    def _drop_duplicate_orders(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or getattr(df, "empty", True):
+            return df
+        if "order_id" not in df.columns or "symbol" not in df.columns:
+            return df
+        try:
+            df_sorted = df.sort_values("ts") if "ts" in df.columns else df.copy()
+        except Exception:
+            df_sorted = df.copy()
+        mask = df_sorted["order_id"].notna()
+        if not mask.any():
+            return df_sorted
+        try:
+            duplicates = df_sorted.loc[mask].duplicated(
+                subset=["symbol", "order_id"], keep="last"
+            )
+        except Exception:
+            return df_sorted
+        if not duplicates.any():
+            return df_sorted
+        drop_index = df_sorted.loc[mask].loc[duplicates].index
+        return df_sorted.drop(index=drop_index)
+
     def load_trades(self) -> pd.DataFrame:
         # DB에서만 읽기
         if self._engine is None:
@@ -159,6 +183,7 @@ class TradeStore:
                 "avg_pnl": 0.0,
             }
         realized_df = df[df["pnl"].notna()]
+        realized_df = self._drop_duplicate_orders(realized_df)
         trades = len(realized_df)
         realized_pnl = float(realized_df["pnl"].sum()) if trades > 0 else 0.0
         wins = int((realized_df["pnl"] > 0).sum()) if trades > 0 else 0
@@ -210,6 +235,7 @@ class TradeStore:
 
         # 필터: 실현 손익이 있는 행만
         df = df[df["pnl"].notna()].copy()
+        df = self._drop_duplicate_orders(df)
 
         # 입력 경계값(since/until)을 안전하게 UTC로 정규화
         def _ensure_utc(ts_val):
