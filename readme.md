@@ -11,8 +11,9 @@ app/
   services/      # 데이터 수집·저널 등 도메인 서비스
   workflows/     # 트레이딩 자동화 파이프라인
 main.py          # 스케줄러 진입점
-webapp.py        # FastAPI 기반 웹 UI
+webapp.py        # FastAPI 기반 백엔드 API 서버
 utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
+apps/web/        # Next.js 15 (React 19 RC) 대시보드 프런트엔드
 ```
 
 - `app/workflows/trading.py`는 한 사이클의 자동매매 흐름을 담당합니다.
@@ -45,7 +46,7 @@ utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
    python3 main.py
    ```
 
-4. Docker Compose로 앱 + MySQL + 웹 UI를 묶어 실행할 수 있습니다.
+4. Docker Compose로 앱 + MySQL을 묶어 실행할 수 있습니다.
 
    ```bash
    docker compose up -d --build
@@ -80,12 +81,12 @@ SQLITE_PATH=data/trading.sqlite
   2. `run_loss_review`로 최근 손실 포지션 리뷰 생성
 - 각 사이클의 디버그 정보와 예외는 `trading.log`에 기록되며, FastAPI UI에서도 실시간 모니터링이 가능합니다.
 
-## 웹 UI (FastAPI)
+## 웹 대시보드 (Next.js)
 
-- 루트(`GET /`)와 각종 JSON API(`/health`, `/status`, `/leverage`, `/stats`, `/stats_range`, `/close_all`, `/symbols`)를 제공합니다.
-- 정적 파일은 `static/`, 템플릿은 `templates/`에 위치합니다.
-- `parse_trading_symbols()`를 사용해 서버와 자동매매가 동일한 심볼 구성을 공유합니다.
-- UI에서는 심볼 정보·계정 개요·통계·저널 기록을 확인할 수 있습니다.
+- `apps/web`은 React 19 RC + Next.js 15 canary 채널을 기반으로 생성된 앱 라우터 프로젝트입니다.
+- 서버 액션을 통해 FastAPI 백엔드(`/api/status`, `/api/stats`, `/api/journals` 등)를 조회하며, shadcn/ui + Tailwind로 카드형 대시보드를 제공합니다.
+- 로컬 개발 시에는 `npm install --prefix apps/web` 후 `npm run dev --prefix apps/web` 명령으로 실행할 수 있습니다.
+- Vercel 배포 시 필요한 환경변수는 `docs/vercel-env.md`를 참고하세요.
 
 ## 참고 문서
 
