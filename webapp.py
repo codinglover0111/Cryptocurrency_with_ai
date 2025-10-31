@@ -989,11 +989,159 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
     except Exception:
         closed_df = df[df["status"].astype(str) == "closed"].copy()
 
+    def _ts_to_ms(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                value = value.astimezone(timezone.utc)
+            return int(value.timestamp() * 1000)
+        if hasattr(value, "to_pydatetime"):
+            try:
+                return _ts_to_ms(value.to_pydatetime())
+            except Exception:
+                pass
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value)
+                return _ts_to_ms(parsed)
+            except Exception:
+                return None
+        try:
+            return int(float(value))
+        except Exception:
+            return None
+
+    def _ms_to_naive_utc(ms: Optional[int]) -> Optional[datetime]:
+        if ms is None:
+            return None
+        try:
+            return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).replace(
+                tzinfo=None
+            )
+        except Exception:
+            return None
+
+    def _infer_settle_coin(sym: str) -> Optional[str]:
+        if not sym:
+            return None
+        if ":" in sym:
+            return sym.split(":")[-1]
+        return None
+
+    def _infer_category(sym: str) -> str:
+        settle = _infer_settle_coin(sym)
+        if settle and settle.upper() in {"USDT", "USDC"}:
+            return "linear"
+        return "inverse"
+
+    existing_close_ids: set[str] = set()
+    if not closed_df.empty:
+        try:
+            existing_close_ids.update(
+                str(x) for x in closed_df.get("order_id").dropna().astype(str).tolist()
+            )
+        except Exception:
+            for val in closed_df.get("order_id", []):
+                if val:
+                    existing_close_ids.add(str(val))
+
+    history_cache: Dict[str, List[Dict[str, Any]]] = {}
+    used_history_ids: set[str] = set()
+
+    symbol_since_map: Dict[str, Optional[int]] = {}
+    for _, opened_row in opened_df.iterrows():
+        sym_val = opened_row.get("symbol")
+        if not sym_val:
+            continue
+        ms_val = _ts_to_ms(opened_row.get("ts"))
+        if sym_val not in symbol_since_map or (
+            ms_val is not None
+            and (
+                symbol_since_map[sym_val] is None or ms_val < symbol_since_map[sym_val]
+            )
+        ):
+            symbol_since_map[sym_val] = ms_val
+
+    def _fetch_history(sym: str) -> List[Dict[str, Any]]:
+        if sym in history_cache:
+            return history_cache[sym]
+        since_ms = symbol_since_map.get(sym)
+        if since_ms is not None:
+            since_ms = max(0, since_ms - 60 * 60 * 1000)
+        settle_coin = _infer_settle_coin(sym)
+        category = _infer_category(sym)
+        try:
+            history = (
+                bybit.get_position_history(
+                    sym,
+                    since_ms=since_ms,
+                    limit=200,
+                    category=category,
+                    settle_coin=settle_coin,
+                    max_pages=5,
+                )
+                or []
+            )
+        except Exception:
+            history = []
+        history_cache[sym] = history
+        return history
+
+    def _match_history_entry(
+        sym: str, side_val: str, amount_val: float, opened_ms: Optional[int]
+    ) -> Optional[Dict[str, Any]]:
+        history_items = _fetch_history(sym)
+        if not history_items:
+            return None
+        candidates = sorted(
+            history_items,
+            key=lambda item: item.get("updated_time") or item.get("created_time") or 0,
+        )
+        tolerance = max(1e-8, abs(amount_val) * 0.05) if amount_val else 1e-8
+        for candidate in candidates:
+            unique_id = str(
+                candidate.get("order_id")
+                or candidate.get("unique_id")
+                or f"{candidate.get('symbol_id') or sym}:{candidate.get('updated_time') or candidate.get('created_time')}"
+            )
+            if unique_id and (
+                unique_id in existing_close_ids or unique_id in used_history_ids
+            ):
+                continue
+            entry_side = (candidate.get("entry_side") or "").lower()
+            if entry_side and side_val and entry_side != side_val:
+                continue
+            updated_ms = candidate.get("updated_time") or candidate.get("created_time")
+            if updated_ms and opened_ms and updated_ms + 1000 < opened_ms:
+                continue
+            closed_size = candidate.get("closed_size")
+            if closed_size is not None and amount_val > 0:
+                if abs(closed_size - amount_val) > tolerance:
+                    continue
+            return candidate
+        return None
+
     for _, row in opened_df.iterrows():
         symbol = row.get("symbol")
         side = (row.get("side") or "").lower()
         if not symbol or side not in ("buy", "sell"):
             continue
+
+        try:
+            entry_price = float(row.get("price") or 0)
+            amount = float(row.get("quantity") or 0)
+            tp = row.get("tp")
+            sl = row.get("sl")
+            tp_f = float(tp) if tp is not None and tp == tp else None
+            sl_f = float(sl) if sl is not None and sl == sl else None
+        except Exception:
+            continue
+        if amount <= 0 or entry_price <= 0:
+            continue
+
         ts_open = row.get("ts")
         try:
             has_closed = False
@@ -1010,7 +1158,6 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         except Exception:
             pass
 
-        # 아직 open인지 확인
         try:
             open_positions = bybit.get_positions_by_symbol(symbol) or []
         except Exception:
@@ -1018,50 +1165,77 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         if open_positions:
             continue
 
-        # 거래/주문 히스토리 기반으로 청산가(VWAP) 산출
         vwap_close = None
         order_id = None
         closed_by = CLOSED_BY_UNKNOWN
+        realized_pnl = None
+        open_fee = None
+        close_fee = None
+        funding_fee = None
+        close_ts_dt: Optional[datetime] = None
+
+        opened_ms = _ts_to_ms(ts_open)
+        candidate = _match_history_entry(symbol, side, amount, opened_ms)
+        if candidate:
+            unique_id = candidate.get("order_id") or candidate.get("unique_id")
+            if unique_id:
+                unique_str = str(unique_id)
+                used_history_ids.add(unique_str)
+                existing_close_ids.add(unique_str)
+                order_id = unique_str
+            vwap_close = candidate.get("avg_exit_price") or candidate.get(
+                "avg_entry_price"
+            )
+            realized_pnl = candidate.get("closed_pnl")
+            open_fee = candidate.get("open_fee")
+            close_fee = candidate.get("close_fee")
+            funding_fee = candidate.get("funding_fee")
+            close_ts_dt = _ms_to_naive_utc(
+                candidate.get("updated_time") or candidate.get("created_time")
+            )
+            exec_type = (candidate.get("exec_type") or "").lower()
+            if closed_by == CLOSED_BY_UNKNOWN and exec_type:
+                if "take" in exec_type and "profit" in exec_type:
+                    closed_by = CLOSED_BY_TARGET_PROFIT
+                elif "stop" in exec_type and "loss" in exec_type:
+                    closed_by = CLOSED_BY_STOP_LOSS
+
         reduce_side = "sell" if side == "buy" else "buy"
-        since_ms = None
-        try:
-            if hasattr(ts_open, "timestamp"):
-                since_ms = int(ts_open.timestamp() * 1000)
-        except Exception:
-            pass
-        try:
-            trades = bybit.get_my_trades(symbol, since_ms, 1000) or []
-            trades = sorted(trades, key=lambda t: t.get("timestamp") or 0)
-            total_value = 0.0
-            total_amount = 0.0
-            target_qty = float(row.get("quantity") or 0)
-            for t in trades:
-                try:
-                    if (t.get("side") or "").lower() != reduce_side:
+        since_ms = opened_ms
+
+        if vwap_close is None:
+            try:
+                trades = bybit.get_my_trades(symbol, since_ms, 1000) or []
+                trades = sorted(trades, key=lambda t: t.get("timestamp") or 0)
+                total_value = 0.0
+                total_amount = 0.0
+                for t in trades:
+                    try:
+                        if (t.get("side") or "").lower() != reduce_side:
+                            continue
+                        price = t.get("price") or (t.get("info", {}) or {}).get("price")
+                        amt = t.get("amount")
+                        if price is None or amt is None:
+                            continue
+                        price_f = float(price)
+                        amt_f = float(amt)
+                        if price_f <= 0 or amt_f <= 0:
+                            continue
+                        total_value += price_f * amt_f
+                        total_amount += amt_f
+                        order_id = (
+                            order_id
+                            or t.get("order")
+                            or (t.get("info", {}) or {}).get("orderId")
+                        )
+                        if amount > 0 and total_amount >= amount:
+                            break
+                    except Exception:
                         continue
-                    price = t.get("price") or (t.get("info", {}) or {}).get("price")
-                    amt = t.get("amount")
-                    if price is None or amt is None:
-                        continue
-                    price_f = float(price)
-                    amt_f = float(amt)
-                    if price_f <= 0 or amt_f <= 0:
-                        continue
-                    total_value += price_f * amt_f
-                    total_amount += amt_f
-                    order_id = (
-                        order_id
-                        or t.get("order")
-                        or (t.get("info", {}) or {}).get("orderId")
-                    )
-                    if target_qty > 0 and total_amount >= target_qty:
-                        break
-                except Exception:
-                    continue
-            if total_amount > 0:
-                vwap_close = total_value / total_amount
-        except Exception:
-            pass
+                if total_amount > 0:
+                    vwap_close = total_value / total_amount
+            except Exception:
+                pass
 
         if vwap_close is None:
             try:
@@ -1078,7 +1252,8 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                     if avg is None:
                         continue
                     vwap_close = float(avg)
-                    order_id = order_id or o.get("id")
+                    if order_id is None:
+                        order_id = o.get("id")
                     info_str = (str(o.get("type")) + " " + str(o.get("info"))).lower()
                     if "take" in info_str and "profit" in info_str:
                         closed_by = CLOSED_BY_TARGET_PROFIT
@@ -1098,26 +1273,16 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         if vwap_close is None:
             continue
 
-        try:
-            entry_price = float(row.get("price") or 0)
-            amount = float(row.get("quantity") or 0)
-            tp = row.get("tp")
-            sl = row.get("sl")
-            tp_f = float(tp) if tp is not None and tp == tp else None
-            sl_f = float(sl) if sl is not None and sl == sl else None
-        except Exception:
-            continue
-        if amount <= 0 or entry_price <= 0:
-            continue
-
-        if side == "buy":
-            pnl = (vwap_close - entry_price) * amount
-        else:
-            pnl = (entry_price - vwap_close) * amount
+        computed_pnl = (
+            (vwap_close - entry_price) * amount
+            if side == "buy"
+            else (entry_price - vwap_close) * amount
+        )
+        pnl = realized_pnl if realized_pnl is not None else computed_pnl
 
         if closed_by == CLOSED_BY_UNKNOWN:
-            is_profit = pnl > PNL_EPSILON
-            is_loss = pnl < -PNL_EPSILON
+            is_profit = computed_pnl > PNL_EPSILON
+            is_loss = computed_pnl < -PNL_EPSILON
             close_to_tp = False
             close_to_sl = False
 
@@ -1138,11 +1303,18 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             elif is_loss and close_to_sl:
                 closed_by = CLOSED_BY_STOP_LOSS
 
-        # closed 레코드 기록
+        if close_ts_dt is None:
+            close_ts_dt = datetime.utcnow()
+
+        if order_id is None:
+            synthetic_id = f"{symbol}:{int(_ts_to_ms(close_ts_dt) or 0)}"
+            order_id = synthetic_id
+            existing_close_ids.add(synthetic_id)
+
         try:
             store.record_trade(
                 {
-                    "ts": datetime.utcnow(),
+                    "ts": close_ts_dt,
                     "symbol": symbol,
                     "side": side,
                     "type": row.get("type") or "market",
@@ -1159,46 +1331,54 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         except Exception:
             pass
 
-        # 저널: action
+        close_str = f"{vwap_close:.6f}" if vwap_close is not None else str(vwap_close)
+        qty_str = f"{amount:.6f}"
+        pnl_str = f"{pnl:.6f}"
+
+        meta_payload = {
+            "auto_close": True,
+            "closed_by": closed_by,
+            "entry_price": entry_price,
+            "close_price": vwap_close,
+            "tp": tp_f,
+            "sl": sl_f,
+            "side": side,
+            "pnl": float(pnl),
+        }
+        if open_fee is not None:
+            meta_payload["open_fee"] = open_fee
+        if close_fee is not None:
+            meta_payload["close_fee"] = close_fee
+        if funding_fee is not None:
+            meta_payload["funding_fee"] = funding_fee
+
         try:
             store.record_journal(
                 {
                     "symbol": symbol,
                     "entry_type": "action",
-                    "content": f"auto_close ({closed_by}) price={vwap_close} qty={amount}",
+                    "content": f"auto_close ({closed_by}) price={close_str} qty={qty_str} realized={pnl_str}",
                     "reason": f"Position closed by exchange due to {closed_by} or manual without signal.",
-                    "meta": {
-                        "auto_close": True,
-                        "closed_by": closed_by,
-                        "entry_price": entry_price,
-                        "close_price": vwap_close,
-                        "tp": tp_f,
-                        "sl": sl_f,
-                        "side": side,
-                        "pnl": float(pnl),
-                    },
+                    "meta": dict(meta_payload),
                 }
             )
         except Exception:
             pass
 
-        # 저널: AI 리뷰
         try:
             review = _try_ai_review(
                 symbol, side, entry_price, float(vwap_close), tp_f, sl_f, float(pnl)
             )
             if review:
+                review_meta = dict(meta_payload)
+                review_meta["reason"] = closed_by
                 store.record_journal(
                     {
                         "symbol": symbol,
                         "entry_type": "review",
                         "content": review,
                         "reason": "auto_close_review",
-                        "meta": {
-                            "auto_close": True,
-                            "pnl": float(pnl),
-                            "closed_by": closed_by,
-                        },
+                        "meta": review_meta,
                     }
                 )
         except Exception:
