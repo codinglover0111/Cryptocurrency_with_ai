@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
-from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
 from utils.risk import calculate_position_size, enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
@@ -60,6 +59,9 @@ class PromptContext:
     csv_4h: str
     csv_1h: str
     csv_15m: str
+    rsi_15m: float
+    rsi_1h: float
+    rsi_4h: float
     current_position: List[Dict[str, Any]]
     pos_side: Optional[str]
     current_positions_lines: List[str]
@@ -67,7 +69,6 @@ class PromptContext:
     recent_reports_text: str
     reviews_text: str
     since_open_text: str
-    chart_images: Dict[str, str] = field(default_factory=dict)
 
 
 def _compute_tp_sl_percentages(
@@ -293,28 +294,22 @@ def _summarize_positions(
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     price_helper = bybit_utils(deps.spot_symbol, "4h", 100)
     df_4h = price_helper.get_ohlcv()
+    price_helper.get_rsi()
+    rsi_4h = float(df_4h["rsi"].iloc[-1]) if "rsi" in df_4h.columns else 0.0
     csv_4h = df_4h.to_csv()
+    
     price_helper.set_timeframe("1h")
     df_1h = price_helper.get_ohlcv()
+    price_helper.get_rsi()
+    rsi_1h = float(df_1h["rsi"].iloc[-1]) if "rsi" in df_1h.columns else 0.0
     csv_1h = df_1h.to_csv()
+    
     price_helper.set_timeframe("15m")
     df_15m = price_helper.get_ohlcv()
+    price_helper.get_rsi()
+    rsi_15m = float(df_15m["rsi"].iloc[-1]) if "rsi" in df_15m.columns else 0.0
     csv_15m = df_15m.to_csv()
     current_price = df_15m["close"].iloc[-1]
-
-    chart_images: Dict[str, str] = {}
-    if deps.ai_provider.provider == "gemini":
-        for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
-            try:
-                image_b64 = dataframe_to_candlestick_base64(
-                    frame_df.tail(120),
-                    deps.spot_symbol,
-                    timeframe,
-                )
-                if image_b64:
-                    chart_images[timeframe] = image_b64
-            except Exception as exc:
-                LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
 
     current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
     position_lines, pos_side = _summarize_positions(
@@ -401,6 +396,9 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         csv_4h=csv_4h,
         csv_1h=csv_1h,
         csv_15m=csv_15m,
+        rsi_15m=rsi_15m,
+        rsi_1h=rsi_1h,
+        rsi_4h=rsi_4h,
         current_position=current_position,
         pos_side=pos_side,
         current_positions_lines=position_lines,
@@ -408,7 +406,6 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         recent_reports_text=recent_reports_text,
         reviews_text=reviews_text,
         since_open_text=since_open_text,
-        chart_images=chart_images,
     )
 
 
@@ -432,6 +429,15 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         "[CSV_15M]\n"
         f"{ctx.csv_15m}\n"
         "[/CSV_15M]\n"
+        "[RSI_15M]\n"
+        f"{ctx.rsi_15m:.2f}\n"
+        "[/RSI_15M]\n"
+        "[RSI_1H]\n"
+        f"{ctx.rsi_1h:.2f}\n"
+        "[/RSI_1H]\n"
+        "[RSI_4H]\n"
+        f"{ctx.rsi_4h:.2f}\n"
+        "[/RSI_4H]\n"
         "[CURRENT_POSITIONS]\n"
         + (
             "\n".join(ctx.current_positions_lines)
@@ -472,35 +478,13 @@ def _request_trade_decision(
     prompt: str,
     ctx: PromptContext,
 ) -> Dict[str, Any]:
-    images_payload: Optional[List[Dict[str, Any]]] = None
-    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
-        images_payload = []
-        for timeframe in ("4h", "1h", "15m"):
-            chart_b64 = ctx.chart_images.get(timeframe)
-            if not chart_b64:
-                continue
-            images_payload.append(
-                {
-                    "b64": chart_b64,
-                    "mime": "image/png",
-                    "metadata": {
-                        "symbol": deps.spot_symbol,
-                        "contract_symbol": deps.contract_symbol,
-                        "timeframe": timeframe,
-                        "type": "candlestick",
-                    },
-                }
-            )
-        if not images_payload:
-            images_payload = None
-
     try:
-        parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
+        parsed = deps.ai_provider.decide_json(prompt, images=None)
         LOGGER.info(
             json.dumps(
                 {
                     "event": "llm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                    "provider": "openai",
                     "parsed": parsed,
                 },
                 ensure_ascii=False,
@@ -508,13 +492,13 @@ def _request_trade_decision(
         )
         return parsed
     except Exception:
-        response = deps.ai_provider.decide(prompt, images=images_payload)
+        response = deps.ai_provider.decide(prompt, images=None)
         try:
             LOGGER.info(
                 json.dumps(
                     {
                         "event": "llm_response_raw",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                        "provider": "openai",
                         "response": response,
                     },
                     ensure_ascii=False,
@@ -530,7 +514,7 @@ def _request_trade_decision(
                 json.dumps(
                     {
                         "event": "llm_response_parsed",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                        "provider": "openai",
                         "parsed": value,
                     },
                     ensure_ascii=False,
@@ -967,7 +951,7 @@ def _run_confirm_step(
             json.dumps(
                 {
                     "event": "llm_confirm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                    "provider": "openai",
                     "parsed": confirm,
                 },
                 ensure_ascii=False,
