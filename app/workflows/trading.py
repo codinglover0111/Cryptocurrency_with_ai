@@ -707,6 +707,7 @@ def _run_confirm_step(
             f"레버리지: {float(leverage)}x\n"
             "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
             "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
+            "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
         )
         confirm = deps.ai_provider.confirm_trade_json(confirm_prompt)
@@ -722,11 +723,15 @@ def _run_confirm_step(
             )
         )
         if not bool(confirm.get("confirm")):
+            skip_reason = str(confirm.get("explain") or "").strip()
+            if not skip_reason:
+                skip_reason = "확인 단계에서 거부 사유가 제공되지 않았습니다."
             _record_skip(
                 deps,
                 reason="skip_after_confirm",
                 decision=decision,
                 meta={"first": decision, "confirm": confirm},
+                reason_text=skip_reason,
             )
             return order_type, entry_price, use_tp, use_sl, leverage, confirm_meta, True
 
@@ -1290,6 +1295,7 @@ def _record_skip(
     reason: str,
     decision: Dict[str, Any],
     meta: Optional[Dict[str, Any]] = None,
+    reason_text: Optional[str] = None,
 ) -> None:
     try:
         deps.store.record_journal(
@@ -1300,7 +1306,7 @@ def _record_skip(
                     {"status": "skip", "reason": reason},
                     ensure_ascii=False,
                 ),
-                "reason": decision.get("explain"),
+                "reason": reason_text or decision.get("explain"),
                 "meta": (
                     {"decision": decision, "details": meta}
                     if meta is not None
