@@ -21,13 +21,20 @@ utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
 - `app/services/journal.py`는 거래 리뷰와 저널 포맷팅 등을 담당합니다.
 - `main.py`는 로깅 설정과 작업 스케줄링만을 책임지며, 나머지 로직은 `app` 패키지로 이동했습니다.
 
-## 실행 방법
+## 실행 방법 (uv 기반)
 
-1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `env.example` 또는 아래 환경변수 설명 참고)
-2. Docker 환경에서 실행할 경우:
+1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `env.sample` 또는 아래 환경변수 설명 참고)
+2. 로컬 개발 환경에서는 [uv](https://github.com/astral-sh/uv)가 설치되어 있다고 가정합니다.
+   - (최초 실행 시) 잠금 파일을 최신 상태로 맞추려면 `uv lock`
+   - 의존성 동기화: `uv sync`
+   - 자동매매 실행: `uv run main.py`
+   - FastAPI 웹 UI 실행: `uv run uvicorn webapp:app --host 0.0.0.0 --port 8000`
+   - `Makefile` 단축 명령도 제공됩니다: `make sync`, `make run`, `make web`
+3. Docker 환경에서 실행할 경우:
 
    ```bash
    touch trading.log
+   docker build -t trading-bot .
    docker run -d \
      --name trading-bot \
      --restart unless-stopped \
@@ -36,20 +43,13 @@ utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
      trading-bot
    ```
 
-3. 로컬에서 직접 실행할 경우:
-
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   python3 main.py
-   ```
-
 4. Docker Compose로 앱 + MySQL + 웹 UI를 묶어 실행할 수 있습니다.
 
    ```bash
    docker compose up -d --build
    ```
+
+5. Railway / Supabase 와 같이 커맨드 기반으로 프로세스를 기동해야 하는 환경에서는 `scripts/railway-start.sh` 또는 `scripts/supabase-start.sh`를 사용하세요. 두 스크립트 모두 uv로 의존성을 동기화한 후 `uv run main.py`를 실행합니다.
 
 ## 주요 환경변수
 
@@ -94,5 +94,5 @@ SQLITE_PATH=data/trading.sqlite
 
 ## 다음 단계 제안
 
-1. 스테이징 환경에서 `.env`를 구성한 뒤, `python3 main.py`로 한 사이클 이상 실행해 로그와 DB 기록을 확인하세요.
+1. 스테이징 환경에서 `.env`를 구성한 뒤, `uv run main.py`로 한 사이클 이상 실행해 로그와 DB 기록을 확인하세요.
 2. `docs/architecture.md`를 참고하여 추가 모듈 분리 또는 테스트 코드 도입 계획을 수립하세요.
