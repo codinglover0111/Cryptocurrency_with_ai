@@ -1,38 +1,51 @@
 services:
-  app:
-    build: .
-    user: "1000:1000"
-    container_name: crypto_bot
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    container_name: crypto_backend
     env_file:
       - .env
     environment:
-      SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
+      SQLITE_PATH: /app/data/trading.sqlite
       FORCE_SQLITE: "1"
     volumes:
       - ./.env:/app/.env
-      - ./trading.log:/app/trading.log
       - ./data:/app/data
-    restart: unless-stopped
-    command: ["python", "main.py"]
-
-  web:
-    build: .
-    user: "1000:1000"
-    container_name: crypto_web
-    depends_on:
-      - app
-    env_file:
-      - .env
-    environment:
-      TESTNET: ${TESTNET:-1}
-      SQLITE_PATH: /app/data/trading.sqlite
-      APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
+      - ./trading.log:/app/trading.log
     ports:
       - "8000:8000"
-    command: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.scheduler
+    container_name: crypto_scheduler
+    env_file:
+      - .env
+    environment:
+      APP_BASE_DIR: /app
+      SQLITE_PATH: /app/data/trading.sqlite
+      FORCE_SQLITE: "1"
     volumes:
       - ./.env:/app/.env
       - ./data:/app/data
+      - ./trading.log:/app/trading.log
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    container_name: crypto_frontend
+    depends_on:
+      - backend
+    environment:
+      NEXT_BUILD_DIR: /srv/app/web
+    volumes:
+      - ./web/out:/srv/app/web:ro
+    ports:
+      - "4173:4173"
+    restart: unless-stopped

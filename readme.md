@@ -24,32 +24,27 @@ utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
 ## 실행 방법
 
 1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `env.example` 또는 아래 환경변수 설명 참고)
-2. Docker 환경에서 실행할 경우:
+2. `uv` 기반 로컬 개발 워크플로우:
 
    ```bash
-   touch trading.log
-   docker run -d \
-     --name trading-bot \
-     --restart unless-stopped \
-     -v "$(pwd)/.env:/app/.env" \
-     -v "$(pwd)/trading.log:/app/trading.log" \
-     trading-bot
+   make install          # uv pip install --python python3.11 -r requirements.txt
+   make backend          # uv run --python python3.11 uvicorn webapp:app --reload
+   make scheduler        # uv run --python python3.11 python -m main
    ```
 
-3. 로컬에서 직접 실행할 경우:
+   - `Makefile`의 `UV`/`PYTHON` 변수를 원하는 버전으로 덮어쓸 수 있습니다.
+   - Next.js 프론트를 `next export`로 빌드했다면 `web/out`에 결과물을 두고 `make frontend`로 정적 번들을 서빙할 수 있습니다.
 
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   python3 main.py
-   ```
-
-4. Docker Compose로 앱 + MySQL + 웹 UI를 묶어 실행할 수 있습니다.
+3. Docker Compose(uv 베이스 이미지)로 백엔드/스케줄러/프론트를 묶을 수 있습니다.
 
    ```bash
    docker compose up -d --build
    ```
+
+   - `deploy/Dockerfile.backend`, `deploy/Dockerfile.scheduler`, `deploy/Dockerfile.web`는 모두 `ghcr.io/astral-sh/uv` 이미지를 사용합니다.
+   - 프론트 서비스는 `web/out` 디렉터리에 export된 정적 산출물이 있을 때만 기동됩니다.
+
+4. 단일 컨테이너가 필요하다면 `deploy/Dockerfile.backend`를 단독으로 빌드해 FastAPI UI를 배포할 수 있습니다.
 
 ## 주요 환경변수
 
@@ -71,6 +66,13 @@ OPENAI_MODEL=...
 # 데이터 저장소 (MySQL 또는 SQLite 폴백)
 MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot
 SQLITE_PATH=data/trading.sqlite
+
+# Supabase (선택 구성)
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_JWT_SECRET=...
+SUPABASE_PROJECT_ID=<project-id>
 ```
 
 ## 스케줄러 동작
@@ -90,6 +92,7 @@ SQLITE_PATH=data/trading.sqlite
 ## 참고 문서
 
 - `docs/architecture.md`: 최신 모듈 구조와 데이터 흐름을 정리한 문서입니다.
+- `docs/deployment.md`: uv 기반 Docker/배포 파이프라인과 Supabase 초기화 절차를 정리했습니다.
 - `utils/` 디렉터리의 모듈은 기존 레거시 기능을 보존하기 위해 유지되며, 새로운 서비스 계층에서 랩핑하여 사용합니다.
 
 ## 다음 단계 제안

@@ -1,0 +1,37 @@
+[railway]
+schemaVersion = 2
+
+[variables]
+APP_BASE_DIR = "/app"
+FORCE_SQLITE = "0"
+SQLITE_PATH = ""
+MYSQL_URL = ""
+SUPABASE_URL = ""
+SUPABASE_ANON_KEY = ""
+SUPABASE_SERVICE_ROLE_KEY = ""
+SUPABASE_JWT_SECRET = ""
+SUPABASE_PROJECT_ID = ""
+TESTNET = "1"
+TRADING_SYMBOLS = "BTCUSDT,ETHUSDT"
+
+[[services]]
+name = "backend"
+start = "uv run uvicorn webapp:app --host 0.0.0.0 --port $PORT"
+
+[services.build]
+context = "."
+dockerfile = "deploy/Dockerfile.backend"
+
+[services.deploy]
+restartPolicyType = "ON_FAILURE"
+
+[[services]]
+name = "scheduler"
+start = "uv run python -m main"
+
+[services.build]
+context = "."
+dockerfile = "deploy/Dockerfile.scheduler"
+
+[services.deploy]
+restartPolicyType = "ON_FAILURE"
