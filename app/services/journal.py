@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -239,11 +240,34 @@ class JournalService:
 
                 prompt += "[CSV_1m_BETWEEN]\n" + (csv_1m or "(no data)")
 
-                try:
-                    review_text = ai_provider.decide(prompt)
-                except Exception as exc:
-                    LOGGER.error("Trade review LLM failed: %s", exc)
-                    review_text = None
+                delays = [5, 10, 60]
+                max_attempts = len(delays) + 1
+                review_text = None
+
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        review_text = ai_provider.decide(prompt)
+                        break
+                    except Exception as exc:
+                        LOGGER.error(
+                            "Trade review LLM failed (attempt %s/%s): %s",
+                            attempt,
+                            max_attempts,
+                            exc,
+                        )
+                        if attempt == max_attempts:
+                            break
+                        wait_seconds = delays[attempt - 1]
+                        LOGGER.info(
+                            "Trade review LLM 재시도 %s/%s: %s초 후 재시도",
+                            attempt + 1,
+                            max_attempts,
+                            wait_seconds,
+                        )
+                        time.sleep(wait_seconds)
+
+                if review_text is None:
+                    review_text = "저널 조회에 오류"
 
                 try:
                     self.store.record_journal(
