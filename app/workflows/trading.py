@@ -278,7 +278,7 @@ def _summarize_positions(
             lines.append(
                 f"side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
                 f"tp={tp_fmt}, sl={sl_fmt}, lev={lev_fmt}, unreal_PNL={unreal_fmt} "
-                f"(ROI_leverage={pct_fmt}%, ROI_raw={pct_raw_fmt}%)"
+                f"(ROI_leverage={pct_fmt}%, ROI_baseline={pct_raw_fmt}%)"
             )
         except Exception:
             continue
