@@ -2,6 +2,12 @@
 
 `Cryptocurrency_with_ai`는 5분 주기로 데이터를 수집하고 LLM에게 의사결정을 맡기는 자동매매 파이프라인입니다. 이 문서는 핵심 컴포넌트, 스케줄링 흐름, 프롬프트 구조, 손실 피드백, 차트 데이터 입력 경로를 간단히 정리합니다.
 
+## Runtime Environment
+
+- 프로젝트는 Python 3.11과 uv 기반으로 동작합니다.
+- 로컬 개발 및 운영 환경 모두 `uv sync`로 의존성을 준비한 뒤 `uv run main.py`를 실행하는 흐름을 권장합니다.
+- FastAPI 웹 UI는 `uv run uvicorn webapp:app --host 0.0.0.0 --port 8000`으로 기동할 수 있으며, 동일한 명령이 Docker/배포 스크립트에서도 사용됩니다.
+
 ## Runtime Flow
 
 1. `main.py` loads environment variables, configures logging, 그리고 스케줄러를 시작합니다.

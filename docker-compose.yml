@@ -14,7 +14,7 @@ services:
       - ./trading.log:/app/trading.log
       - ./data:/app/data
     restart: unless-stopped
-    command: ["python", "main.py"]
+    command: ["uv", "run", "main.py"]
 
   web:
     build: .
@@ -31,7 +31,7 @@ services:
       FORCE_SQLITE: "1"
     ports:
       - "8000:8000"
-    command: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uv", "run", "uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
     volumes:
       - ./.env:/app/.env
