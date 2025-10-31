@@ -236,17 +236,27 @@ def _summarize_positions(
                 except Exception:
                     directional_pct = None
 
+            pct_baseline: Optional[float] = None
             pct_leverage: Optional[float] = None
-            if directional_pct is not None and lev_f is not None and lev_f != 0.0:
-                pct_leverage = directional_pct * lev_f
-            elif pct_raw_f is not None and lev_f is not None and lev_f != 0.0:
-                pct_leverage = pct_raw_f * lev_f
-            elif directional_pct is not None:
-                pct_leverage = directional_pct
-            else:
-                pct_leverage = pct_raw_f
 
-            pct_baseline = directional_pct if directional_pct is not None else pct_raw_f
+            if directional_pct is not None:
+                pct_baseline = directional_pct
+                if lev_f is not None and lev_f != 0.0:
+                    pct_leverage = directional_pct * lev_f
+                else:
+                    pct_leverage = directional_pct
+            elif pct_raw_f is not None:
+                pct_leverage = pct_raw_f
+                if lev_f is not None and lev_f not in (0.0, -0.0):
+                    try:
+                        pct_baseline = pct_raw_f / lev_f
+                    except Exception:
+                        pct_baseline = None
+                else:
+                    pct_baseline = None
+            else:
+                pct_baseline = None
+                pct_leverage = None
 
             def _fmt(value: Any) -> str:
                 try:
