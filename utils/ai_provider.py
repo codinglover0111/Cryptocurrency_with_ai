@@ -161,6 +161,7 @@ class AIProvider:
                 tools=tools,
                 tool_choice="auto",
                 parallel_tool_calls=False,
+                response_format={"type": "json_object"},
                 extra_body={
                     "provider": {
                         "order": ["google-vertex", "fireworks"],
@@ -255,6 +256,7 @@ class AIProvider:
                 tools=tools,
                 tool_choice="auto",
                 parallel_tool_calls=False,
+                response_format={"type": "json_object"},
                 extra_body={
                     "provider": {
                         "order": ["google-vertex", "fireworks"],
