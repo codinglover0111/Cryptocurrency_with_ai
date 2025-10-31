@@ -207,12 +207,46 @@ def _summarize_positions(
             unreal = raw.get("unrealizedPnl") or (raw.get("info", {}) or {}).get(
                 "unrealisedPnl"
             )
-            pct = raw.get("percentage") or (raw.get("info", {}) or {}).get(
+            pct_raw = raw.get("percentage") or (raw.get("info", {}) or {}).get(
                 "unrealisedPnlPcnt"
             )
             tp = raw.get("takeProfit") or (raw.get("info", {}) or {}).get("takeProfit")
             sl = raw.get("stopLoss") or (raw.get("info", {}) or {}).get("stopLoss")
             lev = raw.get("leverage") or (raw.get("info", {}) or {}).get("leverage")
+
+            def _safe_float(value: Any) -> Optional[float]:
+                try:
+                    if value is None:
+                        return None
+                    return float(value)
+                except Exception:
+                    return None
+
+            lev_f = _safe_float(lev)
+            pct_raw_f = _safe_float(pct_raw)
+
+            directional_pct: Optional[float] = None
+            if entry_f is not None and entry_f not in (0.0, -0.0):
+                try:
+                    base_pct = (last - entry_f) / entry_f * 100.0
+                    side_str = (side or "").lower()
+                    if side_str in {"short", "sell"}:
+                        base_pct *= -1.0
+                    directional_pct = base_pct
+                except Exception:
+                    directional_pct = None
+
+            pct_leverage: Optional[float] = None
+            if directional_pct is not None and lev_f is not None and lev_f != 0.0:
+                pct_leverage = directional_pct * lev_f
+            elif pct_raw_f is not None and lev_f is not None and lev_f != 0.0:
+                pct_leverage = pct_raw_f * lev_f
+            elif directional_pct is not None:
+                pct_leverage = directional_pct
+            else:
+                pct_leverage = pct_raw_f
+
+            pct_baseline = directional_pct if directional_pct is not None else pct_raw_f
 
             def _fmt(value: Any) -> str:
                 try:
@@ -220,19 +254,21 @@ def _summarize_positions(
                 except Exception:
                     return str(value)
 
+            side_fmt = side if side is not None else "n/a"
+            size_fmt = _fmt(size_f) if size_f is not None else "n/a"
+            entry_fmt = _fmt(entry_f) if entry_f is not None else "n/a"
+            last_fmt = _fmt(last)
+            tp_fmt = _fmt(tp) if tp is not None else "n/a"
+            sl_fmt = _fmt(sl) if sl is not None else "n/a"
+            lev_fmt = _fmt(lev) if lev is not None else "n/a"
+            unreal_fmt = _fmt(unreal) if unreal is not None else "n/a"
+            pct_fmt = _fmt(pct_leverage) if pct_leverage is not None else "n/a"
+            pct_raw_fmt = _fmt(pct_baseline) if pct_baseline is not None else "n/a"
+
             lines.append(
-                "side={side}, size={size}, entry={entry}, last={last}, "
-                "tp={tp}, sl={sl}, lev={lev}, unreal={unreal} ({pct}%)".format(
-                    side=side,
-                    size=_fmt(size_f) if size_f is not None else "n/a",
-                    entry=_fmt(entry_f) if entry_f is not None else "n/a",
-                    last=_fmt(last),
-                    tp=_fmt(tp) if tp is not None else "n/a",
-                    sl=_fmt(sl) if sl is not None else "n/a",
-                    lev=_fmt(lev) if lev is not None else "n/a",
-                    unreal=_fmt(unreal) if unreal is not None else "n/a",
-                    pct=_fmt(pct),
-                )
+                f"side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
+                f"tp={tp_fmt}, sl={sl_fmt}, lev={lev_fmt}, unreal={unreal_fmt} "
+                f"(roi_lev={pct_fmt}%, roi_raw={pct_raw_fmt}%)"
             )
         except Exception:
             continue
