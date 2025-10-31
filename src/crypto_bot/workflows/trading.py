@@ -10,20 +10,23 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
-from utils.price_utils import dataframe_to_candlestick_base64
-from utils.ai_provider import AIProvider
-from utils.risk import calculate_position_size, enforce_max_loss_sl
-from utils.storage import StorageConfig, TradeStore
+import ta
 
-from app.core.symbols import (
+from crypto_bot.integrations.bybit import BybitUtils, Open_Position
+from crypto_bot.data.market import bybit_utils
+from crypto_bot.llm.decision_parser import make_to_object
+from crypto_bot.llm.provider import AIProvider
+from crypto_bot.core.risk import calculate_position_size, enforce_max_loss_sl
+from crypto_bot.persistence.store import StorageConfig, TradeStore
+
+from crypto_bot.core.symbols import (
     parse_trading_symbols,
     per_symbol_allocation,
     to_ccxt_symbols,
 )
-from app.services.journal import JournalService
+from crypto_bot.services.journal import JournalService
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,6 +63,9 @@ class PromptContext:
     csv_4h: str
     csv_1h: str
     csv_15m: str
+    rsi_4h: Optional[float]
+    rsi_1h: Optional[float]
+    rsi_15m: Optional[float]
     current_position: List[Dict[str, Any]]
     pos_side: Optional[str]
     current_positions_lines: List[str]
@@ -134,7 +140,12 @@ def _compute_tp_sl_percentages(
 def _init_dependencies(
     symbol_usdt: str, symbols: Sequence[str] | None
 ) -> AutomationDependencies:
-    is_testnet = bool(int(os.getenv("TESTNET", "1")))
+    raw_env = (os.getenv("BybitEnv") or os.getenv("BYBIT_ENV") or "").strip().lower()
+    if raw_env == "mainet":
+        raw_env = "mainnet"
+    if not raw_env:
+        raw_env = "demo"
+    is_testnet = raw_env in {"demo", "testnet"}
     all_symbols = list(symbols) if symbols else parse_trading_symbols()
     spot_symbol, contract_symbol = to_ccxt_symbols(symbol_usdt)
     per_symbol_pct = per_symbol_allocation(all_symbols)
@@ -290,6 +301,39 @@ def _summarize_positions(
     return lines, primary_side
 
 
+def _coerce_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _format_optional_float(value: Optional[float], precision: int = 2) -> str:
+    try:
+        if value is None:
+            return "n/a"
+        if isinstance(value, float) and (value != value):  # NaN check
+            return "n/a"
+        return f"{float(value):.{precision}f}"
+    except Exception:
+        return "n/a"
+
+
+def _latest_rsi(df: Any, period: int = 14) -> Optional[float]:
+    try:
+        if df is None or getattr(df, "empty", True):
+            return None
+        series = ta.momentum.rsi(df["close"], window=period)
+        cleaned = series.dropna()
+        if cleaned.empty:
+            return None
+        return float(cleaned.iloc[-1])
+    except Exception:
+        return None
+
+
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     price_helper = bybit_utils(deps.spot_symbol, "4h", 100)
     df_4h = price_helper.get_ohlcv()
@@ -302,19 +346,11 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     csv_15m = df_15m.to_csv()
     current_price = df_15m["close"].iloc[-1]
 
+    rsi_4h = _latest_rsi(df_4h)
+    rsi_1h = _latest_rsi(df_1h)
+    rsi_15m = _latest_rsi(df_15m)
+
     chart_images: Dict[str, str] = {}
-    if deps.ai_provider.provider == "gemini":
-        for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
-            try:
-                image_b64 = dataframe_to_candlestick_base64(
-                    frame_df.tail(120),
-                    deps.spot_symbol,
-                    timeframe,
-                )
-                if image_b64:
-                    chart_images[timeframe] = image_b64
-            except Exception as exc:
-                LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
 
     current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
     position_lines, pos_side = _summarize_positions(
@@ -401,6 +437,9 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         csv_4h=csv_4h,
         csv_1h=csv_1h,
         csv_15m=csv_15m,
+        rsi_4h=rsi_4h,
+        rsi_1h=rsi_1h,
+        rsi_15m=rsi_15m,
         current_position=current_position,
         pos_side=pos_side,
         current_positions_lines=position_lines,
@@ -423,6 +462,11 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
         f"심볼당 기본 배분 비율: {deps.per_symbol_alloc_pct:.2f}%\n"
+        "[RSI_OVERVIEW]\n"
+        f"15m={_format_optional_float(ctx.rsi_15m)}\n"
+        f"1h={_format_optional_float(ctx.rsi_1h)}\n"
+        f"4h={_format_optional_float(ctx.rsi_4h)}\n"
+        "[/RSI_OVERVIEW]\n"
         "[CSV_4H]\n"
         f"{ctx.csv_4h}\n"
         "[/CSV_4H]\n"
@@ -467,78 +511,326 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     return prompt
 
 
+def _build_system_prompt() -> str:
+    return (
+        "당신은 암호화폐 파생상품 자동매매를 지원하는 트레이딩 전략가입니다.\n"
+        "모든 응답은 한국어 JSON 으로만 작성해야 합니다.\n"
+        "대화 규칙:\n"
+        "1. 첫 응답은 phase='analysis_request' 를 포함한 JSON 입니다. draft 키에 현재 판단을 담고 needs 배열에 추가로 필요한 지표 이름을 나열하세요.\n"
+        "2. 사용자가 phase='metrics' JSON 을 보내면 해당 데이터를 적용해 phase='final_decision' JSON 으로 확정안을 제공합니다.\n"
+        "3. phase='final_decision' JSON 의 decision 키에는 Status, order_type, price, tp, sl, buy_now, leverage, close_now, close_percent, update_existing, explain 필드를 포함해야 합니다.\n"
+        "4. Status 는 hold/short/long/stop 중 하나이며 explain 은 최소 세 문장으로 현재 시장 상황과 리스크 관리 계획을 설명하세요.\n"
+        "5. update_existing=true 인 경우 새 포지션을 개설하지 말고 기존 포지션의 TP/SL 조정안만 제시합니다.\n"
+        "6. close_now 가 true 이면 close_percent 를 1~100 범위로 지정하세요.\n"
+        "7. 항상 수치 단위(USDT, %, 배수 등)를 명시하고, JSON 이외의 텍스트는 포함하지 마세요."
+    )
+
+
+def _build_context_payload(
+    deps: AutomationDependencies,
+    ctx: PromptContext,
+    legacy_prompt: str,
+    account_snapshot: Dict[str, Any],
+) -> str:
+    payload = {
+        "phase": "context",
+        "symbol": {
+            "contract": deps.contract_symbol,
+            "spot": deps.spot_symbol,
+            "per_symbol_allocation_pct": deps.per_symbol_alloc_pct,
+        },
+        "market": {
+            "current_price": ctx.current_price,
+            "rsi": {
+                "15m": ctx.rsi_15m,
+                "1h": ctx.rsi_1h,
+                "4h": ctx.rsi_4h,
+            },
+            "ohlcv_csv": {
+                "15m": ctx.csv_15m,
+                "1h": ctx.csv_1h,
+                "4h": ctx.csv_4h,
+            },
+        },
+        "positions": ctx.current_positions_lines,
+        "journal": {
+            "today": ctx.journal_today_text,
+            "recent_reports": ctx.recent_reports_text,
+            "reviews": ctx.reviews_text,
+            "since_open": ctx.since_open_text,
+        },
+        "legacy_prompt": legacy_prompt,
+    }
+    if account_snapshot:
+        payload["account"] = {
+            "balance_total": _coerce_float(account_snapshot.get("total")),
+            "balance_free": _coerce_float(account_snapshot.get("free")),
+            "balance_used": _coerce_float(account_snapshot.get("used")),
+        }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _decision_payload_schema(*, require_explain: bool) -> Dict[str, Any]:
+    properties: Dict[str, Any] = {
+        "Status": {
+            "type": "string",
+            "enum": ["hold", "short", "long", "stop"],
+        },
+        "order_type": {
+            "type": ["string", "null"],
+            "enum": ["market", "limit", None],
+        },
+        "price": {"type": ["number", "null"]},
+        "tp": {"type": ["number", "null"]},
+        "sl": {"type": ["number", "null"]},
+        "buy_now": {"type": ["boolean", "null"]},
+        "leverage": {"type": ["number", "null"]},
+        "close_now": {"type": ["boolean", "null"]},
+        "close_percent": {"type": ["number", "null"]},
+        "update_existing": {"type": ["boolean", "null"]},
+        "explain": {"type": ["string", "null"]},
+    }
+    required = ["Status"]
+    if require_explain:
+        required.append("explain")
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _decision_turn_schema() -> Dict[str, Any]:
+    draft_schema = _decision_payload_schema(require_explain=False)
+    decision_schema = _decision_payload_schema(require_explain=True)
+    return {
+        "type": "object",
+        "properties": {
+            "phase": {
+                "type": "string",
+                "enum": ["analysis_request", "final_decision"],
+            },
+            "needs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [],
+            },
+            "notes": {"type": ["string", "null"]},
+            "draft": draft_schema,
+            "decision": decision_schema,
+        },
+        "required": ["phase"],
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {"properties": {"phase": {"const": "analysis_request"}}},
+                "then": {"required": ["draft"]},
+            },
+            {
+                "if": {"properties": {"phase": {"const": "final_decision"}}},
+                "then": {"required": ["decision"]},
+            },
+        ],
+    }
+
+
+def _safe_status(payload: Mapping[str, Any]) -> Optional[str]:
+    raw = payload.get("Status") or payload.get("status")
+    if raw is None:
+        return None
+    try:
+        norm = str(raw).strip().lower()
+    except Exception:
+        return None
+    if norm in {"watch", "watch/hold"}:
+        norm = "hold"
+    return norm if norm in {"hold", "short", "long", "stop"} else None
+
+
+def _summarize_account_snapshot(
+    account_snapshot: Dict[str, Any],
+    deps: AutomationDependencies,
+    *,
+    leverage: float,
+    entry_price: float,
+) -> Dict[str, Any]:
+    total = _coerce_float(account_snapshot.get("total"))
+    free = _coerce_float(account_snapshot.get("free"))
+    used = _coerce_float(account_snapshot.get("used"))
+    per_symbol_pct = deps.per_symbol_alloc_pct
+
+    max_notional = None
+    if total is not None:
+        max_notional = total * (per_symbol_pct / 100.0) * leverage
+
+    safety = _coerce_float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95")) or 0.95
+    available_notional = None
+    if free is not None:
+        available_notional = free * leverage * safety
+
+    estimated_qty_cap = None
+    if max_notional and entry_price and entry_price > 0:
+        estimated_qty_cap = max_notional / entry_price
+
+    return {
+        "balance_total": total,
+        "balance_free": free,
+        "balance_used": used,
+        "per_symbol_allocation_pct": per_symbol_pct,
+        "max_notional_per_symbol": max_notional,
+        "available_notional_estimate": available_notional,
+        "estimated_quantity_cap": estimated_qty_cap,
+        "leverage": leverage,
+    }
+
+
+def _build_metrics_message(
+    draft: Mapping[str, Any],
+    *,
+    deps: AutomationDependencies,
+    ctx: PromptContext,
+    account_snapshot: Dict[str, Any],
+    requested: Optional[Sequence[str]] = None,
+) -> str:
+    status = _safe_status(draft) or "hold"
+    leverage = _coerce_float(draft.get("leverage"))
+    if leverage is None or leverage <= 0:
+        leverage = float(os.getenv("DEFAULT_LEVERAGE", "5"))
+
+    entry_price = _coerce_float(draft.get("price"))
+    if entry_price is None or entry_price <= 0:
+        entry_price = float(ctx.current_price)
+
+    tp = _coerce_float(draft.get("tp"))
+    sl = _coerce_float(draft.get("sl"))
+
+    pct_info = _compute_tp_sl_percentages(
+        entry_price=float(entry_price),
+        tp=tp,
+        sl=sl,
+        ai_status=status,
+        leverage=float(leverage),
+    )
+
+    metrics = {
+        "entry_price": entry_price,
+        "tp": tp,
+        "sl": sl,
+        "baseline_profit_pct": pct_info.get("tp_pct"),
+        "baseline_loss_pct": pct_info.get("sl_pct"),
+        "leveraged_profit_pct": pct_info.get("tp_pct_leverage"),
+        "leveraged_loss_pct": pct_info.get("sl_pct_leverage"),
+        "max_loss_cap_pct": _compute_max_loss_percent(float(leverage)),
+    }
+
+    account_info = _summarize_account_snapshot(
+        account_snapshot,
+        deps,
+        leverage=float(leverage),
+        entry_price=float(entry_price),
+    )
+
+    payload = {
+        "phase": "metrics",
+        "metrics": metrics,
+        "account": account_info,
+        "notes": {
+            "status": status,
+            "per_symbol_allocation_pct": deps.per_symbol_alloc_pct,
+            "requested_metrics": list(requested or []),
+        },
+    }
+
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _fallback_decision(deps: AutomationDependencies, prompt: str) -> Dict[str, Any]:
+    try:
+        parsed = deps.ai_provider.decide_json(prompt)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception as exc:
+        LOGGER.error("직접 JSON 호출 실패: %s", exc)
+
+    try:
+        raw_text = deps.ai_provider.decide(prompt)
+        parser = deps.parser
+        return parser.make_it_object(raw_text)
+    except Exception as exc:
+        LOGGER.error("텍스트 파싱 폴백 실패: %s", exc)
+        return {
+            "Status": "hold",
+            "explain": "LLM 응답 오류로 인해 안전 모드(HOLD)로 유지합니다.",
+        }
+
+
 def _request_trade_decision(
     deps: AutomationDependencies,
     prompt: str,
     ctx: PromptContext,
 ) -> Dict[str, Any]:
-    images_payload: Optional[List[Dict[str, Any]]] = None
-    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
-        images_payload = []
-        for timeframe in ("4h", "1h", "15m"):
-            chart_b64 = ctx.chart_images.get(timeframe)
-            if not chart_b64:
-                continue
-            images_payload.append(
-                {
-                    "b64": chart_b64,
-                    "mime": "image/png",
-                    "metadata": {
-                        "symbol": deps.spot_symbol,
-                        "contract_symbol": deps.contract_symbol,
-                        "timeframe": timeframe,
-                        "type": "candlestick",
-                    },
-                }
-            )
-        if not images_payload:
-            images_payload = None
+    account_snapshot = deps.bybit.get_balance("USDT") or {}
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": _build_system_prompt()},
+        {
+            "role": "user",
+            "content": _build_context_payload(deps, ctx, prompt, account_snapshot),
+        },
+    ]
 
-    try:
-        parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
-        LOGGER.info(
-            json.dumps(
-                {
-                    "event": "llm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                    "parsed": parsed,
-                },
-                ensure_ascii=False,
+    schema = _decision_turn_schema()
+    max_turns = max(2, int(os.getenv("LLM_DECISION_MAX_TURNS", "4")))
+
+    for turn in range(max_turns):
+        try:
+            result = deps.ai_provider.request_json(messages, schema=schema)
+        except Exception as exc:
+            LOGGER.error(
+                "멀티턴 의사결정 호출 실패(%s/%s): %s", turn + 1, max_turns, exc
             )
+            return _fallback_decision(deps, prompt)
+
+        try:
+            LOGGER.info(
+                json.dumps(
+                    {
+                        "event": "llm_multi_turn",
+                        "turn": turn + 1,
+                        "phase": result.get("phase"),
+                        "payload": result,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception:
+            LOGGER.debug("LLM turn %s result: %s", turn + 1, result)
+
+        messages.append(
+            {"role": "assistant", "content": json.dumps(result, ensure_ascii=False)}
         )
-        return parsed
-    except Exception:
-        response = deps.ai_provider.decide(prompt, images=images_payload)
-        try:
-            LOGGER.info(
-                json.dumps(
-                    {
-                        "event": "llm_response_raw",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                        "response": response,
-                    },
-                    ensure_ascii=False,
-                )
-            )
-        except Exception as exc:
-            LOGGER.error("LLM raw logging failed: %s", exc)
 
-        parser = deps.parser
-        value = parser.make_it_object(response)
-        try:
-            LOGGER.info(
-                json.dumps(
-                    {
-                        "event": "llm_response_parsed",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                        "parsed": value,
-                    },
-                    ensure_ascii=False,
-                )
+        phase = str(result.get("phase") or "").lower()
+        if phase == "analysis_request":
+            metrics_message = _build_metrics_message(
+                result.get("draft") or {},
+                deps=deps,
+                ctx=ctx,
+                account_snapshot=account_snapshot,
+                requested=result.get("needs"),
             )
-        except Exception as exc:
-            LOGGER.error("LLM parsed logging failed: %s", exc)
-        return value
+            messages.append({"role": "user", "content": metrics_message})
+            continue
+
+        if phase == "final_decision":
+            decision_payload = result.get("decision")
+            if isinstance(decision_payload, dict):
+                return decision_payload
+            if isinstance(result, dict):
+                return result
+
+    LOGGER.warning("LLM이 제한 턴 내에 최종 결정을 내리지 못해 폴백을 사용합니다")
+    return _fallback_decision(deps, prompt)
 
 
 def _normalize_bool(val: Any) -> bool:
@@ -967,7 +1259,7 @@ def _run_confirm_step(
             json.dumps(
                 {
                     "event": "llm_confirm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                    "provider": "openai",
                     "parsed": confirm,
                 },
                 ensure_ascii=False,

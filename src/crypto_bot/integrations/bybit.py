@@ -3,6 +3,7 @@
 import os
 import ccxt
 from dotenv import load_dotenv
+from pathlib import Path
 
 from typing import Optional, Dict, Any, Literal, List
 from pydantic import BaseModel
@@ -19,19 +20,29 @@ class Open_Position(BaseModel):
     leverage: Optional[float] = None
 
 
-dotenv_path = os.path.join(os.path.dirname(__file__), "..", ".env")
-load_dotenv(dotenv_path)
+_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(_ENV_PATH, override=False)
+else:
+    load_dotenv(override=False)
 
 
 class BybitUtils:
     def __init__(self, is_testnet=True):
         try:
             # 사용 환경 결정: demo | testnet | mainnet
-            mode_env = (os.getenv("BYBIT_ENV") or "").strip().lower()
+            raw_env = (
+                os.getenv("BybitEnv")
+                or os.getenv("BYBIT_ENV")
+                or ("demo" if is_testnet else "mainnet")
+            )
+            mode_env = str(raw_env).strip().lower()
+            if mode_env == "mainet":
+                mode_env = "mainnet"
             mode = (
                 mode_env
                 if mode_env in {"demo", "testnet", "mainnet"}
-                else ("testnet" if is_testnet else "mainnet")
+                else ("demo" if is_testnet else "mainnet")
             )
 
             # API 키와 시크릿 설정
@@ -539,7 +550,9 @@ class BybitUtils:
             except Exception as exc:
                 last_error = str(exc)
 
-        private_method = getattr(self.exchange, "privatePostV5PositionTradingStop", None)
+        private_method = getattr(
+            self.exchange, "privatePostV5PositionTradingStop", None
+        )
         if callable(private_method):
             try:
                 request: Dict[str, Any] = {}

@@ -1,93 +1,174 @@
-# Architecture Overview
+# Architecture Overview (2.0)
 
-`Cryptocurrency_with_ai`는 5분 주기로 데이터를 수집하고 LLM에게 의사결정을 맡기는 자동매매 파이프라인입니다. 이 문서는 핵심 컴포넌트, 스케줄링 흐름, 프롬프트 구조, 손실 피드백, 차트 데이터 입력 경로를 간단히 정리합니다.
+`Cryptocurrency_with_ai` v2.0은 `src/crypto_bot` 패키지를 중심으로 구성되며, OpenAI 기반 다중 턴 의사결정과 Supabase 저장소를 기본값으로 사용합니다. 아래 문서는 주요 디렉터리 구조, 런타임 흐름, LLM 상호작용 계약, 데이터 저장 방식, 배포 전략을 정리합니다.
+
+## Project Layout
+
+```text
+src/crypto_bot/
+  core/            # 공용 유틸(심볼, 리스크 계산 등)
+  data/            # OHLCV/차트 생성 유틸리티
+  integrations/    # 외부 API 연동 (Bybit 등)
+  llm/             # OpenAI 클라이언트와 대화 규약 정의
+  persistence/     # Supabase + SQLAlchemy 백엔드
+  services/        # 도메인 서비스 (저널, 시장 데이터)
+  workflows/       # 자동매매 오케스트레이션
+docker/            # Railway / Scheduler 전용 Dockerfile
+docs/              # 아키텍처 및 운영 문서
+main.py            # 스케줄러 엔트리포인트
+```
+
+v2.0에서는 레거시 모듈이 제거되고 `src/crypto_bot` 이하 패키지만 유지됩니다. 프런트엔드는 별도 Next.js 레포지토리에서 관리합니다.
 
 ## Runtime Flow
 
-1. `main.py` loads environment variables, configures logging, 그리고 스케줄러를 시작합니다.
-2. 5분 주기로 `automation_for_symbol`이 호출되어 다음 단계를 처리합니다.
-   - **Context 수집**: `app/workflows/trading._gather_prompt_context`
-     - 시장 데이터(`utils.bybit_utils.bybit_utils`)를 통해 4h/1h/15m OHLCV CSV 확보
-     - 현재 포지션, 금일 저널, 최근 의사결정, 리뷰 텍스트를 정리
-   - **프롬프트 구성**: `_build_prompt`
-     - LLM이 참고할 CSV/저널 정보를 블록별로 포함
-   - **LLM 결정**: `_request_trade_decision`
-     - `AIProvider.decide_json()` → 실패 시 `decide()` + `make_to_object()` fallback
-   - **즉시 청산 여부**: `_handle_close_now`
-     - `close_now` 신호가 있으면 reduceOnly 주문으로 포지션 정리 후, 트레이드/저널 기록
-   - **주문 계획 수립**: `_run_confirm_step` + `_execute_trade`
-     - SL/TP 유효성 확인, 필요 시 추가 Confirm 프롬프트로 재검증
-     - 리스크 기반 포지션 사이즈 산출 + 심볼별 노출 상한 적용
-     - `BybitUtils.open_position`으로 주문 실행
-     - 체결 결과를 `TradeStore`에 기록, 저널(`decision`, `action`) 남김
-3. 별도 5분 주기 작업 `run_loss_review`
-   - `JournalService.review_losing_trades`가 최근 손실 포지션을 AI에게 분석시켜 리뷰 저널을 추가합니다.
+1. `main.py`가 환경변수를 로드하고 로깅을 설정한 뒤 5분 주기 스케줄러를 기동합니다.
+2. 각 심볼마다 `workflows.trading.automation_for_symbol`이 호출되어 아래 단계를 수행합니다.
+   - **컨텍스트 수집**: `_gather_prompt_context`가 4h/1h/15m OHLCV CSV와 RSI, 현재 포지션, 저널 로그를 정리합니다.
+   - **다중 턴 의사결정**: `_request_trade_decision`이 아래 프로토콜을 수행합니다.
+     1. LLM이 `phase="analysis_request"` JSON을 반환하면서 초안(draft)과 필요한 지표(needs)를 알립니다.
+     2. 봇은 손익률(기초/레버리지), 허용 손실 한도, 심볼별 노출 한도 등을 계산해 `phase="metrics"` JSON으로 응답합니다.
+     3. LLM이 `phase="final_decision"` JSON으로 최종 주문 계획을 회신합니다.
+     4. 구조화 응답이 실패하면 `AIProvider.decide_json()` → `decide()` + `decision_parser` 순으로 폴백합니다.
+   - **즉시 청산 처리**: `close_now` 신호가 포함되면 reduceOnly 시장가 주문으로 포지션을 부분/전체 청산합니다.
+   - **확정 및 실행**: `_run_confirm_step`에서 손익률과 손절 폭을 검증하고, `_execute_trade`가 포지션 사이즈 계산 → Bybit 주문 → 트레이드/저널 기록을 진행합니다.
+3. `run_loss_review`는 동일한 주기로 손실 거래를 Supabase에서 조회하여 LLM 리뷰를 생성, 저널에 기록합니다.
 
-## Five-Minute Job Cycle
+## Multi-Turn Conversation Contract
 
-- **주기 관리**: `scheduler.py`에서 APScheduler가 심볼별 `automation_for_symbol`과 `run_loss_review`를 5분 간격으로 스케줄링합니다.
-- **거래 자동화 루틴**: 각 심볼은 독립적으로 프롬프트를 구성하고 주문 결정을 수행하여 병렬 실행이 가능합니다.
-- **손실 리뷰 루틴**: 동일한 주기로 미체크 손실 거래를 조회해 리뷰를 생성하므로, 시장 변동이 심할 때도 피드백이 늦지 않습니다.
-- **장애 복구**: 스케줄러는 애플리케이션 재기동 시 작업을 다시 등록하며, 각 작업은 내부적으로 예외를 캡처해 다음 주기를 유지합니다.
+- **analysis_request** – LLM 초안
 
-## Prompt Structure
+  ```json
+  {
+    "phase": "analysis_request",
+    "draft": {
+      "Status": "long",
+      "order_type": "limit",
+      "price": 1.2345,
+      "tp": 1.3456,
+      "sl": 1.2,
+      "leverage": 8,
+      "buy_now": false,
+      "update_existing": false
+    },
+    "needs": ["leveraged_loss_pct", "position_capacity"]
+  }
+  ```
 
-프롬프트는 `_build_prompt`에서 섹션 단위로 구성합니다.
+- **metrics** – 봇이 계산한 값을 다시 전달
 
-- **System Guardrails**: 거래 목표, 리스크 한도, 응답 포맷(JSON) 요구사항을 명시합니다.
-- **Market Snapshot**: 4h/1h/15m OHLCV CSV, 현재 가격, 유동성, 지표 등 차트 데이터를 붙여 LLM이 패턴을 읽을 수 있게 합니다.
-- **Position State**: 보유 포지션, 진입가, 증거금, 미실현 손익 등 현재 상태를 전달합니다.
-- **Journal & Decisions**: 직전 결정, 실행 결과, 피드백/리뷰 내용을 포함해 LLM이 과거 맥락을 학습하도록 합니다.
-- **Task Definition**: 신규 진입, 유지, 청산 중 선택하도록 지시하며, `close_now`, `entries`, `stop_loss`, `take_profit` 필드를 요구합니다.
-- **JSON Contract**: LLM 응답은 `Status`(대문자)와 `status`(소문자) 필드가 반드시 포함되어야 합니다. 워크플로는 외부 프로바이더 스키마 호환을 위해 `Status`를 요구하고, 내부 로직은 이를 소문자로 정규화한 `status`를 사용하므로 두 필드를 동시에 유지해야 합니다.
+  ```json
+  {
+    "phase": "metrics",
+    "metrics": {
+      "baseline_loss_pct": 2.78,
+      "leveraged_loss_pct": 22.24,
+      "baseline_profit_pct": 9.0,
+      "leveraged_profit_pct": 72.0,
+      "max_loss_cap_pct": 40.0
+    },
+    "account": {
+      "balance_total": 1250.4,
+      "per_symbol_allocation_pct": 16.6,
+      "max_notional_per_symbol": 1666.4
+    }
+  }
+  ```
 
-Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제공하며, TP/SL 유효성 검증, 포지션 사이즈 조정 등에 대해 "검토" 역할을 주도록 짧은 프롬프트를 생성합니다.
+- **final_decision** – 최종 JSON 응답 (Status, order_type, price, tp, sl, buy_now, leverage, close_now, close_percent, update_existing, explain)
 
-## Module Breakdown
+Confirm 단계는 이전과 동일하게 `AIProvider.confirm_trade_json()`을 사용하며, TP/SL·레버리지 제안이 허용된 손실 한도를 초과할 경우 재조정하도록 합니다.
 
-| 경로                          | 역할                           | 주요 함수                                                                                                 |
-| ----------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `app/core/symbols.py`         | 심볼 관련 유틸리티             | `parse_trading_symbols`, `to_ccxt_symbols`, `per_symbol_allocation`                                       |
-| `app/services/market_data.py` | OHLCV 수집 래퍼                | `ohlcv_csv_between`                                                                                       |
-| `app/services/journal.py`     | 저널/리뷰 도메인 서비스        | `JournalService.format_trade_reviews_for_prompt`, `JournalService.review_losing_trades`                   |
-| `app/workflows/trading.py`    | 자동매매 파이프라인            | `_gather_prompt_context`, `_build_prompt`, `_run_confirm_step`, `_execute_trade`, `automation_for_symbol` |
-| `utils/`                      | 거래소/AI/스토리지 레거시 모듈 | `BybitUtils`, `AIProvider`, `TradeStore`, etc.                                                            |
+## Prompt & Context
 
-## Data Persistence
+- **Market Snapshot**: 4h/1h/15m CSV + RSI(각 타임프레임) + 현재가
+- **Position State**: 진입가, 증거금, 미실현 PnL, TP/SL, 레버리지
+- **Journals**: 금일 기록, 최근 결정/리뷰, 포지션 오픈 이후 로그
+- **Guardrails**: 레버리지 범위, JSON 스키마, update_existing/close_now 처리 규칙
 
-- 모든 거래/저널 기록은 `TradeStore`를 통해 MySQL(기본) 또는 SQLite로 저장됩니다.
-- `StorageConfig.resolve()`가 환경변수에 따라 연결을 결정합니다.
-- `journal_service.review_losing_trades`는 동일 DB를 이용하여 손실 거래를 조회한 뒤 리뷰 기록을 추가합니다.
+CSV 데이터는 그대로 전달하여 LLM이 패턴을 직접 파싱할 수 있게 하고, RSI는 빠른 추세 파악을 위해 별도 블록(`[RSI_OVERVIEW]`)으로 제공됩니다.
+
+## Persistence Layer
+
+`persistence.store.TradeStore`는 세 가지 백엔드를 지원합니다.
+
+| Backend  | 사용 조건                                    | 비고                                        |
+| -------- | -------------------------------------------- | ------------------------------------------- |
+| Supabase | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | 기본 경로. `trades`, `journals` 테이블 사용 |
+| MySQL    | `MYSQL_URL`                                  | 레거시 호환. SQLAlchemy 연결                |
+| SQLite   | 기본값 (`data/trading.sqlite`)               | 로컬 개발/폴백용                            |
+
+Supabase 테이블 권장 스키마:
+
+```sql
+create table if not exists public.trades (
+  id uuid primary key default gen_random_uuid(),
+  ts timestamptz not null,
+  symbol text not null,
+  side text,
+  type text,
+  price double precision,
+  quantity double precision,
+  tp double precision,
+  sl double precision,
+  leverage double precision,
+  status text,
+  order_id text,
+  pnl double precision
+);
+
+create table if not exists public.journals (
+  id uuid primary key default gen_random_uuid(),
+  ts timestamptz not null default now(),
+  symbol text,
+  entry_type text,
+  content text,
+  reason text,
+  meta jsonb,
+  ref_order_id text
+);
+
+create index if not exists idx_trades_symbol_ts on public.trades(symbol, ts);
+create index if not exists idx_journals_symbol_ts on public.journals(symbol, ts);
+```
+
+`TradeStore`는 먼저 Supabase에 기록 후(optional) SQL 백엔드에 미러링합니다. `load_trades()`와 `fetch_journals()`는 두 백엔드를 자동으로 전환하며, 반환값은 항상 Pandas DataFrame입니다.
+
+### Supabase MCP 활용
+
+- 스키마 변경은 `mcp_supabase_apply_migration`을 사용해 배포합니다.
+- 운영 중 데이터 조회/진단은 `mcp_supabase_execute_sql`로 수행할 수 있습니다.
+- MCP 명령으로 적용된 변경 사항은 즉시 Python 서비스에서 사용 가능합니다.
+
+## Deployment Targets
+
+| 파일                          | 목적                      | 기본 명령        |
+| ----------------------------- | ------------------------- | ---------------- |
+| `Dockerfile`                  | 로컬/스케줄러 기본 이미지 | `python main.py` |
+| `docker/Dockerfile.scheduler` | Railway Worker 등 배치용  | `python main.py` |
+
+모든 Dockerfile은 `ghcr.io/astral-sh/uv:python3.11-slim` 기반이며 `uv pip install --system .`로 의존성을 설치합니다. `.dockerignore`가 SQLite 파일과 가상환경을 제외하도록 구성되어 있습니다.
+
+## Frontend (Next.js)
+
+- FastAPI 및 템플릿 자산은 제거되었으며, SSR UI는 별도 Next.js 레포에서 관리합니다.
+- Next.js 측에서 Supabase REST/RPC 혹은 클라이언트를 사용해 `trades`, `journals` 데이터를 직접 조회해야 합니다.
+- Python 서비스는 자동매매 스케줄러와 데이터 적재 역할에만 집중하며, 추가 HTTP API를 노출하지 않습니다.
+
+## Monitoring & Resilience
+
+- 로깅은 파일(`trading.log`) + STDOUT에 동시에 기록됩니다.
+- 멀티턴 응답은 `llm_multi_turn` 이벤트로 JSON 로깅되어 재현성을 제공합니다.
+- 의사결정 폴백 순서: 구조화 Responses → JSON completion → 자유 텍스트 + 의도 파서.
+- 스케줄러는 예외를 잡고 다음 주기로 진행하며, Supabase 장애 시 SQL 백엔드로 폴백합니다.
 
 ## Extension Points
 
-- **리스크 정책 변경**: `utils/risk.py`의 `calculate_position_size` 또는 `_execute_trade` 내부 로직을 수정합니다.
-- **프롬프트 커스터마이징**: `app/workflows/trading._build_prompt`에서 섹션별 텍스트를 조정할 수 있습니다.
-- **확장된 리뷰 전략**: `JournalService`를 상속하거나 구성(extending composition)하여 다른 프롬프트/분석 기법을 도입할 수 있습니다.
-- **테스트 도입**: `_init_dependencies` 함수로 외부 의존성을 주입하기 쉬워졌기 때문에, 단위 테스트 시 Mock `BybitUtils`/`AIProvider`를 주입할 수 있습니다.
+- **리스크 정책**: `core.risk.calculate_position_size`, `_compute_max_loss_percent` 조정.
+- **프롬프트 확장**: `workflows.trading._build_context_payload` 및 `_build_system_prompt`에서 통제.
+- **대체 저장소**: `TradeStore`에 새로운 backend 어댑터 추가.
+- **테스트**: `_init_dependencies`가 모든 외부 의존성을 주입하므로, Mock `BybitUtils`, `AIProvider`, `TradeStore`로 단위 테스트가 용이합니다.
 
-## Logging & Monitoring
+---
 
-- `app/logging_config.setup_logging`에서 파일(`trading.log`) + 콘솔 핸들러를 설정합니다.
-- LLM 호출 결과(`llm_response_parsed`, `llm_confirm_response_parsed`)는 JSON으로 로깅되어 추적이 용이합니다.
-- 예외는 모두 `LOGGER.error` / `logging.exception`을 통해 기록됩니다.
-
-## Known Considerations
-
-- `automation_for_symbol`는 심볼마다 새로운 `BybitUtils` 인스턴스를 생성합니다. 고빈도 호출이 필요하다면 커넥션 풀링/재사용 전략을 검토하세요.
-- Confirm 단계는 TP/SL 둘 다 존재할 때만 작동합니다. 시장 상황에 따라 조건을 완화해야 할 수도 있습니다.
-- 손실 리뷰 기능(`run_loss_review`)은 LLM 호출 실패 시 조용히 넘어가도록 되어 있습니다. 필요하면 재시도/알림을 추가하세요.
-
-## Self-Feedback Loop
-
-- **손실 감지**: `JournalService.review_losing_trades`가 DB에서 손실 거래를 가져옵니다.
-- **피드백 프롬프트**: 손실 포지션의 차트, 주문 내역, 당시 결정을 요약해 "무엇이 잘못됐는지"를 LLM에 질문합니다.
-- **저널 기록**: LLM 응답은 리뷰 저널로 저장되어 다음 트레이딩 프롬프트의 `Journal & Decisions` 섹션에 포함됩니다.
-- **자기보정**: 이후 주기에서 LLM이 과거 리뷰를 참고해 리스크를 줄이거나 전략을 조정하도록 설계되었습니다.
-
-## Market Data Intake
-
-- `app/services/market_data.py`가 심볼별로 4h/1h/15m 캔들 데이터를 CCXT/Bybit API를 통해 수집하고 CSV 문자열로 변환합니다.
-- `_gather_prompt_context`는 이 CSV를 프롬프트에 그대로 삽입해 LLM이 가격 패턴과 추세를 직접 파싱하게 합니다.
-- 최신 가격, 미청산 수량, 손익 정보는 `BybitUtils.get_position`과 `BybitUtils.get_last_price`에서 가져옵니다.
-- 외부 데이터 오류나 API Rate Limit 발생 시, 로깅 후 실패 지표를 프롬프트에 기록해 LLM이 데이터 부족 상황을 인지하도록 합니다.
+v2.0 구조는 모듈화된 디렉터리와 명확한 대화 계약을 기반으로 하며, Supabase를 기본 데이터 레이크로 채택해 배포 타겟(Railway, Supabase functions 등)에 맞춰 쉽게 확장할 수 있도록 설계되었습니다.

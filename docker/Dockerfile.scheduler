@@ -15,3 +15,4 @@ RUN uv pip install --system --no-cache .
 COPY . .
 
 CMD ["python", "main.py"]
+

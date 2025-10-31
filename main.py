@@ -10,9 +10,9 @@ import pytz
 import schedule
 from dotenv import load_dotenv
 
-from app import setup_logging
-from app.core.symbols import parse_trading_symbols
-from app.workflows.trading import automation_for_symbol, run_loss_review
+from crypto_bot import setup_logging
+from crypto_bot.core.symbols import parse_trading_symbols
+from crypto_bot.workflows.trading import automation_for_symbol, run_loss_review
 
 
 def _ensure_logging() -> None:

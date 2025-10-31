@@ -12,11 +12,11 @@ from typing import Optional
 
 import pandas as pd
 
-from utils.ai_provider import AIProvider
-from utils.storage import TradeStore
+from crypto_bot.llm.provider import AIProvider
+from crypto_bot.persistence.store import TradeStore
 
-from app.core.symbols import contract_to_spot_symbol
-from app.services.market_data import ohlcv_csv_between
+from crypto_bot.core.symbols import contract_to_spot_symbol
+from crypto_bot.services.market_data import ohlcv_csv_between
 
 
 LOGGER = logging.getLogger(__name__)

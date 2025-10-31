@@ -2,14 +2,16 @@
 # ruff: noqa: E722, BLE001
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, Union
+from typing import Optional, Dict, Any, Tuple, Union, List
 
 import pandas as pd
 import sqlalchemy as sa
+from supabase import Client as SupabaseClient, create_client
 
 
 @dataclass
@@ -17,6 +19,11 @@ class StorageConfig:
     # DB 전용으로 단순화
     mysql_url: Optional[str] = None  # e.g. mysql+pymysql://user:pwd@host:3306/db
     sqlite_path: Optional[str] = None  # e.g. data/trading.sqlite
+    supabase_url: Optional[str] = None
+    supabase_key: Optional[str] = None
+    supabase_schema: Optional[str] = None
+    supabase_trades_table: Optional[str] = None
+    supabase_journals_table: Optional[str] = None
 
     def resolve(self) -> Tuple[Optional[str], bool]:
         """Return (sqlalchemy_url, is_sqlite)."""
@@ -48,9 +55,36 @@ class StorageConfig:
 class TradeStore:
     def __init__(self, config: StorageConfig):
         self.config = config
+        self._supabase: Optional[SupabaseClient] = None
+        self._supabase_schema = (
+            config.supabase_schema or os.getenv("SUPABASE_SCHEMA") or "public"
+        )
+        self._trades_table = (
+            config.supabase_trades_table
+            or os.getenv("SUPABASE_TRADES_TABLE")
+            or "trades"
+        )
+        self._journals_table = (
+            config.supabase_journals_table
+            or os.getenv("SUPABASE_JOURNALS_TABLE")
+            or "journals"
+        )
+
+        supabase_url = config.supabase_url or os.getenv("SUPABASE_URL")
+        supabase_key = config.supabase_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_key:
+            supabase_key = os.getenv("SUPABASE_ANON_KEY")
+
+        if supabase_url and supabase_key:
+            try:
+                self._supabase = create_client(supabase_url, supabase_key)
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"Warning: failed to init Supabase client: {exc}")
+                self._supabase = None
+
         self._engine = None
         self._db_url, self._is_sqlite = config.resolve()
-        if self._db_url:
+        if self._db_url and self._supabase is None:
             try:
                 kwargs: Dict[str, Any] = {}
                 if self._is_sqlite:
@@ -77,10 +111,19 @@ class TradeStore:
                 print(f"Warning: failed to init database engine: {e}")
 
     def record_trade(self, trade: Dict[str, Any]) -> None:
-        # DB 기록 전용
+        stored_any = False
+        if self._supabase is not None:
+            try:
+                self._supabase_record_trade(trade)
+                stored_any = True
+            except Exception as exc:
+                print(f"Warning: failed to persist trade to Supabase: {exc}")
+
         if self._engine is None:
-            print("No DB engine configured; trade not persisted")
+            if not stored_any:
+                print("No DB engine configured; trade not persisted")
             return
+
         if trade.get("ts") is None:
             trade = dict(trade)
             trade["ts"] = dt.datetime.utcnow()
@@ -107,8 +150,12 @@ class TradeStore:
                     "pnl": sa.Float,
                 },
             )
+            stored_any = True
         except Exception as e:
             print(f"Error writing database: {e}")
+
+        if not stored_any:
+            print("Trade persistence failed on all configured backends")
 
     @staticmethod
     def _drop_duplicate_orders(df: pd.DataFrame) -> pd.DataFrame:
@@ -135,7 +182,12 @@ class TradeStore:
         return df_sorted.drop(index=drop_index)
 
     def load_trades(self) -> pd.DataFrame:
-        # DB에서만 읽기
+        if self._supabase is not None:
+            try:
+                return self._supabase_fetch_trades()
+            except Exception as exc:
+                print(f"Warning: failed to fetch trades from Supabase: {exc}")
+
         if self._engine is None:
             return pd.DataFrame(
                 columns=[
@@ -368,13 +420,20 @@ class TradeStore:
           - meta: Optional[dict]
           - ref_order_id: Optional[str]
         """
+        stored_any = False
+        if self._supabase is not None:
+            try:
+                self._supabase_record_journal(entry)
+                stored_any = True
+            except Exception as exc:
+                print(f"Warning: failed to persist journal to Supabase: {exc}")
+
         if self._engine is None:
             return
         try:
             data = dict(entry)
             if data.get("ts") is None:
                 data["ts"] = dt.datetime.utcnow()
-            # Normalize
             data.setdefault("symbol", None)
             data.setdefault("entry_type", None)
             data.setdefault("content", None)
@@ -397,8 +456,12 @@ class TradeStore:
                     "ref_order_id": sa.String(128),
                 },
             )
+            stored_any = True
         except Exception as e:
             print(f"Error writing journals: {e}")
+
+        if not stored_any:
+            print("Journal persistence failed on all configured backends")
 
     def fetch_journals(
         self,
@@ -434,8 +497,25 @@ class TradeStore:
             ]
         )
 
+        if self._supabase is not None:
+            try:
+                return self._supabase_fetch_journals(
+                    symbol=symbol,
+                    types=types,
+                    today_only=today_only,
+                    since_ts=since_ts,
+                    until_ts=until_ts,
+                    limit=limit,
+                    ascending=ascending,
+                    offset=offset,
+                    return_total=return_total,
+                )
+            except Exception as exc:
+                print(f"Warning: failed to fetch journals from Supabase: {exc}")
+
         if self._engine is None:
             return (empty_df, 0) if return_total else empty_df
+
         try:
             # Build SQL dynamically using SQLAlchemy text for safety
             from sqlalchemy import text
@@ -446,19 +526,16 @@ class TradeStore:
                 clauses.append("symbol = :symbol")
                 params["symbol"] = symbol
             if types:
-                # create IN clause
                 in_params = {f"t{i}": t for i, t in enumerate(types)}
                 placeholders = ",".join([f":{k}" for k in in_params.keys()])
                 clauses.append(f"entry_type IN ({placeholders})")
                 params.update(in_params)
             if today_only:
-                # SQLite와 기타 DB의 오늘 날짜 표현을 각각 지원
                 if getattr(self, "_is_sqlite", False):
                     clauses.append("DATE(ts) = DATE('now')")
                 else:
                     clauses.append("DATE(ts) = CURRENT_DATE")
             if since_ts is not None:
-                # Pandas Timestamp 등 datetime 유사 타입을 안전하게 Python datetime으로 변환
                 try:
                     since_ts = pd.Timestamp(since_ts).to_pydatetime()
                 except Exception:
@@ -526,3 +603,139 @@ class TradeStore:
         except Exception as e:
             print(f"Error reading journals: {e}")
             return (empty_df, 0) if return_total else empty_df
+
+    # ------------------------------------------------------------------
+    # Supabase helpers
+    # ------------------------------------------------------------------
+    def _supabase_table(self, table_name: str):
+        if self._supabase_schema and self._supabase_schema != "public":
+            table_name = f"{self._supabase_schema}.{table_name}"
+        return self._supabase.table(table_name)
+
+    def _supabase_record_trade(self, trade: Dict[str, Any]) -> None:
+        row = dict(trade)
+        if row.get("ts") is None:
+            row["ts"] = dt.datetime.utcnow()
+        row["ts"] = _ensure_timestamp(row["ts"])
+        if row.get("order_id") is not None:
+            row["order_id"] = str(row["order_id"])
+        response = self._supabase_table(self._trades_table).insert(row).execute()
+        if getattr(response, "data", None) is None:
+            raise RuntimeError("Supabase trade insert failed")
+
+    def _supabase_record_journal(self, entry: Dict[str, Any]) -> None:
+        row = dict(entry)
+        if row.get("ts") is None:
+            row["ts"] = dt.datetime.utcnow()
+        row["ts"] = _ensure_timestamp(row["ts"])
+        if row.get("ref_order_id") is not None:
+            row["ref_order_id"] = str(row["ref_order_id"])
+        meta = row.get("meta")
+        if isinstance(meta, (dict, list)):
+            row["meta"] = meta
+        elif meta is not None:
+            try:
+                json.loads(meta)
+            except Exception:
+                row["meta"] = {"value": str(meta)}
+        response = self._supabase_table(self._journals_table).insert(row).execute()
+        if getattr(response, "data", None) is None:
+            raise RuntimeError("Supabase journal insert failed")
+
+    def _supabase_fetch_trades(self) -> pd.DataFrame:
+        response = (
+            self._supabase_table(self._trades_table)
+            .select("*")
+            .order("ts", desc=False)
+            .execute()
+        )
+        rows = getattr(response, "data", None) or []
+        return _rows_to_dataframe(rows)
+
+    def _supabase_fetch_journals(
+        self,
+        *,
+        symbol: Optional[str],
+        types: Optional[List[str]],
+        today_only: bool,
+        since_ts: Optional[dt.datetime],
+        until_ts: Optional[dt.datetime],
+        limit: int,
+        ascending: bool,
+        offset: int,
+        return_total: bool,
+    ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, int]]:
+        count_mode = "exact" if return_total else "none"
+        query = self._supabase_table(self._journals_table).select("*", count=count_mode)
+        if symbol:
+            query = query.eq("symbol", symbol)
+        if types:
+            query = query.in_("entry_type", types)
+
+        if since_ts is not None:
+            query = query.gte("ts", _ensure_timestamp(since_ts))
+        if until_ts is not None:
+            query = query.lt("ts", _ensure_timestamp(until_ts))
+
+        if today_only:
+            now = dt.datetime.utcnow()
+            start = dt.datetime(now.year, now.month, now.day)
+            end = start + dt.timedelta(days=1)
+            query = query.gte("ts", _ensure_timestamp(start)).lt(
+                "ts", _ensure_timestamp(end)
+            )
+
+        query = query.order("ts", desc=not ascending)
+
+        try:
+            lim = int(limit)
+        except Exception:
+            lim = 20
+        lim = max(1, min(lim, 200))
+
+        try:
+            off = int(offset)
+        except Exception:
+            off = 0
+        if off < 0:
+            off = 0
+
+        query = query.range(off, off + lim - 1)
+        response = query.execute()
+        rows = getattr(response, "data", None) or []
+        df = _rows_to_dataframe(rows)
+
+        if not return_total:
+            return df
+        total = getattr(response, "count", None)
+        if total is None:
+            total = len(rows)
+        return df, int(total)
+
+
+def _ensure_timestamp(value: Any) -> str:
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=dt.timezone.utc)
+        return value.isoformat()
+    try:
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+        return ts.isoformat()
+    except Exception:
+        return str(value)
+
+
+def _rows_to_dataframe(rows: List[Dict[str, Any]]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    if "ts" in df.columns:
+        try:
+            df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+        except Exception:
+            pass
+    return df
