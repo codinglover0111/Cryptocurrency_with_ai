@@ -126,8 +126,8 @@
               <label class="journal-limit">
                 타임존
                 <select id="tz-select">
-                  <option value="UTC" selected>UTC</option>
-                  <option value="UTC+9">UTC+9</option>
+                  <option value="UTC">UTC</option>
+                  <option value="UTC+9" selected>UTC+9</option>
                   <option value="UTC+1">UTC+1</option>
                   <option value="UTC-5">UTC-5</option>
                 </select>
@@ -148,15 +148,12 @@
               <label class="journal-sort">
                 기간
                 <select id="jr-range">
-                  <option value="today" selected>오늘</option>
-                  <option value="recent15">최근 15분</option>
+                  <option value="today">오늘</option>
+                  <option value="recent15" selected>최근 15분</option>
                 </select>
               </label>
               <div id="jr-type-filters" class="journal-type-filters">
                 <span class="journal-type-label">유형</span>
-                <label
-                  ><input type="checkbox" value="thought" checked />사고</label
-                >
                 <label
                   ><input type="checkbox" value="decision" checked />판단</label
                 >
@@ -176,6 +173,7 @@
                 <label><input type="checkbox" value="short" checked />숏</label>
               </div>
               <button class="btn btn--ghost" id="jr-refresh">조회</button>
+              <button class="btn btn--ghost" id="jr-reset">초기화</button>
               <a
                 class="btn"
                 href="/overlay?limit=12&today_only=1&ascending=0&types=decision,action,review"

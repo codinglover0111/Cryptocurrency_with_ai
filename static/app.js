@@ -155,7 +155,10 @@ function renderPositions(data) {
         entryRaw != null &&
         sizeRaw != null &&
         lastRaw != null &&
-        (sideLower === "long" || sideLower === "buy" || sideLower === "short" || sideLower === "sell")
+        (sideLower === "long" ||
+          sideLower === "buy" ||
+          sideLower === "short" ||
+          sideLower === "sell")
       ) {
         if (sideLower === "long" || sideLower === "buy") {
           pnlRaw = (lastRaw - entryRaw) * sizeRaw;
@@ -185,7 +188,10 @@ function renderPositions(data) {
         } else if (
           entryRaw != null &&
           lastRaw != null &&
-          (sideLower === "long" || sideLower === "buy" || sideLower === "short" || sideLower === "sell")
+          (sideLower === "long" ||
+            sideLower === "buy" ||
+            sideLower === "short" ||
+            sideLower === "sell")
         ) {
           if (sideLower === "long" || sideLower === "buy") {
             pnlPctRaw = ((lastRaw - entryRaw) / entryRaw) * 100;
@@ -387,7 +393,8 @@ function getSelectedTZ() {
   const v = sel && sel.value ? String(sel.value) : null;
   if (v && v.startsWith("UTC")) return v;
   const q = getTzParam();
-  return q && q.startsWith("UTC") ? q : "UTC";
+  if (q && q.startsWith("UTC")) return q;
+  return "UTC+9";
 }
 
 function normalizeUtcTimestamp(raw) {
@@ -567,6 +574,45 @@ function setJournalPageSize(size) {
   state.page = 1;
 }
 
+function resetJournalFilters() {
+  const tzSelect = document.getElementById("tz-select");
+  if (tzSelect) {
+    tzSelect.value = "UTC+9";
+  }
+
+  const jrRange = document.getElementById("jr-range");
+  if (jrRange) {
+    jrRange.value = "recent15";
+  }
+
+  const jrSort = document.getElementById("jr-sort");
+  if (jrSort) {
+    jrSort.value = "desc";
+  }
+
+  const jrLimit = document.getElementById("jr-limit");
+  if (jrLimit) {
+    jrLimit.value = String(JR_DEFAULT_PAGE_SIZE);
+  }
+
+  const jrSymbol = document.getElementById("jr-symbol");
+  if (jrSymbol) {
+    jrSymbol.value = "";
+  }
+
+  getJournalTypeCheckboxes().forEach((cb) => {
+    cb.checked = true;
+  });
+
+  getJournalStatusCheckboxes().forEach((cb) => {
+    cb.checked = true;
+  });
+
+  setJournalPageSize(JR_DEFAULT_PAGE_SIZE);
+  setJournalPage(1);
+  refreshJournals();
+}
+
 function buildJournalPageList(current, totalPages, maxLength = 7) {
   if (totalPages <= maxLength) {
     return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -607,7 +653,12 @@ function renderJournalPagination(meta) {
   const pageSize = Number(meta.pageSize || JR_DEFAULT_PAGE_SIZE);
   const rawPage = Number(meta.page || 1);
 
-  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(pageSize) || pageSize <= 0) {
+  if (
+    !Number.isFinite(total) ||
+    total <= 0 ||
+    !Number.isFinite(pageSize) ||
+    pageSize <= 0
+  ) {
     container.innerHTML = "";
     container.hidden = true;
     return;
@@ -626,7 +677,9 @@ function renderJournalPagination(meta) {
 
   if (safePage > 1) {
     buttons.push(
-      `<button type="button" class="pager-btn" data-page="${safePage - 1}">이전</button>`
+      `<button type="button" class="pager-btn" data-page="${
+        safePage - 1
+      }">이전</button>`
     );
   }
 
@@ -644,7 +697,9 @@ function renderJournalPagination(meta) {
 
   if (safePage < totalPages) {
     buttons.push(
-      `<button type="button" class="pager-btn" data-page="${safePage + 1}">다음</button>`
+      `<button type="button" class="pager-btn" data-page="${
+        safePage + 1
+      }">다음</button>`
     );
   }
 
@@ -797,6 +852,11 @@ window.addEventListener("DOMContentLoaded", () => {
       setJournalPage(1);
       refreshJournals();
     });
+  const resetBtn = document.getElementById("jr-reset");
+  if (resetBtn)
+    resetBtn.addEventListener("click", () => {
+      resetJournalFilters();
+    });
   const tzSel = document.getElementById("tz-select");
   if (tzSel)
     tzSel.addEventListener("change", () => {
@@ -948,7 +1008,23 @@ async function refreshJournals() {
     const typeCheckboxes = getJournalTypeCheckboxes();
     const selectedTypes = typeCheckboxes
       .filter((cb) => cb.checked)
-      .map((cb) => cb.value);
+      .map((cb) => cb.value)
+      .filter((value) => value && value !== "thought");
+    if (typeCheckboxes.length > 0 && selectedTypes.length === 0) {
+      state.total = 0;
+      state.page = 1;
+      el("journals").innerHTML = `
+      <table>
+        <thead><tr><th style="width:220px">시간</th><th>항목</th><th style="width:100px"></th></tr></thead>
+        <tbody><tr><td colspan="3" class="muted">기록 없음</td></tr></tbody>
+      </table>`;
+      renderJournalPagination({
+        page: state.page,
+        pageSize: state.pageSize,
+        total: state.total,
+      });
+      return;
+    }
     const statusCheckboxes = getJournalStatusCheckboxes();
     const selectedStatuses = statusCheckboxes
       .filter((cb) => cb.checked)
@@ -969,10 +1045,7 @@ async function refreshJournals() {
     if (rangeValue === "recent15") {
       q.set("recent_minutes", "15");
     }
-    if (
-      selectedTypes.length > 0 &&
-      selectedTypes.length < typeCheckboxes.length
-    ) {
+    if (selectedTypes.length > 0) {
       q.set("types", selectedTypes.join(","));
     }
     const symbolValue = document.getElementById("jr-symbol")?.value?.trim();
@@ -1040,6 +1113,9 @@ async function refreshJournals() {
     for (const it of items) {
       const entryTypeRaw = it.entry_type || "";
       const entryTypeLower = entryTypeRaw.toLowerCase();
+      if (entryTypeLower === "thought") {
+        continue;
+      }
       const decision = extractDecisionInfo(it);
 
       if (statusFilterEmpty) {
