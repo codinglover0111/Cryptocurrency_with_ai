@@ -91,7 +91,7 @@ class AIProvider:
                 max_output_tokens=4096,
                 response_schema=genai.protos.Schema(
                     type=genai.protos.Type.OBJECT,
-                    required=["Status"],
+                    required=["Status", "explain"],
                     properties={
                         "Status": genai.protos.Schema(
                             type=genai.protos.Type.STRING,
@@ -154,7 +154,7 @@ class AIProvider:
                                 "update_existing": {"type": "boolean"},
                                 "explain": {"type": "string"},
                             },
-                            "required": ["Status"],
+                            "required": ["Status", "explain"],
                         },
                     },
                 }

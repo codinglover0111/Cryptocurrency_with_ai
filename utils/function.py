@@ -12,10 +12,11 @@ class make_to_object:
             "max_output_tokens": 400,
             "response_schema": content.Schema(
                 type=content.Type.OBJECT,
-                required=["Status"],
+                required=["Status", "explain"],
                 properties={
                     "Status": content.Schema(
-                        type=content.Type.STRING, enum=["hold", "short", "long", "stop"]
+                        type=content.Type.STRING,
+                        enum=["hold", "short", "long", "stop"],
                     ),
                     "tp": content.Schema(
                         type=content.Type.NUMBER,
@@ -46,6 +47,9 @@ class make_to_object:
                     ),
                     "update_existing": content.Schema(
                         type=content.Type.BOOLEAN,
+                    ),
+                    "explain": content.Schema(
+                        type=content.Type.STRING,
                     ),
                 },
             ),

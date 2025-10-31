@@ -1062,6 +1062,29 @@ def _extract_ai_status(decision: Any) -> str:
     return normalized
 
 
+def _require_explain(decision: Any) -> str:
+    if not isinstance(decision, dict):
+        LOGGER.warning("Trade decision payload is not a dict: %r", decision)
+        raise InvalidDecisionError("LLM trade decision must be a JSON object")
+
+    explain_value = decision.get("explain") or decision.get("Explain")
+    if isinstance(explain_value, str):
+        explain_normalized = explain_value.strip()
+    elif explain_value is None:
+        explain_normalized = ""
+    else:
+        explain_normalized = str(explain_value).strip()
+
+    if not explain_normalized:
+        LOGGER.warning("LLM trade decision missing explain field: %r", decision)
+        raise InvalidDecisionError("LLM trade decision must include a non-empty 'explain' field")
+
+    decision["explain"] = explain_normalized
+    if "Explain" in decision:
+        decision["Explain"] = explain_normalized
+    return explain_normalized
+
+
 def _execute_trade(
     deps: AutomationDependencies,
     ctx: PromptContext,
@@ -1630,6 +1653,7 @@ def automation_for_symbol(
             ctx = _gather_prompt_context(deps)
             prompt = _build_prompt(deps, ctx)
             decision = _request_trade_decision(deps, prompt, ctx)
+            _require_explain(decision)
             if _handle_close_now(deps, ctx, decision):
                 return
             _execute_trade(deps, ctx, decision)
