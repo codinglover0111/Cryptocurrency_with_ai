@@ -1,5 +1,7 @@
 """Automated trading workflow orchestration."""
 
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 from __future__ import annotations
 
 import json
@@ -61,6 +63,67 @@ class PromptContext:
     reviews_text: str
     since_open_text: str
     chart_images: Dict[str, str] = field(default_factory=dict)
+
+
+def _compute_tp_sl_percentages(
+    *,
+    entry_price: float,
+    tp: Optional[float],
+    sl: Optional[float],
+    ai_status: str,
+    leverage: float,
+) -> Dict[str, Optional[float]]:
+    """Calculate tp/sl percentages (raw and leverage-adjusted)."""
+
+    result: Dict[str, Optional[float]] = {
+        "tp_pct": None,
+        "sl_pct": None,
+        "tp_pct_leverage": None,
+        "sl_pct_leverage": None,
+    }
+
+    try:
+        e = float(entry_price)
+        if e <= 0:
+            return result
+
+        lev = abs(float(leverage or 0.0))
+
+        def _safe(value: Optional[float]) -> Optional[float]:
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except Exception:
+                return None
+
+        tp_v = _safe(tp)
+        sl_v = _safe(sl)
+        status = (ai_status or "").lower()
+
+        if tp_v is not None:
+            if status == "long":
+                result["tp_pct"] = (tp_v - e) / e * 100.0
+            elif status == "short":
+                result["tp_pct"] = (e - tp_v) / e * 100.0
+
+        if sl_v is not None:
+            if status == "long":
+                result["sl_pct"] = (e - sl_v) / e * 100.0
+            elif status == "short":
+                result["sl_pct"] = (sl_v - e) / e * 100.0
+
+        if lev > 0:
+            tp_pct = result["tp_pct"]
+            sl_pct = result["sl_pct"]
+            if tp_pct is not None:
+                result["tp_pct_leverage"] = tp_pct * lev
+            if sl_pct is not None:
+                result["sl_pct_leverage"] = sl_pct * lev
+    except Exception:
+        return result
+
+    return result
 
 
 def _init_dependencies(
@@ -144,12 +207,56 @@ def _summarize_positions(
             unreal = raw.get("unrealizedPnl") or (raw.get("info", {}) or {}).get(
                 "unrealisedPnl"
             )
-            pct = raw.get("percentage") or (raw.get("info", {}) or {}).get(
+            pct_raw = raw.get("percentage") or (raw.get("info", {}) or {}).get(
                 "unrealisedPnlPcnt"
             )
             tp = raw.get("takeProfit") or (raw.get("info", {}) or {}).get("takeProfit")
             sl = raw.get("stopLoss") or (raw.get("info", {}) or {}).get("stopLoss")
             lev = raw.get("leverage") or (raw.get("info", {}) or {}).get("leverage")
+
+            def _safe_float(value: Any) -> Optional[float]:
+                try:
+                    if value is None:
+                        return None
+                    return float(value)
+                except Exception:
+                    return None
+
+            lev_f = _safe_float(lev)
+            pct_raw_f = _safe_float(pct_raw)
+
+            directional_pct: Optional[float] = None
+            if entry_f is not None and entry_f not in (0.0, -0.0):
+                try:
+                    base_pct = (last - entry_f) / entry_f * 100.0
+                    side_str = (side or "").lower()
+                    if side_str in {"short", "sell"}:
+                        base_pct *= -1.0
+                    directional_pct = base_pct
+                except Exception:
+                    directional_pct = None
+
+            pct_baseline: Optional[float] = None
+            pct_leverage: Optional[float] = None
+
+            if directional_pct is not None:
+                pct_baseline = directional_pct
+                if lev_f is not None and lev_f != 0.0:
+                    pct_leverage = directional_pct * lev_f
+                else:
+                    pct_leverage = directional_pct
+            elif pct_raw_f is not None:
+                pct_leverage = pct_raw_f
+                if lev_f is not None and lev_f not in (0.0, -0.0):
+                    try:
+                        pct_baseline = pct_raw_f / lev_f
+                    except Exception:
+                        pct_baseline = None
+                else:
+                    pct_baseline = None
+            else:
+                pct_baseline = None
+                pct_leverage = None
 
             def _fmt(value: Any) -> str:
                 try:
@@ -157,19 +264,21 @@ def _summarize_positions(
                 except Exception:
                     return str(value)
 
+            side_fmt = side if side is not None else "n/a"
+            size_fmt = _fmt(size_f) if size_f is not None else "n/a"
+            entry_fmt = _fmt(entry_f) if entry_f is not None else "n/a"
+            last_fmt = _fmt(last)
+            tp_fmt = _fmt(tp) if tp is not None else "n/a"
+            sl_fmt = _fmt(sl) if sl is not None else "n/a"
+            lev_fmt = _fmt(lev) if lev is not None else "n/a"
+            unreal_fmt = _fmt(unreal) if unreal is not None else "n/a"
+            pct_fmt = _fmt(pct_leverage) if pct_leverage is not None else "n/a"
+            pct_raw_fmt = _fmt(pct_baseline) if pct_baseline is not None else "n/a"
+
             lines.append(
-                "side={side}, size={size}, entry={entry}, last={last}, "
-                "tp={tp}, sl={sl}, lev={lev}, unreal={unreal} ({pct}%)".format(
-                    side=side,
-                    size=_fmt(size_f) if size_f is not None else "n/a",
-                    entry=_fmt(entry_f) if entry_f is not None else "n/a",
-                    last=_fmt(last),
-                    tp=_fmt(tp) if tp is not None else "n/a",
-                    sl=_fmt(sl) if sl is not None else "n/a",
-                    lev=_fmt(lev) if lev is not None else "n/a",
-                    unreal=_fmt(unreal) if unreal is not None else "n/a",
-                    pct=_fmt(pct),
-                )
+                f"side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
+                f"tp={tp_fmt}, sl={sl_fmt}, lev={lev_fmt}, unreal={unreal_fmt} "
+                f"(roi_lev={pct_fmt}%, roi_raw={pct_raw_fmt}%)"
             )
         except Exception:
             continue
@@ -574,21 +683,28 @@ def _run_confirm_step(
         e = float(entry_price)
         tp_v = float(use_tp)
         sl_v = float(use_sl)
-        if ai_status == "long":
-            tp_pct = (tp_v - e) / e * 100.0
-            sl_pct = (e - sl_v) / e * 100.0
-        else:
-            tp_pct = (e - tp_v) / e * 100.0
-            sl_pct = (sl_v - e) / e * 100.0
+
+        pct_info = _compute_tp_sl_percentages(
+            entry_price=e,
+            tp=tp_v,
+            sl=sl_v,
+            ai_status=ai_status,
+            leverage=leverage,
+        )
+        tp_pct = float(pct_info.get("tp_pct") or 0.0)
+        sl_pct = float(pct_info.get("sl_pct") or 0.0)
+        tp_pct_leverage = float(pct_info.get("tp_pct_leverage") or 0.0)
+        sl_pct_leverage = float(pct_info.get("sl_pct_leverage") or 0.0)
 
         confirm_prompt = (
             "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
             f"심볼: {deps.contract_symbol}\n"
             f"포지션: {ai_status} (내부 side={side})\n"
             f"진입가(entry): {float(e)}\n"
-            f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}%)\n"
-            f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}%)\n"
+            f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}% | 레버리지 기준: {tp_pct_leverage:.4f}%)\n"
+            f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
             f"레버리지: {float(leverage)}x\n"
+            "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
             "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
         )
@@ -738,6 +854,7 @@ def _execute_trade(
         return
 
     max_loss_env = os.getenv("MAX_LOSS_PERCENT")
+    leverage_factor = max(1.0, float(leverage or 1.0))
     if max_loss_env is not None:
         try:
             max_loss_pct = float(max_loss_env)
@@ -745,7 +862,6 @@ def _execute_trade(
             max_loss_pct = 80.0
     else:
         base_max_loss_pct = 4.0
-        leverage_factor = max(1.0, float(leverage or 1.0))
         max_loss_pct = base_max_loss_pct * leverage_factor
         cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
         cap_value: Optional[float]
@@ -758,6 +874,20 @@ def _execute_trade(
             cap_value = 95.0
         if cap_value is not None:
             max_loss_pct = min(max_loss_pct, cap_value)
+
+    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "85")
+    try:
+        leveraged_cap = float(leveraged_cap_env)
+    except Exception:
+        leveraged_cap = 85.0
+    if leveraged_cap > 0:
+        leveraged_raw_cap = (
+            leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
+        )
+        if leveraged_raw_cap > 0:
+            max_loss_pct = min(max_loss_pct, leveraged_raw_cap)
+
+    max_loss_pct = max(0.0, max_loss_pct)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
         try:
             use_sl = enforce_max_loss_sl(
@@ -955,6 +1085,9 @@ def _execute_trade(
         )
         return
 
+    executed_qty = quantity
+    order_id: Optional[Any] = None
+    fill_price = float(entry_price)
     try:
         executed_qty = order.get("amount") or order.get("filled") or quantity
         order_id = order.get("id") or order.get("orderId")
@@ -983,7 +1116,41 @@ def _execute_trade(
     except Exception as exc:
         LOGGER.error("Trade store write failed: %s", exc)
 
-    meta_payload: Dict[str, Any] = {"decision": decision}
+    try:
+        entry_for_pct = float(fill_price)
+        if entry_for_pct <= 0:
+            entry_for_pct = float(position_params.price)
+    except Exception:
+        entry_for_pct = float(position_params.price)
+
+    pct_info_final = _compute_tp_sl_percentages(
+        entry_price=entry_for_pct,
+        tp=position_params.tp,
+        sl=position_params.sl,
+        ai_status=ai_status,
+        leverage=leverage,
+    )
+
+    meta_payload: Dict[str, Any] = {
+        "decision": decision,
+        "status": ai_status,
+        "side": side,
+        "order_type": order_type,
+        "entry_price": float(entry_price),
+        "actual_entry_price": entry_for_pct,
+        "executed_qty": float(executed_qty),
+        "tp": position_params.tp,
+        "sl": position_params.sl,
+        "leverage": leverage,
+    }
+    meta_payload.update(
+        {
+            "tp_percent": pct_info_final.get("tp_pct"),
+            "sl_percent": pct_info_final.get("sl_pct"),
+            "tp_percent_leverage": pct_info_final.get("tp_pct_leverage"),
+            "sl_percent_leverage": pct_info_final.get("sl_pct_leverage"),
+        }
+    )
     if confirm_meta is not None:
         meta_payload["confirm"] = confirm_meta
 
@@ -994,13 +1161,19 @@ def _execute_trade(
                 "entry_type": "decision",
                 "content": json.dumps(
                     {
-                        "status": side,
+                        "status": ai_status,
                         "ai_status": ai_status,
+                        "side": side,
                         "type": order_type,
                         "price": float(entry_price),
+                        "actual_price": entry_for_pct,
                         "tp": position_params.tp,
                         "sl": position_params.sl,
                         "leverage": leverage,
+                        "tp_percent": pct_info_final.get("tp_pct"),
+                        "sl_percent": pct_info_final.get("sl_pct"),
+                        "tp_percent_leverage": pct_info_final.get("tp_pct_leverage"),
+                        "sl_percent_leverage": pct_info_final.get("sl_pct_leverage"),
                     },
                     ensure_ascii=False,
                 ),
@@ -1012,7 +1185,7 @@ def _execute_trade(
             {
                 "symbol": deps.contract_symbol,
                 "entry_type": "action",
-                "content": f"open {side} {order_type} price={float(entry_price)} qty={float(executed_qty)}",
+                "content": f"open {side} {order_type} price={float(entry_for_pct)} qty={float(executed_qty)}",
                 "reason": decision.get("explain"),
                 "meta": {"order_id": order_id, "confirm": confirm_meta},
                 "ref_order_id": order_id,
@@ -1032,13 +1205,19 @@ def _handle_non_trade_actions(
     if ai_status == "hold":
         LOGGER.info("No trading signal generated")
         try:
+            meta_payload: Dict[str, Any]
+            if isinstance(decision, dict):
+                meta_payload = dict(decision)
+            else:
+                meta_payload = {"decision": decision}
+            meta_payload.setdefault("status", "hold")
             deps.store.record_journal(
                 {
                     "symbol": deps.contract_symbol,
                     "entry_type": "decision",
                     "content": json.dumps({"status": "hold"}, ensure_ascii=False),
                     "reason": decision.get("explain"),
-                    "meta": decision,
+                    "meta": meta_payload,
                 }
             )
         except Exception as exc:
@@ -1150,6 +1329,7 @@ def automation_for_symbol(
 def run_loss_review(
     symbols: Sequence[str] | None = None, since_minutes: int = 600
 ) -> None:
+    del symbols
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),

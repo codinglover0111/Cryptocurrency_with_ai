@@ -19,39 +19,301 @@ function renderBalance(data) {
 }
 
 function renderPositions(data) {
+  const summary = Array.isArray(data.positionsSummary)
+    ? data.positionsSummary
+    : null;
+
+  const fmtSide = (side) => {
+    const raw = String(side || "").toLowerCase();
+    if (raw === "long" || raw === "buy") return "롱";
+    if (raw === "short" || raw === "sell") return "숏";
+    return side || "-";
+  };
+
+  const usdFormatter = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  });
+
+  const fmtUSD = (value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    const formatted = usdFormatter.format(num);
+    return num > 0 && !formatted.startsWith("+") ? `+${formatted}` : formatted;
+  };
+
+  const fmtPct = (value) => {
+    if (value === null || value === undefined) return "-";
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    const digits = Math.abs(num) >= 100 ? 1 : 2;
+    const body = num.toFixed(digits);
+    return `${num > 0 ? "+" : ""}${body}%`;
+  };
+
+  const fmtNumber = (value) => {
+    const brief = formatNumberBrief(value);
+    if (brief != null) return brief;
+    const num = Number(value);
+    if (Number.isFinite(num)) return num.toString();
+    return value ?? "-";
+  };
+
+  if (summary) {
+    const rows = summary
+      .map((item) => {
+        const sym = item.symbol || "-";
+        const side = fmtSide(item.side);
+        const entry = fmtNumber(item.entryPrice);
+        const size = fmtNumber(item.size);
+        const pnlNum = Number(item.pnl);
+        const pnlClass = Number.isFinite(pnlNum)
+          ? pnlNum > 0
+            ? "pnl-positive"
+            : pnlNum < 0
+            ? "pnl-negative"
+            : ""
+          : "";
+        const pnlText = fmtUSD(item.pnl);
+        const pctNum = Number(item.pnlPct);
+        const pctClass = Number.isFinite(pctNum)
+          ? pctNum > 0
+            ? "pnl-positive"
+            : pctNum < 0
+            ? "pnl-negative"
+            : ""
+          : "";
+        const pctText = fmtPct(item.pnlPct);
+        return `<tr>
+          <td>${sym}</td>
+          <td>${side}</td>
+          <td class="text-right">${entry}</td>
+          <td class="text-right">${size}</td>
+          <td class="text-right ${pnlClass}">${pnlText}</td>
+          <td class="text-right ${pctClass}">${pctText}</td>
+        </tr>`;
+      })
+      .join("");
+
+    el("positions").innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>심볼</th>
+            <th>사이드</th>
+            <th>진입가</th>
+            <th>수량</th>
+            <th>PNL (USDT)</th>
+            <th>수익률</th>
+          </tr>
+        </thead>
+        <tbody>${
+          rows || '<tr><td colspan="6" class="muted">없음</td></tr>'
+        }</tbody>
+      </table>`;
+    return;
+  }
+
   const list = (data.positions || [])
     .map((p) => {
-      const sym = p.symbol || (p.info && p.info.symbol) || "-";
-      const side = p.side || (p.info && p.info.side) || "-";
-      const entry = p.entryPrice || (p.info && p.info.avgPrice) || "-";
-      const size = p.contracts || p.amount || p.size || "-";
-      return `<tr><td>${sym}</td><td>${side}</td><td>${entry}</td><td>${size}</td></tr>`;
+      const info = p.info && typeof p.info === "object" ? p.info : {};
+      const sym = p.symbol || info.symbol || "-";
+      const sideRaw = p.side || info.side || "-";
+      const side = fmtSide(sideRaw);
+      const entryRaw = firstAvailableNumber([
+        p.entryPrice,
+        info.entryPrice,
+        info.avgPrice,
+        info.averagePrice,
+      ]);
+      const sizeRaw = firstAvailableNumber([
+        p.contracts,
+        p.amount,
+        p.size,
+        info.contracts,
+        info.amount,
+        info.size,
+        info.positionAmt,
+      ]);
+      const lastRaw = firstAvailableNumber([
+        p.lastPrice,
+        p.markPrice,
+        info.lastPrice,
+        info.markPrice,
+        info.price,
+      ]);
+      let pnlRaw = firstAvailableNumber([
+        p.pnl,
+        p.unrealizedPnl,
+        info.unrealisedPnl,
+        info.unrealizedPnl,
+      ]);
+      const sideLower = String(sideRaw || "").toLowerCase();
+      if (
+        pnlRaw == null &&
+        entryRaw != null &&
+        sizeRaw != null &&
+        lastRaw != null &&
+        (sideLower === "long" ||
+          sideLower === "buy" ||
+          sideLower === "short" ||
+          sideLower === "sell")
+      ) {
+        if (sideLower === "long" || sideLower === "buy") {
+          pnlRaw = (lastRaw - entryRaw) * sizeRaw;
+        } else {
+          pnlRaw = (entryRaw - lastRaw) * sizeRaw;
+        }
+      }
+      let pnlPctRaw = firstAvailableNumber([
+        p.pnlPct,
+        p.percentage,
+        p.roe,
+        info.pnlPct,
+        info.unrealisedPnlPcnt,
+        info.roe,
+        info.percentage,
+      ]);
+      if (pnlPctRaw == null && pnlRaw != null) {
+        const initMargin = firstAvailableNumber([
+          p.initialMargin,
+          p.margin,
+          info.positionIM,
+          info.positionInitialMargin,
+          info.positionMargin,
+        ]);
+        if (initMargin != null && initMargin !== 0) {
+          pnlPctRaw = (pnlRaw / initMargin) * 100;
+        } else if (
+          entryRaw != null &&
+          lastRaw != null &&
+          (sideLower === "long" ||
+            sideLower === "buy" ||
+            sideLower === "short" ||
+            sideLower === "sell")
+        ) {
+          if (sideLower === "long" || sideLower === "buy") {
+            pnlPctRaw = ((lastRaw - entryRaw) / entryRaw) * 100;
+          } else {
+            pnlPctRaw = ((entryRaw - lastRaw) / entryRaw) * 100;
+          }
+        }
+      }
+
+      const entry = entryRaw != null ? fmtNumber(entryRaw) : "-";
+      const size = sizeRaw != null ? fmtNumber(sizeRaw) : "-";
+      const pnlNum = pnlRaw == null ? NaN : Number(pnlRaw);
+      const pnlClass = Number.isFinite(pnlNum)
+        ? pnlNum > 0
+          ? "pnl-positive"
+          : pnlNum < 0
+          ? "pnl-negative"
+          : ""
+        : "";
+      const pnlText = fmtUSD(pnlRaw);
+      const pctNum = pnlPctRaw == null ? NaN : Number(pnlPctRaw);
+      const pctClass = Number.isFinite(pctNum)
+        ? pctNum > 0
+          ? "pnl-positive"
+          : pctNum < 0
+          ? "pnl-negative"
+          : ""
+        : "";
+      const pctText = fmtPct(pnlPctRaw);
+
+      return `<tr>
+        <td>${sym}</td>
+        <td>${side}</td>
+        <td class="text-right">${entry}</td>
+        <td class="text-right">${size}</td>
+        <td class="text-right ${pnlClass}">${pnlText}</td>
+        <td class="text-right ${pctClass}">${pctText}</td>
+      </tr>`;
     })
     .join("");
   el("positions").innerHTML = `
     <table>
-      <thead><tr><th>심볼</th><th>사이드</th><th>진입가</th><th>수량</th></tr></thead>
+      <thead><tr><th>심볼</th><th>사이드</th><th>진입가</th><th>수량</th><th>PNL (USDT)</th><th>수익률</th></tr></thead>
       <tbody>${
-        list || '<tr><td colspan="4" class="muted">없음</td></tr>'
+        list || '<tr><td colspan="6" class="muted">없음</td></tr>'
       }</tbody>
     </table>`;
 }
 
-function renderOrders(data) {
-  const list = (data.openOrders || [])
-    .map((o) => {
-      return `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.type}</td><td>${
-        o.price ?? "-"
-      }</td><td>${o.amount ?? "-"}</td></tr>`;
-    })
-    .join("");
-  el("orders").innerHTML = `
-    <table>
-      <thead><tr><th>심볼</th><th>사이드</th><th>타입</th><th>가격</th><th>수량</th></tr></thead>
-      <tbody>${
-        list || '<tr><td colspan="5" class="muted">없음</td></tr>'
-      }</tbody>
-    </table>`;
+const BALANCE_REFRESH_COOLDOWN_MS = 5000;
+let lastManualStatusRefreshTime = 0;
+
+async function refreshStatusOnly() {
+  const status = await fetchJSON("/status");
+  renderBalance(status);
+  renderPositions(status);
+  return status;
+}
+
+async function manualRefreshStatus() {
+  const btn = el("balance-refresh");
+  const hint = el("balance-refresh-hint");
+  const now = Date.now();
+  const elapsed = now - lastManualStatusRefreshTime;
+  const withinCooldown = elapsed < BALANCE_REFRESH_COOLDOWN_MS;
+  let fetchedSuccessfully = false;
+
+  if (btn) {
+    btn.disabled = true;
+  }
+
+  if (hint) {
+    if (withinCooldown) {
+      const waitMs = BALANCE_REFRESH_COOLDOWN_MS - elapsed;
+      const waitSec = Math.max(1, Math.ceil(waitMs / 1000));
+      hint.textContent = `최근에 새로고침했습니다 · ${waitSec}초 후 새로운 데이터 적용`;
+    } else {
+      hint.textContent = "새로고침 중...";
+    }
+  }
+
+  try {
+    await refreshStatusOnly();
+    fetchedSuccessfully = true;
+    if (!withinCooldown && hint) {
+      hint.textContent = "업데이트 완료";
+      setTimeout(() => {
+        if (hint.textContent === "업데이트 완료") {
+          hint.textContent = "";
+        }
+      }, 2000);
+    }
+  } catch (e) {
+    console.error(e);
+    if (hint) {
+      hint.textContent = "새로고침 실패";
+      setTimeout(() => {
+        if (hint.textContent === "새로고침 실패") {
+          hint.textContent = "";
+        }
+      }, 3000);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.blur();
+    }
+    if (withinCooldown && hint) {
+      setTimeout(() => {
+        if (
+          hint.textContent &&
+          hint.textContent.includes("최근에 새로고침했습니다")
+        ) {
+          hint.textContent = "";
+        }
+      }, 2000);
+    }
+  }
+
+  if (!withinCooldown && fetchedSuccessfully) {
+    lastManualStatusRefreshTime = now;
+  }
 }
 
 function renderStatsRange(data) {
@@ -131,7 +393,8 @@ function getSelectedTZ() {
   const v = sel && sel.value ? String(sel.value) : null;
   if (v && v.startsWith("UTC")) return v;
   const q = getTzParam();
-  return q && q.startsWith("UTC") ? q : "UTC";
+  if (q && q.startsWith("UTC")) return q;
+  return "UTC+9";
 }
 
 function normalizeUtcTimestamp(raw) {
@@ -185,6 +448,282 @@ function formatTimeWithTZ(tsISO, opts = {}) {
   }
 }
 
+function maybeParseJSON(value) {
+  if (typeof value !== "string") return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeDecisionStatus(value) {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+  if (["long", "buy"].includes(raw)) return "long";
+  if (["short", "sell"].includes(raw)) return "short";
+  if (["hold", "watch"].includes(raw)) return "hold";
+  if (["stop"].includes(raw)) return "stop";
+  if (["skip"].includes(raw)) return "skip";
+  return raw;
+}
+
+function firstAvailableNumber(values) {
+  for (const v of values) {
+    if (v === null || v === undefined || v === "") continue;
+    const num = Number(v);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+function extractDecisionInfo(item) {
+  const info = {
+    status: null,
+    entry: null,
+    tp: null,
+    sl: null,
+  };
+  if (!item) return info;
+
+  const meta = item.meta && typeof item.meta === "object" ? item.meta : {};
+  const decisionMeta =
+    meta.decision && typeof meta.decision === "object" ? meta.decision : null;
+  const contentObj = maybeParseJSON(item.content);
+
+  const statusCandidates = [
+    item.decision_status,
+    meta.status,
+    meta.side,
+    decisionMeta && (decisionMeta.status || decisionMeta.Status),
+    decisionMeta && (decisionMeta.ai_status || decisionMeta.side),
+    contentObj && contentObj.status,
+  ];
+  for (const cand of statusCandidates) {
+    const norm = normalizeDecisionStatus(cand);
+    if (norm) {
+      info.status = norm;
+      break;
+    }
+  }
+
+  const entryCandidates = [
+    item.decision_entry,
+    meta.entry_price,
+    meta.entry,
+    decisionMeta &&
+      (decisionMeta.entry || decisionMeta.entry_price || decisionMeta.price),
+    contentObj &&
+      (contentObj.entry || contentObj.entry_price || contentObj.price),
+  ];
+  info.entry = firstAvailableNumber(entryCandidates);
+
+  const tpCandidates = [
+    item.decision_tp,
+    meta.tp,
+    decisionMeta && decisionMeta.tp,
+    contentObj && contentObj.tp,
+  ];
+  info.tp = firstAvailableNumber(tpCandidates);
+
+  const slCandidates = [
+    item.decision_sl,
+    meta.sl,
+    decisionMeta && decisionMeta.sl,
+    contentObj && contentObj.sl,
+  ];
+  info.sl = firstAvailableNumber(slCandidates);
+
+  return info;
+}
+
+function formatNumberBrief(value) {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const abs = Math.abs(num);
+  const options = {
+    maximumFractionDigits: abs >= 100 ? 2 : abs >= 10 ? 4 : 6,
+  };
+  return num.toLocaleString("en-US", options);
+}
+
+const JR_ALLOWED_PAGE_SIZES = [10, 30, 50, 100];
+const JR_DEFAULT_PAGE_SIZE = 30;
+
+function getJournalState() {
+  if (!window.__jrPaging) {
+    window.__jrPaging = { page: 1, pageSize: JR_DEFAULT_PAGE_SIZE, total: 0 };
+  }
+  return window.__jrPaging;
+}
+
+function setJournalPage(page) {
+  const state = getJournalState();
+  const next = Number(page);
+  state.page = Number.isFinite(next) && next > 0 ? Math.floor(next) : 1;
+}
+
+function setJournalPageSize(size) {
+  const state = getJournalState();
+  const next = Number(size);
+  state.pageSize = JR_ALLOWED_PAGE_SIZES.includes(next)
+    ? next
+    : JR_DEFAULT_PAGE_SIZE;
+  state.page = 1;
+}
+
+function resetJournalFilters() {
+  const tzSelect = document.getElementById("tz-select");
+  if (tzSelect) {
+    tzSelect.value = "UTC+9";
+  }
+
+  const jrRange = document.getElementById("jr-range");
+  if (jrRange) {
+    jrRange.value = "recent15";
+  }
+
+  const jrSort = document.getElementById("jr-sort");
+  if (jrSort) {
+    jrSort.value = "desc";
+  }
+
+  const jrLimit = document.getElementById("jr-limit");
+  if (jrLimit) {
+    jrLimit.value = String(JR_DEFAULT_PAGE_SIZE);
+  }
+
+  const jrSymbol = document.getElementById("jr-symbol");
+  if (jrSymbol) {
+    jrSymbol.value = "";
+  }
+
+  getJournalTypeCheckboxes().forEach((cb) => {
+    cb.checked = true;
+  });
+
+  getJournalStatusCheckboxes().forEach((cb) => {
+    cb.checked = true;
+  });
+
+  setJournalPageSize(JR_DEFAULT_PAGE_SIZE);
+  setJournalPage(1);
+  refreshJournals();
+}
+
+function buildJournalPageList(current, totalPages, maxLength = 7) {
+  if (totalPages <= maxLength) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  const pages = [1];
+  let start = Math.max(2, current - 2);
+  let end = Math.min(totalPages - 1, current + 2);
+
+  if (start <= 2) {
+    start = 2;
+    end = Math.min(totalPages - 1, start + 4);
+  }
+
+  if (end >= totalPages - 1) {
+    end = totalPages - 1;
+    start = Math.max(2, end - 4);
+  }
+
+  if (start > 2) {
+    pages.push("...");
+  }
+  for (let i = start; i <= end; i += 1) {
+    pages.push(i);
+  }
+  if (end < totalPages - 1) {
+    pages.push("...");
+  }
+
+  pages.push(totalPages);
+  return pages;
+}
+
+function renderJournalPagination(meta) {
+  const container = el("jr-pagination");
+  if (!container) return;
+
+  const total = Number(meta.total || 0);
+  const pageSize = Number(meta.pageSize || JR_DEFAULT_PAGE_SIZE);
+  const rawPage = Number(meta.page || 1);
+
+  if (
+    !Number.isFinite(total) ||
+    total <= 0 ||
+    !Number.isFinite(pageSize) ||
+    pageSize <= 0
+  ) {
+    container.innerHTML = "";
+    container.hidden = true;
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1) {
+    container.innerHTML = "";
+    container.hidden = true;
+    return;
+  }
+
+  const safePage = Math.min(Math.max(1, rawPage), totalPages);
+  const pages = buildJournalPageList(safePage, totalPages);
+  const buttons = [];
+
+  if (safePage > 1) {
+    buttons.push(
+      `<button type="button" class="pager-btn" data-page="${
+        safePage - 1
+      }">이전</button>`
+    );
+  }
+
+  pages.forEach((p) => {
+    if (p === "...") {
+      buttons.push('<span class="pager-ellipsis">…</span>');
+      return;
+    }
+    const isActive = p === safePage;
+    const cls = isActive ? "pager-btn pager-btn--active" : "pager-btn";
+    buttons.push(
+      `<button type="button" class="${cls}" data-page="${p}">${p}</button>`
+    );
+  });
+
+  if (safePage < totalPages) {
+    buttons.push(
+      `<button type="button" class="pager-btn" data-page="${
+        safePage + 1
+      }">다음</button>`
+    );
+  }
+
+  container.innerHTML = buttons.join("");
+  container.hidden = false;
+}
+
+function statusLabel(status) {
+  switch (status) {
+    case "long":
+      return "롱";
+    case "short":
+      return "숏";
+    case "hold":
+      return "홀드";
+    case "stop":
+      return "정지";
+    case "skip":
+      return "스킵";
+    default:
+      return status ? status.toUpperCase() : "";
+  }
+}
+
 async function refreshAll() {
   try {
     const [status, stats, syms] = await Promise.all([
@@ -194,13 +733,48 @@ async function refreshAll() {
     ]);
     renderBalance(status);
     renderPositions(status);
-    renderOrders(status);
     renderStatsRange(stats);
-    const dl = el("symbols");
-    if (dl && syms && Array.isArray(syms.symbols)) {
-      dl.innerHTML = syms.symbols
-        .map((s) => `<option value="${s.contract}">${s.code}</option>`)
-        .join("");
+    const statsSymbolSelect = el("st-symbol");
+    if (statsSymbolSelect && syms && Array.isArray(syms.symbols)) {
+      const previousValue = statsSymbolSelect.value;
+      const options = ['<option value="">전체</option>'];
+      syms.symbols.forEach((s) => {
+        const contract = s.contract || s.code || "";
+        const label = s.code || contract || "-";
+        options.push(
+          `<option value="${contract}" data-code="${s.code || ""}" data-spot="${
+            s.spot || ""
+          }">${label}</option>`
+        );
+      });
+      statsSymbolSelect.innerHTML = options.join("");
+      if (previousValue) {
+        const hasPrevious = syms.symbols.some(
+          (s) => s.contract === previousValue || s.code === previousValue
+        );
+        statsSymbolSelect.value = hasPrevious ? previousValue : "";
+      }
+    }
+    const journalSymbolSelect = el("jr-symbol");
+    if (journalSymbolSelect && syms && Array.isArray(syms.symbols)) {
+      const previousValue = journalSymbolSelect.value;
+      const options = ['<option value="">전체</option>'];
+      syms.symbols.forEach((s) => {
+        const contract = s.contract || s.code || "";
+        const label = s.code || contract || "-";
+        options.push(
+          `<option value="${contract}" data-code="${
+            s.code || ""
+          }">${label}</option>`
+        );
+      });
+      journalSymbolSelect.innerHTML = options.join("");
+      if (previousValue) {
+        const hasPrevious = syms.symbols.some(
+          (s) => s.contract === previousValue || s.code === previousValue
+        );
+        journalSymbolSelect.value = hasPrevious ? previousValue : "";
+      }
     }
   } catch (e) {
     console.error(e);
@@ -267,12 +841,58 @@ async function closeAll() {
 window.addEventListener("DOMContentLoaded", () => {
   ensureJournalModalDOM();
   setupJournalDetailHandler();
+  const balanceRefreshBtn = document.getElementById("balance-refresh");
+  if (balanceRefreshBtn)
+    balanceRefreshBtn.addEventListener("click", () => {
+      manualRefreshStatus();
+    });
   const refreshBtn = document.getElementById("jr-refresh");
-  if (refreshBtn) refreshBtn.addEventListener("click", refreshJournals);
+  if (refreshBtn)
+    refreshBtn.addEventListener("click", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
+  const resetBtn = document.getElementById("jr-reset");
+  if (resetBtn)
+    resetBtn.addEventListener("click", () => {
+      resetJournalFilters();
+    });
   const tzSel = document.getElementById("tz-select");
-  if (tzSel) tzSel.addEventListener("change", refreshJournals);
+  if (tzSel)
+    tzSel.addEventListener("change", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
+  const jrSymbol = document.getElementById("jr-symbol");
+  if (jrSymbol)
+    jrSymbol.addEventListener("change", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
+  const jrRange = document.getElementById("jr-range");
+  if (jrRange)
+    jrRange.addEventListener("change", () => {
+      setJournalPage(1);
+      refreshJournals();
+    });
+  const jrLimit = document.getElementById("jr-limit");
+  if (jrLimit) {
+    const state = getJournalState();
+    if (!JR_ALLOWED_PAGE_SIZES.includes(Number(jrLimit.value))) {
+      jrLimit.value = String(state.pageSize || JR_DEFAULT_PAGE_SIZE);
+    }
+    jrLimit.addEventListener("change", () => {
+      setJournalPageSize(Number(jrLimit.value));
+      refreshJournals();
+    });
+  }
   const stRefresh = document.getElementById("st-refresh");
   if (stRefresh) stRefresh.addEventListener("click", manualRefreshStats);
+  const stSymbolSelect = document.getElementById("st-symbol");
+  if (stSymbolSelect)
+    stSymbolSelect.addEventListener("change", () => {
+      manualRefreshStats();
+    });
   const stToday = document.getElementById("st-today");
   if (stToday)
     stToday.addEventListener("click", () => {
@@ -331,6 +951,18 @@ window.addEventListener("DOMContentLoaded", () => {
     // 자동 적용 대신 조회 버튼으로만 실행
     // typeFilters.addEventListener("change", refreshJournals);
   }
+  const pagination = document.getElementById("jr-pagination");
+  if (pagination && !pagination.__jrPagerAttached) {
+    pagination.__jrPagerAttached = true;
+    pagination.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-page]");
+      if (!btn) return;
+      const nextPage = Number(btn.dataset.page);
+      if (!Number.isFinite(nextPage) || nextPage < 1) return;
+      setJournalPage(nextPage);
+      refreshJournals();
+    });
+  }
   refreshAll();
   // 초기 자동 조회 1회는 유지
   refreshJournals();
@@ -358,35 +990,170 @@ async function submitJournal() {
 }
 
 async function refreshJournals() {
+  const state = getJournalState();
   try {
-    const limit = Number(el("jr-limit")?.value || 20);
+    const limitSelect = document.getElementById("jr-limit");
+    if (limitSelect) {
+      const selectedSize = Number(limitSelect.value);
+      if (JR_ALLOWED_PAGE_SIZES.includes(selectedSize)) {
+        if (state.pageSize !== selectedSize) {
+          state.pageSize = selectedSize;
+          state.page = 1;
+        }
+      } else {
+        limitSelect.value = String(state.pageSize || JR_DEFAULT_PAGE_SIZE);
+      }
+    }
+
     const typeCheckboxes = getJournalTypeCheckboxes();
     const selectedTypes = typeCheckboxes
+      .filter((cb) => cb.checked)
+      .map((cb) => cb.value)
+      .filter((value) => value && value !== "thought");
+    if (typeCheckboxes.length > 0 && selectedTypes.length === 0) {
+      state.total = 0;
+      state.page = 1;
+      el("journals").innerHTML = `
+      <table>
+        <thead><tr><th style="width:220px">시간</th><th>항목</th><th style="width:100px"></th></tr></thead>
+        <tbody><tr><td colspan="3" class="muted">기록 없음</td></tr></tbody>
+      </table>`;
+      renderJournalPagination({
+        page: state.page,
+        pageSize: state.pageSize,
+        total: state.total,
+      });
+      return;
+    }
+    const statusCheckboxes = getJournalStatusCheckboxes();
+    const selectedStatuses = statusCheckboxes
       .filter((cb) => cb.checked)
       .map((cb) => cb.value);
     const sort = document.getElementById("jr-sort")?.value || "desc";
     const ascFlag = sort === "asc" ? "1" : "0";
+    const rangeValue = document.getElementById("jr-range")?.value || "today";
+
+    const pageSize = state.pageSize || JR_DEFAULT_PAGE_SIZE;
+    const currentPage = state.page || 1;
+
     const q = new URLSearchParams({
-      limit: String(limit),
-      today_only: "1",
+      limit: String(pageSize),
+      page: String(currentPage),
+      today_only: rangeValue === "today" ? "1" : "0",
       ascending: ascFlag,
     });
-    if (
-      selectedTypes.length > 0 &&
-      selectedTypes.length < typeCheckboxes.length
-    ) {
+    if (rangeValue === "recent15") {
+      q.set("recent_minutes", "15");
+    }
+    if (selectedTypes.length > 0) {
       q.set("types", selectedTypes.join(","));
     }
-    // 안전 공개용 필터 API 사용 (types는 서버에서 필터링)
+    const symbolValue = document.getElementById("jr-symbol")?.value?.trim();
+    if (symbolValue) {
+      q.set("symbol", symbolValue);
+    }
+    if (statusCheckboxes.length) {
+      if (selectedStatuses.length === 0) {
+        q.set("decision_statuses", "__none__");
+      } else if (selectedStatuses.length < statusCheckboxes.length) {
+        q.set("decision_statuses", selectedStatuses.join(","));
+      }
+    }
+
     const j = await fetchJSON(`/api/journals_filtered?${q.toString()}`);
     const items = j.items || [];
-    const rows = items
-      .map((it, idx) => {
-        const tsStr = formatTimeWithTZ(it.ts);
-        const title = `${(it.entry_type || "").toUpperCase()}${
-          it.symbol ? " · " + it.symbol : ""
-        }`;
-        return `
+
+    const pageFromResponse = Number(j.page);
+    if (Number.isFinite(pageFromResponse) && pageFromResponse > 0) {
+      state.page = Math.floor(pageFromResponse);
+    }
+    const pageSizeFromResponse = Number(j.page_size);
+    if (JR_ALLOWED_PAGE_SIZES.includes(pageSizeFromResponse)) {
+      state.pageSize = pageSizeFromResponse;
+      if (limitSelect && limitSelect.value !== String(pageSizeFromResponse)) {
+        limitSelect.value = String(pageSizeFromResponse);
+      }
+    }
+    const totalFromResponse = Number(j.total);
+    if (Number.isFinite(totalFromResponse) && totalFromResponse >= 0) {
+      state.total = totalFromResponse;
+    } else {
+      state.total = items.length;
+    }
+
+    const totalPages =
+      state.pageSize > 0 ? Math.ceil(state.total / state.pageSize) : 0;
+    if (
+      items.length === 0 &&
+      state.total > 0 &&
+      totalPages > 0 &&
+      state.page > totalPages &&
+      !refreshJournals.__adjusting
+    ) {
+      refreshJournals.__adjusting = true;
+      try {
+        setJournalPage(totalPages);
+        await refreshJournals();
+      } finally {
+        refreshJournals.__adjusting = false;
+      }
+      return;
+    }
+
+    const statusFilterEmpty =
+      statusCheckboxes.length > 0 && selectedStatuses.length === 0;
+    const statusFilterSet =
+      statusCheckboxes.length > 0 &&
+      selectedStatuses.length > 0 &&
+      selectedStatuses.length < statusCheckboxes.length
+        ? new Set(selectedStatuses)
+        : null;
+
+    const rows = [];
+    for (const it of items) {
+      const entryTypeRaw = it.entry_type || "";
+      const entryTypeLower = entryTypeRaw.toLowerCase();
+      if (entryTypeLower === "thought") {
+        continue;
+      }
+      const decision = extractDecisionInfo(it);
+
+      if (statusFilterEmpty) {
+        continue;
+      }
+      if (statusFilterSet) {
+        if (entryTypeLower !== "decision") {
+          continue;
+        }
+        if (!decision.status || !statusFilterSet.has(decision.status)) {
+          continue;
+        }
+      }
+
+      const tsStr = formatTimeWithTZ(it.ts);
+      const entryType = entryTypeRaw.toUpperCase();
+      const symbol = it.symbol ? " · " + it.symbol : "";
+      let extra = "";
+      if (entryTypeLower === "decision") {
+        const label = statusLabel(decision.status);
+        if (label) {
+          extra += ` · ${label}`;
+        }
+        if (decision.status === "long" || decision.status === "short") {
+          const parts = [];
+          const entryFmt = formatNumberBrief(decision.entry);
+          if (entryFmt) parts.push(`진입 ${entryFmt}`);
+          const tpFmt = formatNumberBrief(decision.tp);
+          if (tpFmt) parts.push(`TP ${tpFmt}`);
+          const slFmt = formatNumberBrief(decision.sl);
+          if (slFmt) parts.push(`SL ${slFmt}`);
+          if (parts.length) {
+            extra += ` · ${parts.join(" / ")}`;
+          }
+        }
+      }
+      const title = `${entryType}${symbol}${extra}`;
+      rows.push(`
           <tr>
             <td style="width: 220px" class="muted" title="${escapeHtml(
               tsStr
@@ -397,20 +1164,28 @@ async function refreshJournals() {
                 JSON.stringify(it)
               )}">상세</button>
             </td>
-          </tr>`;
-      })
-      .join("");
+          </tr>`);
+    }
+    const rowsHtml = rows.join("");
     el("journals").innerHTML = `
       <table>
         <thead><tr><th style="width:220px">시간</th><th>항목</th><th style="width:100px"></th></tr></thead>
         <tbody>${
-          rows || '<tr><td colspan="3" class="muted">기록 없음</td></tr>'
+          rowsHtml || '<tr><td colspan="3" class="muted">기록 없음</td></tr>'
         }</tbody>
       </table>`;
+
+    renderJournalPagination({
+      page: state.page,
+      pageSize: state.pageSize,
+      total: state.total,
+    });
   } catch (e) {
     console.error(e);
   }
 }
+
+refreshJournals.__adjusting = false;
 
 function escapeHtml(value) {
   const str = String(value ?? "");
@@ -457,6 +1232,12 @@ function getJournalTypeCheckboxes() {
   return Array.from(container.querySelectorAll('input[type="checkbox"]'));
 }
 
+function getJournalStatusCheckboxes() {
+  const container = document.getElementById("jr-status-filters");
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('input[type="checkbox"]'));
+}
+
 function openJournalModal(html) {
   ensureJournalModalDOM();
   const backdrop = document.getElementById("jr-modal-backdrop");
@@ -475,6 +1256,7 @@ function showJournalModal(it) {
   try {
     const tsStr = formatTimeWithTZ(it.ts, {});
     const symbol = it.symbol || "";
+    const decision = extractDecisionInfo(it);
     const body = `
       <div><strong>시간</strong>: ${escapeHtml(tsStr)}</div>
       <div><strong>유형</strong>: ${escapeHtml(it.entry_type)}</div>
@@ -492,11 +1274,6 @@ function showJournalModal(it) {
     `;
     openJournalModal(body);
 
-    // 우선 meta에 값이 있으면 우선 사용
-    const meta = it.meta || {};
-    let entry = meta.entry ?? meta.entry_price ?? meta.entryPrice;
-    let tp = meta.tp ?? meta.take_profit ?? meta.takeProfit;
-    let sl = meta.sl ?? meta.stop_loss ?? meta.stopLoss;
     const tradeInfoEl = document.getElementById("jr-trade-info");
 
     const setTradeInfo = (e, t, s) => {
@@ -510,28 +1287,16 @@ function showJournalModal(it) {
       )} · <strong>SL</strong>: ${escapeHtml(fmt(s))}`;
     };
 
-    if (entry != null || tp != null || sl != null) {
-      setTradeInfo(entry, tp, sl);
+    if (decision.entry != null || decision.tp != null || decision.sl != null) {
+      setTradeInfo(
+        formatNumberBrief(decision.entry) || decision.entry,
+        formatNumberBrief(decision.tp) || decision.tp,
+        formatNumberBrief(decision.sl) || decision.sl
+      );
       return;
     }
-
-    // meta에 없으면 현재 포지션에서 조회
-    if (symbol) {
-      fetchJSON(`/api/positions_summary?symbol=${encodeURIComponent(symbol)}`)
-        .then((j) => {
-          const items = (j && j.items) || [];
-          const pos = items[0];
-          if (pos) {
-            setTradeInfo(pos.entryPrice, pos.tp, pos.sl);
-          } else if (tradeInfoEl) {
-            tradeInfoEl.textContent = "거래 정보 없음";
-          }
-        })
-        .catch(() => {
-          if (tradeInfoEl) tradeInfoEl.textContent = "거래 정보 조회 실패";
-        });
-    } else if (tradeInfoEl) {
-      tradeInfoEl.textContent = "심볼 정보 없음";
+    if (tradeInfoEl) {
+      tradeInfoEl.textContent = "거래 정보 없음";
     }
   } catch (e) {
     alert("보기 중 오류: " + e.message);

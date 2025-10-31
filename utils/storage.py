@@ -1,10 +1,12 @@
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime
+import datetime as dt
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Union
 
 import pandas as pd
 import sqlalchemy as sa
@@ -81,7 +83,7 @@ class TradeStore:
             return
         if trade.get("ts") is None:
             trade = dict(trade)
-            trade["ts"] = datetime.utcnow()
+            trade["ts"] = dt.datetime.utcnow()
         if trade.get("order_id") is not None:
             trade["order_id"] = str(trade["order_id"])
         try:
@@ -172,8 +174,8 @@ class TradeStore:
     def compute_stats_range(
         self,
         *,
-        since_ts: Optional[datetime] = None,
-        until_ts: Optional[datetime] = None,
+        since_ts: Optional[dt.datetime] = None,
+        until_ts: Optional[dt.datetime] = None,
         symbol: Optional[str] = None,
         group: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -291,13 +293,11 @@ class TradeStore:
                         return tt.isoformat()
                     except Exception:
                         try:
-                            from datetime import datetime, timezone
-
-                            if isinstance(t, datetime):
+                            if isinstance(t, dt.datetime):
                                 if t.tzinfo is None:
-                                    t = t.replace(tzinfo=timezone.utc)
+                                    t = t.replace(tzinfo=dt.timezone.utc)
                                 else:
-                                    t = t.astimezone(timezone.utc)
+                                    t = t.astimezone(dt.timezone.utc)
                                 return t.isoformat()
                         except Exception:
                             return str(t)
@@ -347,10 +347,7 @@ class TradeStore:
         try:
             data = dict(entry)
             if data.get("ts") is None:
-                # Lazy import to avoid global dependency
-                from datetime import datetime
-
-                data["ts"] = datetime.utcnow()
+                data["ts"] = dt.datetime.utcnow()
             # Normalize
             data.setdefault("symbol", None)
             data.setdefault("entry_type", None)
@@ -382,27 +379,37 @@ class TradeStore:
         symbol: Optional[str] = None,
         types: Optional[list] = None,
         today_only: bool = False,
-        since_ts: Optional[datetime] = None,
-        until_ts: Optional[datetime] = None,
+        since_ts: Optional[dt.datetime] = None,
+        until_ts: Optional[dt.datetime] = None,
         limit: int = 20,
         ascending: bool = True,
-    ) -> pd.DataFrame:
-        """Fetch journal entries with filters. Returns a DataFrame.
+        *,
+        offset: int = 0,
+        return_total: bool = False,
+        limit_choices: Optional[Tuple[int, ...]] = None,
+    ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, int]]:
+        """Fetch journal entries with filters.
+
+        Returns:
+            - DataFrame: 기본 반환값
+            - (DataFrame, total_count): ``return_total=True`` 일 때
 
         Note: This reads from MySQL only. If engine is not set, returns empty DataFrame.
         """
+        empty_df = pd.DataFrame(
+            columns=[
+                "ts",
+                "symbol",
+                "entry_type",
+                "content",
+                "reason",
+                "meta",
+                "ref_order_id",
+            ]
+        )
+
         if self._engine is None:
-            return pd.DataFrame(
-                columns=[
-                    "ts",
-                    "symbol",
-                    "entry_type",
-                    "content",
-                    "reason",
-                    "meta",
-                    "ref_order_id",
-                ]
-            )
+            return (empty_df, 0) if return_total else empty_df
         try:
             # Build SQL dynamically using SQLAlchemy text for safety
             from sqlalchemy import text
@@ -442,26 +449,54 @@ class TradeStore:
 
             where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             order_sql = " ORDER BY ts ASC" if ascending else " ORDER BY ts DESC"
-            limit_sql = " LIMIT :limit"
-            params["limit"] = int(limit)
+            limit_options: Optional[Tuple[int, ...]] = None
+            if limit_choices:
+                try:
+                    limit_options = tuple(int(x) for x in limit_choices if int(x) > 0)
+                    if not limit_options:
+                        limit_options = None
+                except Exception:
+                    limit_options = None
+
+            try:
+                limit_value = int(limit)
+            except Exception:
+                limit_value = 0
+
+            if limit_options:
+                if limit_value not in limit_options:
+                    limit_value = limit_options[0]
+            else:
+                limit_value = max(1, min(limit_value if limit_value > 0 else 1, 200))
+
+            try:
+                offset_value = int(offset)
+            except Exception:
+                offset_value = 0
+            if offset_value < 0:
+                offset_value = 0
+
+            limit_sql = f" LIMIT {limit_value}"
+            offset_sql = f" OFFSET {offset_value}" if offset_value else ""
 
             sql = text(
-                f"SELECT ts, symbol, entry_type, content, reason, meta, ref_order_id FROM journals{where_sql}{order_sql}{limit_sql}"
+                f"SELECT ts, symbol, entry_type, content, reason, meta, ref_order_id FROM journals{where_sql}{order_sql}{limit_sql}{offset_sql}"
             )
+
+            total_count = 0
             with self._engine.connect() as conn:
+                if return_total:
+                    count_sql = text(f"SELECT COUNT(*) AS cnt FROM journals{where_sql}")
+                    total_raw = conn.execute(count_sql, params).scalar()
+                    try:
+                        total_count = int(total_raw or 0)
+                    except Exception:
+                        total_count = 0
+
                 rows = conn.execute(sql, params).mappings().all()
-            # Convert to DataFrame
-            return pd.DataFrame(rows)
+
+            df = pd.DataFrame(rows)
+            return (df, total_count) if return_total else df
         except Exception as e:
             print(f"Error reading journals: {e}")
-            return pd.DataFrame(
-                columns=[
-                    "ts",
-                    "symbol",
-                    "entry_type",
-                    "content",
-                    "reason",
-                    "meta",
-                    "ref_order_id",
-                ]
-            )
+            return (empty_df, 0) if return_total else empty_df

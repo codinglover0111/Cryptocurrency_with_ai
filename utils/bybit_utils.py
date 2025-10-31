@@ -1,8 +1,10 @@
+# pylint: disable=broad-except
+# ruff: noqa: E722, BLE001
 import os
 import ccxt
 from dotenv import load_dotenv
 
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, Literal, List
 from pydantic import BaseModel
 
 
@@ -78,6 +80,8 @@ class BybitUtils:
                     },
                 }
             )
+            self._markets_loaded = False
+            self.positions: Optional[dict] = None
             # 기본 recv_window 헤더 보장
             try:
                 recv_ms = int(os.getenv("BYBIT_RECV_WINDOW_MS", "15000"))
@@ -164,6 +168,295 @@ class BybitUtils:
             print(f"Bybit env: {mode}, timeDifference: {td} ms, recvWindow: {rw} ms")
         except Exception:
             pass
+
+    def _ensure_markets(self) -> None:
+        if self._markets_loaded:
+            return
+        try:
+            self.exchange.load_markets()
+            self._markets_loaded = True
+        except Exception:
+            pass
+
+    def _symbol_to_market_id(self, symbol: Optional[str]) -> Optional[str]:
+        if not symbol:
+            return symbol
+        try:
+            self._ensure_markets()
+            market = self.exchange.market(symbol)
+            if market:
+                return market.get("id") or symbol
+        except Exception:
+            pass
+        return str(symbol).replace("/", "").replace(":", "")
+
+    def _market_id_to_symbol(self, market_id: Optional[str]) -> Optional[str]:
+        if not market_id:
+            return market_id
+        try:
+            self._ensure_markets()
+            market = self.exchange.markets_by_id.get(market_id)  # type: ignore[attr-defined]
+            if market:
+                return market.get("symbol") or market_id
+        except Exception:
+            pass
+        return market_id
+
+    @staticmethod
+    def _float_or_none(raw: Any) -> Optional[float]:
+        try:
+            if raw is None:
+                return None
+            if isinstance(raw, str) and raw.strip() == "":
+                return None
+            return float(raw)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _int_or_none(raw: Any) -> Optional[int]:
+        try:
+            if raw is None:
+                return None
+            if isinstance(raw, str) and raw.strip() == "":
+                return None
+            return int(float(raw))
+        except Exception:
+            return None
+
+    def _normalize_closed_pnl_entry(
+        self,
+        entry: Dict[str, Any],
+        *,
+        symbol_hint: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(entry, dict):
+            return None
+
+        info = entry.get("info") if isinstance(entry.get("info"), dict) else None
+        source = info if isinstance(info, dict) else entry
+
+        symbol_id = source.get("symbol") or entry.get("symbol")
+        symbol = symbol_hint
+        if symbol is None and symbol_id:
+            symbol = self._market_id_to_symbol(symbol_id)
+        if symbol is None:
+            symbol = symbol_id
+
+        order_side = None
+        raw_side = source.get("side") or entry.get("side")
+        if isinstance(raw_side, str):
+            side_lower = raw_side.lower()
+            if side_lower in {"buy", "sell"}:
+                order_side = side_lower
+
+        position_side = None
+        if order_side is not None:
+            position_side = "buy" if order_side == "sell" else "sell"
+        else:
+            alt_side = entry.get("side")
+            if isinstance(alt_side, str):
+                alt_lower = alt_side.lower()
+                if alt_lower in {"long", "short"}:
+                    position_side = "buy" if alt_lower == "long" else "sell"
+
+        closed_size = None
+        size_candidates = [
+            source.get("closedSize"),
+            source.get("qty"),
+            source.get("closedQty"),
+            entry.get("contracts"),
+            entry.get("amount"),
+            entry.get("size"),
+        ]
+        for cand in size_candidates:
+            cand_value = self._float_or_none(cand)
+            if cand_value is not None:
+                closed_size = cand_value
+                break
+
+        avg_exit_price = self._float_or_none(
+            source.get("avgExitPrice") or entry.get("avgExitPrice")
+        )
+        if avg_exit_price is None:
+            cum_exit_value = self._float_or_none(
+                source.get("cumExitValue") or entry.get("cumExitValue")
+            )
+            if cum_exit_value is not None and closed_size not in (None, 0.0):
+                avg_exit_price = cum_exit_value / closed_size
+
+        avg_entry_price = self._float_or_none(
+            source.get("avgEntryPrice") or entry.get("avgEntryPrice")
+        )
+        if avg_entry_price is None:
+            cum_entry_value = self._float_or_none(
+                source.get("cumEntryValue") or entry.get("cumEntryValue")
+            )
+            qty_val = self._float_or_none(source.get("qty") or entry.get("qty"))
+            if cum_entry_value is not None and qty_val not in (None, 0.0):
+                avg_entry_price = cum_entry_value / qty_val
+
+        closed_pnl = self._float_or_none(
+            source.get("closedPnl")
+            or entry.get("closedPnl")
+            or source.get("realizedPnl")
+            or entry.get("realizedPnl")
+        )
+
+        open_fee = self._float_or_none(source.get("openFee") or entry.get("openFee"))
+        close_fee = self._float_or_none(source.get("closeFee") or entry.get("closeFee"))
+        funding_fee = self._float_or_none(
+            source.get("fundingFee")
+            or source.get("cumFundingFee")
+            or entry.get("fundingFee")
+            or entry.get("cumFundingFee")
+        )
+
+        created_time = self._int_or_none(
+            source.get("createdTime")
+            or entry.get("createdTime")
+            or entry.get("timestamp")
+        )
+        updated_time = self._int_or_none(
+            source.get("updatedTime")
+            or entry.get("updatedTime")
+            or entry.get("timestamp")
+        )
+
+        order_id = source.get("orderId") or entry.get("orderId") or entry.get("id")
+        exec_type = source.get("execType") or entry.get("execType")
+
+        unique_components = [
+            str(symbol_id or symbol or ""),
+            str(order_id or ""),
+            str(updated_time or created_time or ""),
+            str(order_side or position_side or ""),
+        ]
+        unique_id = ":".join(filter(None, unique_components)) or None
+
+        return {
+            "symbol": symbol,
+            "symbol_id": symbol_id,
+            "entry_side": position_side,
+            "order_side": order_side,
+            "closed_size": closed_size,
+            "avg_exit_price": avg_exit_price,
+            "avg_entry_price": avg_entry_price,
+            "closed_pnl": closed_pnl,
+            "open_fee": open_fee,
+            "close_fee": close_fee,
+            "funding_fee": funding_fee,
+            "created_time": created_time,
+            "updated_time": updated_time,
+            "order_id": order_id,
+            "exec_type": exec_type,
+            "raw": entry,
+            "unique_id": unique_id,
+        }
+
+    def get_position_history(
+        self,
+        symbol: Optional[str] = None,
+        since_ms: Optional[int] = None,
+        limit: int = 50,
+        *,
+        category: str = "linear",
+        settle_coin: Optional[str] = None,
+        max_pages: int = 5,
+    ) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        pages = 0
+
+        symbol_id = self._symbol_to_market_id(symbol) if symbol else None
+
+        while pages < max_pages:
+            request: Dict[str, Any] = {
+                "category": category,
+            }
+            if symbol_id:
+                request["symbol"] = symbol_id
+            if since_ms is not None:
+                request["startTime"] = int(since_ms)
+            if limit:
+                request["limit"] = int(min(max(limit, 1), 200))
+            if settle_coin:
+                request["settleCoin"] = settle_coin
+            if cursor:
+                request["cursor"] = cursor
+
+            merged = self._merge_params(
+                {k: v for k, v in request.items() if v is not None}
+            )
+
+            api_method = getattr(self.exchange, "privateGetV5PositionClosedPnl", None)
+            rows: List[Dict[str, Any]] = []
+            result: Dict[str, Any] = {}
+
+            if callable(api_method):
+                try:
+                    raw = api_method(merged)
+                    if isinstance(raw, dict):
+                        result = raw.get("result", {}) or {}
+                        rows = result.get("list", []) or []
+                except Exception:
+                    rows = []
+
+            if not rows:
+                try:
+                    fetch_position_history = getattr(
+                        self.exchange, "fetch_position_history", None
+                    )
+                    fetch_positions_history = getattr(
+                        self.exchange, "fetch_positions_history", None
+                    )
+                    if callable(fetch_position_history):
+                        rows = (
+                            fetch_position_history(symbol, since_ms, limit, merged)
+                            or []
+                        )
+                        for row in rows:
+                            normalized = self._normalize_closed_pnl_entry(
+                                row,
+                                symbol_hint=symbol,
+                            )
+                            if normalized:
+                                records.append(normalized)
+                        break
+                    if callable(fetch_positions_history):
+                        rows = (
+                            fetch_positions_history(symbol, since_ms, limit, merged)
+                            or []
+                        )
+                        for row in rows:
+                            normalized = self._normalize_closed_pnl_entry(
+                                row,
+                                symbol_hint=symbol,
+                            )
+                            if normalized:
+                                records.append(normalized)
+                        break
+                except Exception:
+                    break
+
+            if not rows:
+                break
+
+            for row in rows:
+                normalized = self._normalize_closed_pnl_entry(row, symbol_hint=symbol)
+                if normalized:
+                    records.append(normalized)
+
+            cursor = None
+            if isinstance(result, dict):
+                cursor = result.get("nextPageCursor") or result.get("next_page_cursor")
+
+            pages += 1
+            if not cursor:
+                break
+
+        records.sort(key=lambda r: r.get("updated_time") or r.get("created_time") or 0)
+        return records
 
     def get_balance(self, currency: str = "USDT") -> Optional[Dict[str, Any]]:
         try:
@@ -433,8 +726,6 @@ class BybitUtils:
     #         print(f"Error editing position: {e}")
     #         return None
 
-    # TODO: OrderID 저장?
-
     def close_position(self, symbol, order_id):
         try:
             # 포지션 청산
@@ -696,11 +987,10 @@ class BybitUtils:
         try:
             balance = self.get_balance("USDT")
             positions = self.get_positions() or []
-            orders = self.get_orders() or []
             return {
                 "balance": balance,
                 "positions": positions,
-                "openOrders": orders,
+                "openOrders": None,
             }
         except Exception as e:
             print(f"Error building account overview: {e}")
