@@ -11,14 +11,7 @@
 - Dockerfile이 역할별(`scheduler`, `web`)로 분리되어 Railway/Supabase 배포와 로컬 개발이 간편해졌습니다.
 - Python 3.11 + `uv`(Astral) 환경을 공식 지원합니다.
 
-<<<<<<< HEAD
 ## 디렉터리 구조
-=======
-- `app/workflows/trading.py`는 한 사이클의 자동매매 흐름을 담당합니다.
-  - 시장 컨텍스트 수집 → 프롬프트 구성 → AI 결정 파싱 → 주문 실행 → 결과 기록까지 단계별 함수로 나뉘어 있습니다.
-  - 확인(Confirm) 단계가 별도 함수로 분리되어 있어, LLM이 제시한 TP/SL/가격을 재검증하고 필요 시 스킵하도록 했습니다.
-- `app/services/journal.py`는 거래 리뷰와 저널 포맷팅 등을 담당합니다.
-- `main.py`는 로깅 설정과 작업 스케줄링만을 책임지며, 나머지 로직은 `app` 패키지로 이동했습니다.
 
 ## 실행 방법 (uv 기반)
 
@@ -50,9 +43,6 @@
 
 5. Railway / Supabase 와 같이 커맨드 기반으로 프로세스를 기동해야 하는 환경에서는 `scripts/railway-start.sh` 또는 `scripts/supabase-start.sh`를 사용하세요. 두 스크립트 모두 uv로 의존성을 동기화한 후 `uv run main.py`를 실행합니다.
 
-## 주요 환경변수
->>>>>>> 6772462b840d7044212da853ce02bce0a4cacebb
-
 ```text
 src/crypto_bot/
   core/          # 심볼·리스크 유틸리티
@@ -67,7 +57,15 @@ docs/            # 아키텍처 / 운영 문서
 main.py          # 스케줄러 진입점
 ```
 
+- `src/crypto_bot/workflows/trading.py`는 한 사이클의 자동매매 흐름을 담당합니다.
+  - 시장 컨텍스트 수집 → 프롬프트 구성 → AI 결정 파싱 → 주문 실행 → 결과 기록까지 단계별 함수로 나뉘어 있습니다.
+  - 확인(Confirm) 단계가 별도 함수로 분리되어 있어, LLM이 제시한 TP/SL/가격을 재검증하고 필요 시 스킵하도록 했습니다.
+- `src/crypto_bot/services/journal.py`는 거래 리뷰와 저널 포맷팅 등을 담당합니다.
+- `main.py`는 로깅 설정과 작업 스케줄링만을 책임지며, 나머지 로직은 `crypto_bot` 패키지에 있습니다.
+
 레거시 `app/`, `utils/` 패키지는 제거되었으며, 모든 구현은 `crypto_bot` 패키지에 있습니다.
+
+## 주요 환경변수
 
 ## 빠른 시작
 
@@ -172,14 +170,5 @@ Supabase 테이블 생성 예시는 `docs/architecture.md`를 참고하세요.
 
 ## 체크리스트
 
-<<<<<<< HEAD
-- [ ] `.env`에 OpenAI / Supabase 키를 등록했는가?
-- [ ] `uv pip install --system .`으로 의존성을 설치했는가?
-- [ ] Supabase에 `trades`, `journals` 테이블이 생성되었는가?
-- [ ] `python main.py` 실행 후 `trading.log`와 Supabase 레코드가 정상적으로 기록되는가?
-
-안정적인 운영을 위해 스테이징 환경에서 충분한 모니터링과 로그 검증을 수행한 뒤 실계좌에 적용하시기 바랍니다.
-=======
 1. 스테이징 환경에서 `.env`를 구성한 뒤, `uv run main.py`로 한 사이클 이상 실행해 로그와 DB 기록을 확인하세요.
 2. `docs/architecture.md`를 참고하여 추가 모듈 분리 또는 테스트 코드 도입 계획을 수립하세요.
->>>>>>> 6772462b840d7044212da853ce02bce0a4cacebb
