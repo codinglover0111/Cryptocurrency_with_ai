@@ -1,0 +1,4 @@
+# This lock file was bootstrapped offline. Run `uv lock` in a network-enabled
+# environment to resolve and record full dependency metadata.
+version = 1
+requires-python = ">=3.11,<3.12"

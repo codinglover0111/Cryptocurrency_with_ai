@@ -1,17 +1,14 @@
-FROM ghcr.io/astral-sh/uv:python3.11-slim
-
-ENV UV_PROJECT_ENV=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-COPY README.md ./
-COPY src ./src
+COPY pyproject.toml uv.lock ./
 
-RUN uv pip install --system --no-cache .
+RUN uv sync --no-dev
 
 COPY . .
 
-CMD ["python", "main.py"]
+ENV TZ=Asia/Seoul \
+    PYTHONUNBUFFERED=1
+
+CMD ["uv", "run", "main.py"]

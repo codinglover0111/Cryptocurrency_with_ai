@@ -20,6 +20,12 @@ main.py            # 스케줄러 엔트리포인트
 
 v2.0에서는 레거시 모듈이 제거되고 `src/crypto_bot` 이하 패키지만 유지됩니다. 프런트엔드는 별도 Next.js 레포지토리에서 관리합니다.
 
+## Runtime Environment
+
+- 프로젝트는 Python 3.11과 uv 기반으로 동작합니다.
+- 로컬 개발 및 운영 환경 모두 `uv sync`로 의존성을 준비한 뒤 `uv run main.py`를 실행하는 흐름을 권장합니다.
+- FastAPI 웹 UI는 `uv run uvicorn webapp:app --host 0.0.0.0 --port 8000`으로 기동할 수 있으며, 동일한 명령이 Docker/배포 스크립트에서도 사용됩니다.
+
 ## Runtime Flow
 
 1. `main.py`가 환경변수를 로드하고 로깅을 설정한 뒤 5분 주기 스케줄러를 기동합니다.
