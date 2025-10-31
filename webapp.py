@@ -1448,10 +1448,7 @@ def _try_ai_review(
 ) -> Optional[str]:
     """간단한 AI 리뷰 텍스트 생성. 설정이 없으면 None."""
     try:
-        provider = os.getenv("AI_PROVIDER", "gemini").lower()
-        if provider == "gemini" and not os.environ.get("GEMINI_API_KEY"):
-            return None
-        if provider != "gemini" and not os.environ.get("OPENAI_API_KEY"):
+        if not os.environ.get("OPENAI_API_KEY"):
             return None
         ai = AIProvider()
         direction = "LONG" if side == "buy" else "SHORT"

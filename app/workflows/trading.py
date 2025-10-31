@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
-from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
 from utils.risk import calculate_position_size, enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
@@ -27,6 +26,7 @@ from app.services.journal import JournalService
 
 
 LOGGER = logging.getLogger(__name__)
+OPENAI_PROVIDER_NAME = os.getenv("OPENAI_PROVIDER_NAME", "openai").lower()
 
 
 class InvalidDecisionError(Exception):
@@ -303,18 +303,6 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     current_price = df_15m["close"].iloc[-1]
 
     chart_images: Dict[str, str] = {}
-    if deps.ai_provider.provider == "gemini":
-        for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
-            try:
-                image_b64 = dataframe_to_candlestick_base64(
-                    frame_df.tail(120),
-                    deps.spot_symbol,
-                    timeframe,
-                )
-                if image_b64:
-                    chart_images[timeframe] = image_b64
-            except Exception as exc:
-                LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
 
     current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
     position_lines, pos_side = _summarize_positions(
@@ -472,35 +460,13 @@ def _request_trade_decision(
     prompt: str,
     ctx: PromptContext,
 ) -> Dict[str, Any]:
-    images_payload: Optional[List[Dict[str, Any]]] = None
-    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
-        images_payload = []
-        for timeframe in ("4h", "1h", "15m"):
-            chart_b64 = ctx.chart_images.get(timeframe)
-            if not chart_b64:
-                continue
-            images_payload.append(
-                {
-                    "b64": chart_b64,
-                    "mime": "image/png",
-                    "metadata": {
-                        "symbol": deps.spot_symbol,
-                        "contract_symbol": deps.contract_symbol,
-                        "timeframe": timeframe,
-                        "type": "candlestick",
-                    },
-                }
-            )
-        if not images_payload:
-            images_payload = None
-
     try:
-        parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
+        parsed = deps.ai_provider.decide_json(prompt)
         LOGGER.info(
             json.dumps(
                 {
                     "event": "llm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                    "provider": OPENAI_PROVIDER_NAME,
                     "parsed": parsed,
                 },
                 ensure_ascii=False,
@@ -508,13 +474,13 @@ def _request_trade_decision(
         )
         return parsed
     except Exception:
-        response = deps.ai_provider.decide(prompt, images=images_payload)
+        response = deps.ai_provider.decide(prompt)
         try:
             LOGGER.info(
                 json.dumps(
                     {
                         "event": "llm_response_raw",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                        "provider": OPENAI_PROVIDER_NAME,
                         "response": response,
                     },
                     ensure_ascii=False,
@@ -530,7 +496,7 @@ def _request_trade_decision(
                 json.dumps(
                     {
                         "event": "llm_response_parsed",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                        "provider": OPENAI_PROVIDER_NAME,
                         "parsed": value,
                     },
                     ensure_ascii=False,
@@ -967,7 +933,7 @@ def _run_confirm_step(
             json.dumps(
                 {
                     "event": "llm_confirm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                    "provider": OPENAI_PROVIDER_NAME,
                     "parsed": confirm,
                 },
                 ensure_ascii=False,

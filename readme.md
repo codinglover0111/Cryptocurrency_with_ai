@@ -23,7 +23,7 @@ utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
 
 ## 실행 방법
 
-1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `env.example` 또는 아래 환경변수 설명 참고)
+1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `.env.sample` 또는 아래 환경변수 설명 참고)
 2. Docker 환경에서 실행할 경우:
 
    ```bash
@@ -61,12 +61,12 @@ DEFAULT_LEVERAGE=5
 MAX_LOSS_PERCENT=80
 AVAILABLE_NOTIONAL_SAFETY=0.95
 
-# AI (Gemini 기본 / OpenAI 호환 선택)
-AI_PROVIDER=gemini
-GEMINI_API_KEY=...
-OPENAI_BASE_URL=...
+# AI (OpenAI 호환)
 OPENAI_API_KEY=...
+OPENAI_BASE_URL=...  # 옵션: OpenRouter/Qwen 등 OpenAI 호환 엔드포인트
 OPENAI_MODEL=...
+OPENAI_TOOLCALL=0
+OPENAI_PROVIDER_NAME=openai
 
 # 데이터 저장소 (MySQL 또는 SQLite 폴백)
 MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot
