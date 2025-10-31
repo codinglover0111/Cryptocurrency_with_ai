@@ -29,6 +29,10 @@ from app.services.journal import JournalService
 LOGGER = logging.getLogger(__name__)
 
 
+class InvalidDecisionError(Exception):
+    """Raised when the LLM trade decision payload is invalid."""
+
+
 @dataclass(slots=True)
 class AutomationDependencies:
     """Dependencies shared throughout a trading cycle."""
@@ -1024,12 +1028,46 @@ def _run_confirm_step(
     )
 
 
+def _extract_ai_status(decision: Any) -> str:
+    if not isinstance(decision, dict):
+        LOGGER.warning("Trade decision payload is not a dict: %r", decision)
+        raise InvalidDecisionError("LLM trade decision must be a JSON object")
+
+    raw_status = decision.get("Status")
+    if not raw_status:
+        raw_status = decision.get("status")
+
+    if isinstance(raw_status, str):
+        normalized = raw_status.strip().lower()
+    elif raw_status is None:
+        normalized = ""
+    else:
+        normalized = str(raw_status).strip().lower()
+
+    if normalized in {"watch", "watch/hold"}:
+        normalized = "hold"
+
+    allowed_statuses = {"hold", "short", "long", "stop"}
+    if not normalized or normalized not in allowed_statuses:
+        LOGGER.warning("Invalid AI status in decision: %r", decision)
+        raise InvalidDecisionError(f"Unknown AI status: {raw_status}")
+
+    decision["status"] = normalized
+    if (
+        not isinstance(decision.get("Status"), str)
+        or not str(decision.get("Status")).strip()
+    ):
+        decision["Status"] = normalized
+
+    return normalized
+
+
 def _execute_trade(
     deps: AutomationDependencies,
     ctx: PromptContext,
     decision: Dict[str, Any],
 ) -> None:
-    ai_status = str(decision.get("Status") or decision.get("status") or "").lower()
+    ai_status = _extract_ai_status(decision)
     if ai_status not in {"long", "short"}:
         _handle_non_trade_actions(deps, decision, ctx.current_price, ai_status)
         return
@@ -1515,7 +1553,8 @@ def _handle_non_trade_actions(
             LOGGER.error("Journal write failed: %s", exc)
         return
 
-    LOGGER.info("Unknown AI status: %s", ai_status)
+    LOGGER.warning("Unknown AI status encountered: %s", ai_status)
+    raise InvalidDecisionError(f"Unknown AI status: {ai_status}")
 
 
 def _record_skip(
