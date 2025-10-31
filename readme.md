@@ -13,6 +13,28 @@
 
 ## 디렉터리 구조
 
+```text
+src/crypto_bot/
+  core/          # 심볼·리스크 유틸리티
+  data/          # OHLCV, RSI, 차트 생성
+  integrations/  # Bybit/외부 API 연동
+  llm/           # OpenAI 클라이언트 및 프로토콜
+  persistence/   # Supabase + SQL 백엔드
+  services/      # 저널, 시장 데이터 도메인 서비스
+  workflows/     # 자동매매 오케스트레이션
+docker/          # 배포 대상별 Dockerfile
+docs/            # 아키텍처 / 운영 문서
+main.py          # 스케줄러 진입점
+```
+
+- `src/crypto_bot/workflows/trading.py`는 한 사이클의 자동매매 흐름을 담당합니다.
+  - 시장 컨텍스트 수집 → 프롬프트 구성 → AI 결정 파싱 → 주문 실행 → 결과 기록까지 단계별 함수로 나뉘어 있습니다.
+  - 확인(Confirm) 단계가 별도 함수로 분리되어 있어, LLM이 제시한 TP/SL/가격을 재검증하고 필요 시 스킵하도록 했습니다.
+- `src/crypto_bot/services/journal.py`는 거래 리뷰와 저널 포맷팅 등을 담당합니다.
+- `main.py`는 로깅 설정과 작업 스케줄링만을 책임지며, 나머지 로직은 `crypto_bot` 패키지에 있습니다.
+
+레거시 `app/`, `utils/` 패키지는 제거되었으며, 모든 구현은 `crypto_bot` 패키지에 있습니다.
+
 ## 실행 방법 (uv 기반)
 
 1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `env.sample` 또는 아래 환경변수 설명 참고)
@@ -43,29 +65,36 @@
 
 5. Railway / Supabase 와 같이 커맨드 기반으로 프로세스를 기동해야 하는 환경에서는 `scripts/railway-start.sh` 또는 `scripts/supabase-start.sh`를 사용하세요. 두 스크립트 모두 uv로 의존성을 동기화한 후 `uv run main.py`를 실행합니다.
 
+## 주요 환경변수
+
 ```text
-src/crypto_bot/
-  core/          # 심볼·리스크 유틸리티
-  data/          # OHLCV, RSI, 차트 생성
-  integrations/  # Bybit/외부 API 연동
-  llm/           # OpenAI 클라이언트 및 프로토콜
-  persistence/   # Supabase + SQL 백엔드
-  services/      # 저널, 시장 데이터 도메인 서비스
-  workflows/     # 자동매매 오케스트레이션
-docker/          # 배포 대상별 Dockerfile
-docs/            # 아키텍처 / 운영 문서
-main.py          # 스케줄러 진입점
+# 거래 기본 설정
+BybitEnv=demo  # demo | testnet | mainnet
+TRADING_SYMBOLS=XRPUSDT,WLDUSDT,ETHUSDT,BTCUSDT,SOLUSDT,DOGEUSDT
+MAX_ALLOC_PERCENT=20
+DEFAULT_LEVERAGE=5
+MAX_LOSS_PERCENT=80
+AVAILABLE_NOTIONAL_SAFETY=0.95
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini        # 기본값
+OPENAI_BASE_URL=https://api.openai.com/v1  # 선택 사항
+OPENAI_TEMPERATURE=0.2
+
+# Supabase (우선순위)
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_SCHEMA=public
+SUPABASE_TRADES_TABLE=trades
+SUPABASE_JOURNALS_TABLE=journals
+
+# SQL 폴백 (선택)
+MYSQL_URL=mysql+pymysql://user:pass@host:3306/cryptobot
+SQLITE_PATH=data/trading.sqlite
 ```
 
-- `src/crypto_bot/workflows/trading.py`는 한 사이클의 자동매매 흐름을 담당합니다.
-  - 시장 컨텍스트 수집 → 프롬프트 구성 → AI 결정 파싱 → 주문 실행 → 결과 기록까지 단계별 함수로 나뉘어 있습니다.
-  - 확인(Confirm) 단계가 별도 함수로 분리되어 있어, LLM이 제시한 TP/SL/가격을 재검증하고 필요 시 스킵하도록 했습니다.
-- `src/crypto_bot/services/journal.py`는 거래 리뷰와 저널 포맷팅 등을 담당합니다.
-- `main.py`는 로깅 설정과 작업 스케줄링만을 책임지며, 나머지 로직은 `crypto_bot` 패키지에 있습니다.
-
-레거시 `app/`, `utils/` 패키지는 제거되었으며, 모든 구현은 `crypto_bot` 패키지에 있습니다.
-
-## 주요 환경변수
+환경파일 `.env` 에 위 값을 추가하면 `TradeStore`가 순서대로 Supabase → MySQL → SQLite를 사용합니다.
 
 ## 빠른 시작
 
