@@ -87,7 +87,7 @@ class AIProvider:
                                 "reduce_only": {"type": "boolean"},
                                 "explain": {"type": "string"},
                             },
-                            "required": ["Status"],
+                            "required": ["Status", "explain"],
                         },
                     },
                 }
