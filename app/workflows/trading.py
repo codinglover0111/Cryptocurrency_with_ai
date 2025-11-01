@@ -276,7 +276,13 @@ def _summarize_positions(
                 except Exception:
                     return str(value)
 
-            side_fmt = side if side is not None else "n/a"
+            side_label = (side or "").lower()
+            if side_label in {"long", "buy"}:
+                side_fmt = "롱"
+            elif side_label in {"short", "sell"}:
+                side_fmt = "숏"
+            else:
+                side_fmt = side if side is not None else "n/a"
             size_fmt = _fmt(size_f) if size_f is not None else "n/a"
             entry_fmt = _fmt(entry_f) if entry_f is not None else "n/a"
             last_fmt = _fmt(last)
@@ -310,15 +316,16 @@ def _summarize_positions(
                     return str(value)
 
             metric_lines.append(
-                "포지션 종류={side}, 익절가={tp}, 손절가={sl}, 익절 퍼센트={tp_pct}%, "
-                "레버리지 기준 익절 퍼센트={tp_pct_lev}%, 손절 퍼센트={sl_pct}%, "
-                "레버리지 기준 손절 퍼센트={sl_pct_lev}%".format(
+                (
+                    "포지션 종류={side}, 진입가={entry}, 익절가={tp}, 손절가={sl}, "
+                    "예상 익절 수익비율(레버리지 적용 기준)={tp_pct_lev}%, "
+                    "예상 손절 수익비율(레버리지 적용 기준)={sl_pct_lev}%"
+                ).format(
                     side=side_fmt,
+                    entry=entry_fmt,
                     tp=tp_fmt,
                     sl=sl_fmt,
-                    tp_pct=_fmt_pct(pct_info.get("tp_pct")),
                     tp_pct_lev=_fmt_pct(pct_info.get("tp_pct_leverage")),
-                    sl_pct=_fmt_pct(pct_info.get("sl_pct")),
                     sl_pct_lev=_fmt_pct(pct_info.get("sl_pct_leverage")),
                 )
             )
