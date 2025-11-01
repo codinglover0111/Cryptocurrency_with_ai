@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import ta
+
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
@@ -60,6 +62,9 @@ class PromptContext:
     csv_4h: str
     csv_1h: str
     csv_15m: str
+    rsi_csv_4h: str
+    rsi_csv_1h: str
+    rsi_csv_15m: str
     current_position: List[Dict[str, Any]]
     pos_side: Optional[str]
     current_positions_lines: List[str]
@@ -327,6 +332,17 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     df_4h_full = price_helper.get_ohlcv()
     df_4h = df_4h_full.tail(42)
     csv_4h = df_4h.to_csv(index=False)
+
+    def _make_rsi_csv(df_full, df_window):
+        try:
+            if df_window is None or getattr(df_window, "empty", True):
+                return ""
+            rsi_series = ta.momentum.rsi(df_full["close"])
+            rsi_df = rsi_series.tail(len(df_window)).to_frame(name="rsi").reset_index()
+            return rsi_df.to_csv(index=False)
+        except Exception:
+            return ""
+
     price_helper.set_timeframe("1h")
     df_1h_full = price_helper.get_ohlcv()
     df_1h = df_1h_full.tail(72)
@@ -336,6 +352,10 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     df_15m = df_15m_full.tail(96)
     csv_15m = df_15m.to_csv(index=False)
     current_price = df_15m["close"].iloc[-1]
+
+    rsi_csv_4h = _make_rsi_csv(df_4h_full, df_4h)
+    rsi_csv_1h = _make_rsi_csv(df_1h_full, df_1h)
+    rsi_csv_15m = _make_rsi_csv(df_15m_full, df_15m)
 
     chart_images: Dict[str, str] = {}
     if deps.ai_provider.provider == "gemini":
@@ -438,6 +458,9 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         csv_4h=csv_4h,
         csv_1h=csv_1h,
         csv_15m=csv_15m,
+        rsi_csv_4h=rsi_csv_4h,
+        rsi_csv_1h=rsi_csv_1h,
+        rsi_csv_15m=rsi_csv_15m,
         current_position=current_position,
         pos_side=pos_side,
         current_positions_lines=position_lines,
@@ -472,6 +495,17 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"{ctx.csv_15m}\n"
         "[/CSV_15M_LAST_1D]\n"
         "[/OLCHV]\n"
+        "[RSI]\n"
+        "[RSI_4H_LAST_7D]\n"
+        f"{ctx.rsi_csv_4h}\n"
+        "[/RSI_4H_LAST_7D]\n"
+        "[RSI_1H_LAST_3D]\n"
+        f"{ctx.rsi_csv_1h}\n"
+        "[/RSI_1H_LAST_3D]\n"
+        "[RSI_15M_LAST_1D]\n"
+        f"{ctx.rsi_csv_15m}\n"
+        "[/RSI_15M_LAST_1D]\n"
+        "[/RSI]\n"
         "[CURRENT_POSITIONS]\n"
         + (
             "\n".join(ctx.current_positions_lines)
