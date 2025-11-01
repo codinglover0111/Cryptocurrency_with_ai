@@ -45,6 +45,9 @@ class BybitUtils:
                 int(os.getenv("BYBIT_TIME_SAFETY_MAX_MS", "60000")),
             )
             self._last_time_sync_ms = 0
+            self._time_resync_interval_ms = max(
+                60000, int(os.getenv("BYBIT_TIME_RESYNC_INTERVAL_MS", "300000"))
+            )
 
             # API 키와 시크릿 설정
             if mode == "demo":
@@ -137,6 +140,7 @@ class BybitUtils:
             return 15000
 
     def _default_params(self) -> Dict[str, Any]:
+        self._maybe_resync_time()
         rw = self._get_recv_window_ms()
         # Bybit는 recv_window(스네이크) 혹은 X-BAPI-RECV-WINDOW 헤더를 허용
         return {"recvWindow": rw, "recv_window": rw}
@@ -168,10 +172,20 @@ class BybitUtils:
                 # 서버 시간 - 로컬 시간 - safety => 요청 타임스탬프가 서버 시간보다 약간 작게
                 offset = int(server_time) - int(local_time) - safety_ms
                 self.exchange.options["timeDifference"] = offset
+                try:
+                    setattr(self.exchange, "timeDifference", offset)
+                except Exception:
+                    pass
             else:
                 # 폴백: ccxt의 자동 보정 시도
                 try:
                     self.exchange.load_time_difference()
+                    try:
+                        td_attr = getattr(self.exchange, "timeDifference", None)
+                        if td_attr is not None:
+                            self.exchange.options["timeDifference"] = td_attr
+                    except Exception:
+                        pass
                 except Exception:
                     pass
             self._last_time_sync_ms = self.exchange.milliseconds()
@@ -219,6 +233,16 @@ class BybitUtils:
             return True
 
         return False
+
+    def _maybe_resync_time(self) -> None:
+        try:
+            interval = getattr(self, "_time_resync_interval_ms", 300000)
+            last_sync = getattr(self, "_last_time_sync_ms", 0)
+            now = self.exchange.milliseconds()
+            if last_sync <= 0 or now - last_sync >= interval:
+                self._sync_time_with_bybit(getattr(self, "_mode", None))
+        except Exception:
+            pass
 
     def _ensure_markets(self) -> None:
         if self._markets_loaded:
