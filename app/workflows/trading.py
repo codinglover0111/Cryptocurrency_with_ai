@@ -8,8 +8,10 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import pandas as pd
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
@@ -59,8 +61,8 @@ class PromptContext:
     pos_side: Optional[str]
     current_positions_lines: List[str]
     journal_today_text: str
-    recent_reports_text: str
-    reviews_text: str
+    decision_docs_text: str
+    review_docs_text: str
     since_open_text: str
     chart_images: Dict[str, str] = field(default_factory=dict)
 
@@ -159,6 +161,28 @@ def _init_dependencies(
     return deps
 
 
+def _filter_recent_ohlcv(df: pd.DataFrame, *, days: float) -> pd.DataFrame:
+    """Limit OHLCV data to the requested recent window (in days)."""
+
+    if df is None or getattr(df, "empty", True):
+        return df
+
+    try:
+        cutoff = pd.Timestamp(datetime.utcnow() - timedelta(days=float(days)))
+    except Exception:
+        return df
+
+    try:
+        filtered = df[df.index >= cutoff]
+    except Exception:
+        return df
+
+    if getattr(filtered, "empty", True):
+        return df
+
+    return filtered
+
+
 def _summarize_positions(
     positions: Iterable[Dict[str, Any]],
     contract_symbol: str,
@@ -168,62 +192,72 @@ def _summarize_positions(
     primary_side: Optional[str] = None
     last_fallback = float(current_price or 0)
 
+    def _safe_float(value: Any) -> Optional[float]:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _fmt_price(value: Optional[float]) -> str:
+        return f"{value:.6f}" if value is not None else "n/a"
+
+    def _fmt_pct(value: Optional[float]) -> str:
+        return f"{value:.4f}%" if value is not None else "n/a"
+
+    def _fmt_side(value: Optional[str]) -> str:
+        side_str = (value or "").strip().lower()
+        if side_str in {"long", "buy"}:
+            return "롱"
+        if side_str in {"short", "sell"}:
+            return "숏"
+        return value if value else "미정"
+
     for raw in positions or []:
         try:
-            sym = raw.get("symbol") or (raw.get("info", {}) or {}).get("symbol")
+            info = raw.get("info") or {}
+            sym = raw.get("symbol") or (info if isinstance(info, dict) else {}).get(
+                "symbol"
+            )
             if sym != contract_symbol:
                 continue
-            side = raw.get("side") or (raw.get("info", {}) or {}).get("side")
+
+            side = raw.get("side") or (info if isinstance(info, dict) else {}).get(
+                "side"
+            )
             if primary_side is None and side:
                 primary_side = side
-            entry = raw.get("entryPrice") or (raw.get("info", {}) or {}).get("avgPrice")
-            contract_size = raw.get("contractSize") or (raw.get("info", {}) or {}).get(
-                "contractSize"
+
+            entry = raw.get("entryPrice") or (info if isinstance(info, dict) else {}).get(
+                "avgPrice"
             )
-            size_raw = raw.get("size") or raw.get("contracts") or raw.get("amount")
-            try:
-                size_f = float(size_raw) if size_raw is not None else None
-            except Exception:
-                size_f = None
-            if (
-                size_f is not None
-                and raw.get("size") is None
-                and raw.get("contracts") is not None
-                and contract_size is not None
-            ):
-                try:
-                    size_f = size_f * float(contract_size)
-                except Exception:
-                    pass
-            mark = raw.get("markPrice") or (raw.get("info", {}) or {}).get("markPrice")
+            mark = raw.get("markPrice") or (info if isinstance(info, dict) else {}).get(
+                "markPrice"
+            )
             try:
                 last = float(mark) if mark is not None else float(last_fallback)
             except Exception:
                 last = last_fallback
-            try:
-                entry_f = float(entry) if entry is not None else None
-            except Exception:
-                entry_f = None
-            unreal = raw.get("unrealizedPnl") or (raw.get("info", {}) or {}).get(
-                "unrealisedPnl"
+
+            entry_f = _safe_float(entry)
+            tp_raw = raw.get("takeProfit") or (info if isinstance(info, dict) else {}).get(
+                "takeProfit"
             )
-            pct_raw = raw.get("percentage") or (raw.get("info", {}) or {}).get(
+            sl_raw = raw.get("stopLoss") or (info if isinstance(info, dict) else {}).get(
+                "stopLoss"
+            )
+            lev_raw = raw.get("leverage") or (info if isinstance(info, dict) else {}).get(
+                "leverage"
+            )
+            pct_raw = raw.get("percentage") or (info if isinstance(info, dict) else {}).get(
                 "unrealisedPnlPcnt"
             )
-            tp = raw.get("takeProfit") or (raw.get("info", {}) or {}).get("takeProfit")
-            sl = raw.get("stopLoss") or (raw.get("info", {}) or {}).get("stopLoss")
-            lev = raw.get("leverage") or (raw.get("info", {}) or {}).get("leverage")
 
-            def _safe_float(value: Any) -> Optional[float]:
-                try:
-                    if value is None:
-                        return None
-                    return float(value)
-                except Exception:
-                    return None
-
-            lev_f = _safe_float(lev)
+            lev_f = _safe_float(lev_raw)
             pct_raw_f = _safe_float(pct_raw)
+            tp_f = _safe_float(tp_raw)
+            sl_f = _safe_float(sl_raw)
 
             directional_pct: Optional[float] = None
             if entry_f is not None and entry_f not in (0.0, -0.0):
@@ -236,64 +270,112 @@ def _summarize_positions(
                 except Exception:
                     directional_pct = None
 
-            pct_baseline: Optional[float] = None
             pct_leverage: Optional[float] = None
-
             if directional_pct is not None:
-                pct_baseline = directional_pct
-                if lev_f is not None and lev_f != 0.0:
+                if lev_f is not None and lev_f not in (0.0, -0.0):
                     pct_leverage = directional_pct * lev_f
                 else:
                     pct_leverage = directional_pct
             elif pct_raw_f is not None:
                 pct_leverage = pct_raw_f
-                if lev_f is not None and lev_f not in (0.0, -0.0):
-                    try:
-                        pct_baseline = pct_raw_f / lev_f
-                    except Exception:
-                        pct_baseline = None
-                else:
-                    pct_baseline = None
-            else:
-                pct_baseline = None
-                pct_leverage = None
 
-            def _fmt(value: Any) -> str:
-                try:
-                    return f"{float(value):.6f}"
-                except Exception:
-                    return str(value)
-
-            side_fmt = side if side is not None else "n/a"
-            size_fmt = _fmt(size_f) if size_f is not None else "n/a"
-            entry_fmt = _fmt(entry_f) if entry_f is not None else "n/a"
-            last_fmt = _fmt(last)
-            tp_fmt = _fmt(tp) if tp is not None else "n/a"
-            sl_fmt = _fmt(sl) if sl is not None else "n/a"
-            lev_fmt = _fmt(lev) if lev is not None else "n/a"
-            unreal_fmt = _fmt(unreal) if unreal is not None else "n/a"
-            pct_fmt = _fmt(pct_leverage) if pct_leverage is not None else "n/a"
-            pct_raw_fmt = _fmt(pct_baseline) if pct_baseline is not None else "n/a"
+            tp_sl_pct = _compute_tp_sl_percentages(
+                entry_price=entry_f if entry_f is not None else 0.0,
+                tp=tp_f,
+                sl=sl_f,
+                ai_status=side or "",
+                leverage=lev_f if lev_f is not None else 0.0,
+            )
 
             lines.append(
-                f"side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
-                f"tp={tp_fmt}, sl={sl_fmt}, lev={lev_fmt}, unreal={unreal_fmt} "
-                f"(roi_lev={pct_fmt}%, roi_raw={pct_raw_fmt}%)"
+                "  "
+                + ", ".join(
+                    [
+                        f"포지션 종류={_fmt_side(side)}",
+                        f"익절가={_fmt_price(tp_f)}",
+                        f"손절가={_fmt_price(sl_f)}",
+                        f"레버리지 기준 익절 퍼센트={_fmt_pct(tp_sl_pct.get('tp_pct_leverage'))}",
+                        f"레버리지 기준 손절 퍼센트={_fmt_pct(tp_sl_pct.get('sl_pct_leverage'))}",
+                        f"레버리지 기준 현재 수익률={_fmt_pct(pct_leverage)}",
+                    ]
+                )
             )
         except Exception:
             continue
+
     return lines, primary_side
 
 
+def _filter_active_positions(
+    positions: Iterable[Dict[str, Any]], contract_symbol: str
+) -> List[Dict[str, Any]]:
+    """Return only active positions that match the provided contract symbol."""
+
+    active: List[Dict[str, Any]] = []
+    for raw in positions or []:
+        try:
+            info = raw.get("info") or {}
+            sym = raw.get("symbol") or (info if isinstance(info, dict) else {}).get(
+                "symbol"
+            )
+            if sym != contract_symbol:
+                continue
+
+            size_candidates = [
+                raw.get("contracts"),
+                raw.get("amount"),
+                raw.get("size"),
+            ]
+            if isinstance(info, dict):
+                size_candidates.extend(
+                    [
+                        info.get("contracts"),
+                        info.get("amount"),
+                        info.get("size"),
+                        info.get("positionAmt"),
+                    ]
+                )
+
+            max_size = 0.0
+            for cand in size_candidates:
+                if cand is None:
+                    continue
+                try:
+                    max_size = max(max_size, abs(float(cand)))
+                except Exception:
+                    continue
+
+            if max_size > 1e-8:
+                active.append(raw)
+        except Exception:
+            continue
+
+    return active
+
+
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
-    price_helper = bybit_utils(deps.spot_symbol, "4h", 100)
-    df_4h = price_helper.get_ohlcv()
+    price_helper = bybit_utils(deps.spot_symbol, "4h", 200)
+
+    df_4h_all = price_helper.get_ohlcv()
+    df_4h = _filter_recent_ohlcv(df_4h_all, days=7)
+    if getattr(df_4h, "empty", True):
+        df_4h = df_4h_all
     csv_4h = df_4h.to_csv()
+
     price_helper.set_timeframe("1h")
-    df_1h = price_helper.get_ohlcv()
+    price_helper.limit = max(getattr(price_helper, "limit", 200), 200)
+    df_1h_all = price_helper.get_ohlcv()
+    df_1h = _filter_recent_ohlcv(df_1h_all, days=3)
+    if getattr(df_1h, "empty", True):
+        df_1h = df_1h_all
     csv_1h = df_1h.to_csv()
+
     price_helper.set_timeframe("15m")
-    df_15m = price_helper.get_ohlcv()
+    price_helper.limit = max(getattr(price_helper, "limit", 200), 200)
+    df_15m_all = price_helper.get_ohlcv()
+    df_15m = _filter_recent_ohlcv(df_15m_all, days=1)
+    if getattr(df_15m, "empty", True):
+        df_15m = df_15m_all
     csv_15m = df_15m.to_csv()
     current_price = df_15m["close"].iloc[-1]
 
@@ -311,10 +393,82 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
             except Exception as exc:
                 LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
 
-    current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
-    position_lines, pos_side = _summarize_positions(
-        current_position, deps.contract_symbol, current_price
-    )
+    all_positions = deps.bybit.get_positions() or []
+
+    position_lines: List[str] = []
+    pos_side: Optional[str] = None
+    current_position: List[Dict[str, Any]] = []
+    summaries: Dict[str, List[str]] = {}
+    symbol_contract_map: Dict[str, str] = {}
+
+    for sym in deps.symbols:
+        try:
+            _, contract_sym = to_ccxt_symbols(sym)
+        except Exception:
+            # Skip malformed symbols while still keeping prompt generation alive
+            continue
+
+        symbol_contract_map[sym] = contract_sym
+
+        symbol_positions = _filter_active_positions(all_positions, contract_sym)
+
+        fallback_price = current_price if contract_sym == deps.contract_symbol else 0.0
+        if symbol_positions and contract_sym != deps.contract_symbol:
+            try:
+                fallback_price = (
+                    deps.bybit.get_last_price(contract_sym) or fallback_price
+                )
+            except Exception:
+                pass
+
+        lines, symbol_primary = _summarize_positions(
+            symbol_positions, contract_sym, fallback_price
+        )
+
+        summaries[sym] = lines
+        if contract_sym == deps.contract_symbol:
+            current_position = symbol_positions
+            pos_side = symbol_primary
+
+    seen = set()
+    for sym in deps.symbols:
+        if sym in seen:
+            continue
+        seen.add(sym)
+        lines = summaries.get(sym, [])
+        if lines:
+            position_lines.append(f"{sym}:")
+            position_lines.extend(lines)
+        else:
+            position_lines.append(f"{sym}: (none)")
+
+    if not position_lines:
+        position_lines.append("(none)")
+
+    contract_symbols = set(symbol_contract_map.values())
+    for raw in all_positions:
+        try:
+            info = raw.get("info") or {}
+            sym = raw.get("symbol") or (info if isinstance(info, dict) else {}).get(
+                "symbol"
+            )
+        except Exception:
+            continue
+        if not sym or sym in contract_symbols:
+            continue
+        extra_positions = _filter_active_positions(all_positions, sym)
+        if not extra_positions:
+            continue
+        fallback_price = current_price
+        try:
+            fallback_price = deps.bybit.get_last_price(sym) or fallback_price
+        except Exception:
+            pass
+        lines, _ = _summarize_positions(extra_positions, sym, fallback_price)
+        if not lines:
+            continue
+        position_lines.append(f"{sym}:")
+        position_lines.extend(lines)
 
     try:
         journals_today_df = deps.store.fetch_journals(
@@ -333,31 +487,75 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     except Exception:
         journal_today_text = ""
 
-    recent_reports_text = ""
+    decision_docs_text = ""
     try:
-        recent_df = deps.store.fetch_journals(
+        decisions_df = deps.store.fetch_journals(
             symbol=deps.contract_symbol,
-            types=["decision", "review"],
-            limit=10,
-            ascending=False,
+            types=["decision"],
+            since_ts=datetime.utcnow() - timedelta(hours=24),
+            limit=200,
+            ascending=True,
         )
-        if recent_df is not None and not recent_df.empty:
+        if decisions_df is not None and not decisions_df.empty:
             lines = []
-            for _, row in recent_df.iterrows():
+            for _, row in decisions_df.sort_values("ts").iterrows():
                 ts = row.get("ts")
                 ts_str = (
                     ts.strftime("%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
                 )
-                lines.append(
-                    f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
-                )
-            recent_reports_text = "\n".join(lines)
+                entry_type = (row.get("entry_type") or "").strip()
+                reason = (row.get("reason") or "").strip()
+                content = (row.get("content") or "").strip()
+                if len(content) > 500:
+                    content = content[:500]
+                parts = [f"[{ts_str}]"]
+                if entry_type:
+                    parts.append(f"({entry_type})")
+                if reason:
+                    parts.append(reason)
+                if content:
+                    if reason or entry_type:
+                        parts.append(f"| {content}")
+                    else:
+                        parts.append(content)
+                line = " ".join(parts).strip()
+                lines.append(line)
+            decision_docs_text = "\n".join(lines)
     except Exception:
-        recent_reports_text = ""
+        decision_docs_text = ""
 
-    reviews_text = deps.journal_service.format_trade_reviews_for_prompt(
-        deps.contract_symbol
-    )
+    review_docs_text = ""
+    try:
+        reviews_df = deps.store.fetch_journals(
+            symbol=deps.contract_symbol,
+            types=["review"],
+            limit=5,
+            ascending=False,
+        )
+        if reviews_df is not None and not reviews_df.empty:
+            lines = []
+            for _, row in reviews_df.iterrows():
+                ts = row.get("ts")
+                ts_str = (
+                    ts.strftime("%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
+                )
+                reason = (row.get("reason") or "").strip()
+                content = (row.get("content") or "").strip()
+                if len(content) > 500:
+                    content = content[:500]
+                parts = [f"[{ts_str}]"]
+                if reason:
+                    parts.append(reason)
+                if content:
+                    if reason:
+                        parts.append(f"| {content}")
+                    else:
+                        parts.append(content)
+                line = " ".join(parts).strip()
+                lines.append(line)
+            review_docs_text = "\n".join(lines)
+    except Exception:
+        review_docs_text = ""
 
     since_open_text = ""
     try:
@@ -400,8 +598,8 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         pos_side=pos_side,
         current_positions_lines=position_lines,
         journal_today_text=journal_today_text,
-        recent_reports_text=recent_reports_text,
-        reviews_text=reviews_text,
+        decision_docs_text=decision_docs_text,
+        review_docs_text=review_docs_text,
         since_open_text=since_open_text,
         chart_images=chart_images,
     )
@@ -416,15 +614,15 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
         f"심볼당 기본 배분 비율: {deps.per_symbol_alloc_pct:.2f}%\n"
-        "[CSV_4H]\n"
+        "[OLCHV_4H_LAST_7D]\n"
         f"{ctx.csv_4h}\n"
-        "[/CSV_4H]\n"
-        "[CSV_1H]\n"
+        "[/OLCHV_4H_LAST_7D]\n"
+        "[OLCHV_1H_LAST_3D]\n"
         f"{ctx.csv_1h}\n"
-        "[/CSV_1H]\n"
-        "[CSV_15M]\n"
+        "[/OLCHV_1H_LAST_3D]\n"
+        "[OLCHV_15M_LAST_1D]\n"
         f"{ctx.csv_15m}\n"
-        "[/CSV_15M]\n"
+        "[/OLCHV_15M_LAST_1D]\n"
         "[CURRENT_POSITIONS]\n"
         + (
             "\n".join(ctx.current_positions_lines)
@@ -434,11 +632,17 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         + "\n[/CURRENT_POSITIONS]\n"
     )
 
-    if ctx.reviews_text:
-        prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
-    if ctx.recent_reports_text:
+    if ctx.decision_docs_text:
         prompt += (
-            "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
+            "[DECISION_DOCS_24H]\n"
+            + ctx.decision_docs_text
+            + "\n[/DECISION_DOCS_24H]\n"
+        )
+    if ctx.review_docs_text:
+        prompt += (
+            "[REVIEW_DOCS_LATEST5]\n"
+            + ctx.review_docs_text
+            + "\n[/REVIEW_DOCS_LATEST5]\n"
         )
     if ctx.journal_today_text:
         prompt += (
