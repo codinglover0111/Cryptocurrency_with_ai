@@ -33,6 +33,18 @@ class BybitUtils:
                 if mode_env in {"demo", "testnet", "mainnet"}
                 else ("testnet" if is_testnet else "mainnet")
             )
+            self._mode = mode
+            self._time_safety_ms = max(
+                0, int(os.getenv("BYBIT_TIME_SAFETY_MS", "5000"))
+            )
+            self._time_safety_step_ms = max(
+                50, int(os.getenv("BYBIT_TIME_SAFETY_STEP_MS", "2500"))
+            )
+            self._time_safety_max_ms = max(
+                self._time_safety_ms,
+                int(os.getenv("BYBIT_TIME_SAFETY_MAX_MS", "60000")),
+            )
+            self._last_time_sync_ms = 0
 
             # API 키와 시크릿 설정
             if mode == "demo":
@@ -81,7 +93,7 @@ class BybitUtils:
                 }
             )
             self._markets_loaded = False
-            self.positions: Optional[dict] = None
+            self.positions: Optional[List[dict]] = None
             # 기본 recv_window 헤더 보장
             try:
                 recv_ms = int(os.getenv("BYBIT_RECV_WINDOW_MS", "15000"))
@@ -135,8 +147,9 @@ class BybitUtils:
             base.update(params)
         return base
 
-    def _sync_time_with_bybit(self, mode: str) -> None:
+    def _sync_time_with_bybit(self, mode: Optional[str] = None) -> None:
         try:
+            mode_name = mode or getattr(self, "_mode", "mainnet")
             # 서버 시간 조회 후 timeDifference를 직접 설정(보수적 안전 마진 적용)
             # 일부 환경에서 load_time_difference가 동작하지 않는 경우 대비
             server_time = None
@@ -150,7 +163,7 @@ class BybitUtils:
             if server_time is not None:
                 local_time = self.exchange.milliseconds()
                 # 안전 마진(밀리초). 로컬 시계가 서버보다 앞서는 경우를 더 엄격히 보정
-                safety_ms = int(os.getenv("BYBIT_TIME_SAFETY_MS", "500"))
+                safety_ms = max(0, getattr(self, "_time_safety_ms", 0))
                 # timeDifference는 ccxt의 nonce 계산에 더해짐
                 # 서버 시간 - 로컬 시간 - safety => 요청 타임스탬프가 서버 시간보다 약간 작게
                 offset = int(server_time) - int(local_time) - safety_ms
@@ -161,13 +174,51 @@ class BybitUtils:
                     self.exchange.load_time_difference()
                 except Exception:
                     pass
+            self._last_time_sync_ms = self.exchange.milliseconds()
             td = self.exchange.options.get("timeDifference")
             rw = self.exchange.options.get("recvWindow") or self.exchange.options.get(
                 "recvwindow"
             )
-            print(f"Bybit env: {mode}, timeDifference: {td} ms, recvWindow: {rw} ms")
+            print(
+                f"Bybit env: {mode_name}, timeDifference: {td} ms, recvWindow: {rw} ms, safety: {getattr(self, '_time_safety_ms', 'n/a')} ms"
+            )
         except Exception:
             pass
+
+    def _handle_time_error(self, error: Exception) -> bool:
+        try:
+            message = str(error)
+        except Exception:
+            message = ""
+        lowered = message.lower()
+        if not lowered:
+            return False
+
+        if any(
+            token in lowered
+            for token in (
+                "retcode",
+                "invalid nonce",
+                "timestamp",
+                "recv_window",
+            )
+        ) and ("10002" in lowered or "invalid nonce" in lowered):
+            step = max(50, getattr(self, "_time_safety_step_ms", 250))
+            maximum = max(
+                getattr(self, "_time_safety_ms", 500),
+                getattr(self, "_time_safety_max_ms", 5000),
+            )
+            current = getattr(self, "_time_safety_ms", 500)
+            if current < maximum:
+                current = min(maximum, current + step)
+                self._time_safety_ms = current
+            print(
+                f"Bybit timestamp desync detected ({message}); resyncing with safety {getattr(self, '_time_safety_ms', 'n/a')} ms"
+            )
+            self._sync_time_with_bybit()
+            return True
+
+        return False
 
     def _ensure_markets(self) -> None:
         if self._markets_loaded:
@@ -505,37 +556,46 @@ class BybitUtils:
             print(f"Error fetching ticker: {e}")
             return None
 
-    def get_positions(self):
-        """포지션 정보들 조회"""
+    def _fetch_positions(self) -> Optional[List[dict]]:
         try:
-            # symbols=None 로 전체, recv_window 포함
-            self.positions: dict = self.exchange.fetch_positions(
-                None, self._default_params()
-            )
-
-            if self.positions is None:
-                return None
-
-            return self.positions
-
+            positions = self.exchange.fetch_positions(None, self._default_params())
+            return positions or []
         except Exception as e:
+            handled = self._handle_time_error(e)
+            if handled:
+                try:
+                    positions = self.exchange.fetch_positions(
+                        None, self._default_params()
+                    )
+                    return positions or []
+                except Exception as retry_error:
+                    print(f"Error fetching positions after resync: {retry_error}")
+                    return None
             print(f"Error fetching positions: {e}")
             return None
 
+    def get_positions(self):
+        """포지션 정보들 조회"""
+        positions = self._fetch_positions()
+        if positions is None:
+            self.positions = None
+            return None
+
+        self.positions = positions
+        return self.positions
+
     def get_position(self, num=1):
         """하나의 포지션 정보만 조회"""
+        positions = self._fetch_positions()
+        if positions is None:
+            self.positions = None
+            return None
+
+        self.positions = positions
+
         try:
-            self.positions: dict = self.exchange.fetch_positions(
-                None, self._default_params()
-            )
-
-            if self.positions is None:
-                return None
-
             return self.positions[num]["info"]
-
-        except Exception as e:
-            print(f"Error fetching positions: {e}")
+        except Exception:
             return None
 
     def open_position(self, position: Open_Position):
@@ -742,9 +802,11 @@ class BybitUtils:
             if getattr(self.exchange, "close_all_positions", None):
                 return self.exchange.close_all_positions()
             # 폴백: 보유 포지션을 reduceOnly 시장가로 청산
-            positions = self.exchange.fetch_positions(None, self._default_params())
+            positions = self._fetch_positions()
+            if positions is None:
+                return None
             results = []
-            for p in positions or []:
+            for p in positions:
                 amount = p.get("contracts") or p.get("amount") or p.get("size")
                 side = p.get("side")
                 symbol = p.get("symbol")
@@ -854,9 +916,9 @@ class BybitUtils:
     def get_positions_by_symbol(self, symbol: str):
         """지정 심볼의 *활성* 포지션만 반환 (수량이 0인 항목은 제외)."""
         try:
-            positions = (
-                self.exchange.fetch_positions(None, self._default_params()) or []
-            )
+            positions = self._fetch_positions()
+            if positions is None:
+                return []
             active_positions = []
             for p in positions:
                 if p.get("symbol") != symbol:
@@ -899,9 +961,9 @@ class BybitUtils:
     def close_symbol_positions(self, symbol: str):
         """특정 심볼의 모든 포지션을 reduceOnly 시장가로 청산"""
         try:
-            positions = (
-                self.exchange.fetch_positions(None, self._default_params()) or []
-            )
+            positions = self._fetch_positions()
+            if positions is None:
+                return None
             results = []
             for p in positions:
                 if p.get("symbol") != symbol:
@@ -938,9 +1000,9 @@ class BybitUtils:
                 return []
             if pct > 100:
                 pct = 100.0
-            positions = (
-                self.exchange.fetch_positions(None, self._default_params()) or []
-            )
+            positions = self._fetch_positions()
+            if positions is None:
+                return None
             results = []
             for p in positions:
                 if p.get("symbol") != symbol:

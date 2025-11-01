@@ -75,6 +75,11 @@ class TradeStore:
                         self._engine = sa.create_engine(self._db_url, **kwargs)
             except Exception as e:
                 print(f"Warning: failed to init database engine: {e}")
+        if self._engine is not None:
+            try:
+                self._ensure_tables()
+            except Exception as e:
+                print(f"Warning: failed to ensure tables: {e}")
 
     def record_trade(self, trade: Dict[str, Any]) -> None:
         # DB 기록 전용
@@ -109,6 +114,55 @@ class TradeStore:
             )
         except Exception as e:
             print(f"Error writing database: {e}")
+
+    def _ensure_tables(self) -> None:
+        if self._engine is None:
+            return
+
+        metadata = sa.MetaData()
+
+        trades_kwargs: Dict[str, Any] = {}
+        journals_kwargs: Dict[str, Any] = {}
+        if not self._is_sqlite:
+            trades_kwargs["mysql_charset"] = "utf8mb4"
+            journals_kwargs["mysql_charset"] = "utf8mb4"
+
+        _trades_table = sa.Table(
+            "trades",
+            metadata,
+            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column("ts", sa.DateTime, nullable=False, server_default=sa.func.now()),
+            sa.Column("symbol", sa.String(64)),
+            sa.Column("side", sa.String(8)),
+            sa.Column("type", sa.String(8)),
+            sa.Column("price", sa.Float),
+            sa.Column("quantity", sa.Float),
+            sa.Column("tp", sa.Float),
+            sa.Column("sl", sa.Float),
+            sa.Column("leverage", sa.Float),
+            sa.Column("status", sa.String(16)),
+            sa.Column("order_id", sa.String(128)),
+            sa.Column("pnl", sa.Float),
+            **trades_kwargs,
+        )
+
+        meta_column = sa.Text if self._is_sqlite else sa.JSON
+
+        _journals_table = sa.Table(
+            "journals",
+            metadata,
+            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column("ts", sa.DateTime, nullable=False, server_default=sa.func.now()),
+            sa.Column("symbol", sa.String(64)),
+            sa.Column("entry_type", sa.String(16)),
+            sa.Column("content", sa.Text),
+            sa.Column("reason", sa.Text),
+            sa.Column("meta", meta_column),
+            sa.Column("ref_order_id", sa.String(128)),
+            **journals_kwargs,
+        )
+
+        metadata.create_all(self._engine, checkfirst=True)
 
     def load_trades(self) -> pd.DataFrame:
         # DB에서만 읽기
