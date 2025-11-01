@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
@@ -63,8 +63,9 @@ class PromptContext:
     current_position: List[Dict[str, Any]]
     pos_side: Optional[str]
     current_positions_lines: List[str]
+    position_metrics_lines: List[str]
     journal_today_text: str
-    recent_reports_text: str
+    decision_docs_text: str
     reviews_text: str
     since_open_text: str
     chart_images: Dict[str, str] = field(default_factory=dict)
@@ -168,8 +169,9 @@ def _summarize_positions(
     positions: Iterable[Dict[str, Any]],
     contract_symbol: str,
     current_price: float,
-) -> Tuple[List[str], Optional[str]]:
+) -> Tuple[List[str], Optional[str], List[str]]:
     lines: List[str] = []
+    metric_lines: List[str] = []
     primary_side: Optional[str] = None
     last_fallback = float(current_price or 0)
 
@@ -285,26 +287,59 @@ def _summarize_positions(
                 f"tp={tp_fmt}, sl={sl_fmt}, lev={lev_fmt}, unreal_PNL={unreal_fmt} "
                 f"(ROI_leverage={pct_fmt}%, ROI_baseline={pct_raw_fmt}%)"
             )
+
+            pct_info = _compute_tp_sl_percentages(
+                entry_price=entry,
+                tp=tp,
+                sl=sl,
+                ai_status=str(side or "").lower(),
+                leverage=float(lev_f or 0.0),
+            )
+
+            def _fmt_pct(value: Optional[float]) -> str:
+                if value is None:
+                    return "n/a"
+                try:
+                    return f"{value:.2f}"
+                except Exception:
+                    return str(value)
+
+            metric_lines.append(
+                "포지션 종류={side}, 익절가={tp}, 손절가={sl}, 익절 퍼센트={tp_pct}%, "
+                "레버리지 기준 익절 퍼센트={tp_pct_lev}%, 손절 퍼센트={sl_pct}%, "
+                "레버리지 기준 손절 퍼센트={sl_pct_lev}%".format(
+                    side=side_fmt,
+                    tp=tp_fmt,
+                    sl=sl_fmt,
+                    tp_pct=_fmt_pct(pct_info.get("tp_pct")),
+                    tp_pct_lev=_fmt_pct(pct_info.get("tp_pct_leverage")),
+                    sl_pct=_fmt_pct(pct_info.get("sl_pct")),
+                    sl_pct_lev=_fmt_pct(pct_info.get("sl_pct_leverage")),
+                )
+            )
         except Exception:
             continue
-    return lines, primary_side
+    return lines, primary_side, metric_lines
 
 
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     price_helper = bybit_utils(deps.spot_symbol, "4h", 100)
-    df_4h = price_helper.get_ohlcv()
-    csv_4h = df_4h.to_csv()
+    df_4h_full = price_helper.get_ohlcv()
+    df_4h = df_4h_full.tail(42)
+    csv_4h = df_4h.to_csv(index=False)
     price_helper.set_timeframe("1h")
-    df_1h = price_helper.get_ohlcv()
-    csv_1h = df_1h.to_csv()
+    df_1h_full = price_helper.get_ohlcv()
+    df_1h = df_1h_full.tail(72)
+    csv_1h = df_1h.to_csv(index=False)
     price_helper.set_timeframe("15m")
-    df_15m = price_helper.get_ohlcv()
-    csv_15m = df_15m.to_csv()
+    df_15m_full = price_helper.get_ohlcv()
+    df_15m = df_15m_full.tail(96)
+    csv_15m = df_15m.to_csv(index=False)
     current_price = df_15m["close"].iloc[-1]
 
     chart_images: Dict[str, str] = {}
     if deps.ai_provider.provider == "gemini":
-        for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
+        for timeframe, frame_df in ("4h", df_4h_full), ("1h", df_1h_full), ("15m", df_15m_full):
             try:
                 image_b64 = dataframe_to_candlestick_base64(
                     frame_df.tail(120),
@@ -317,7 +352,7 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
                 LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
 
     current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
-    position_lines, pos_side = _summarize_positions(
+    position_lines, pos_side, position_metrics = _summarize_positions(
         current_position, deps.contract_symbol, current_price
     )
 
@@ -338,27 +373,29 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     except Exception:
         journal_today_text = ""
 
-    recent_reports_text = ""
+    decision_docs_text = ""
     try:
-        recent_df = deps.store.fetch_journals(
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        decisions_df = deps.store.fetch_journals(
             symbol=deps.contract_symbol,
-            types=["decision", "review"],
-            limit=10,
-            ascending=False,
+            types=["decision"],
+            since_ts=cutoff,
+            limit=200,
+            ascending=True,
         )
-        if recent_df is not None and not recent_df.empty:
+        if decisions_df is not None and not decisions_df.empty:
             lines = []
-            for _, row in recent_df.iterrows():
+            for _, row in decisions_df.iterrows():
                 ts = row.get("ts")
                 ts_str = (
                     ts.strftime("%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
                 )
                 lines.append(
-                    f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
+                    f"[{ts_str}] {row.get('reason') or ''} | {row.get('content') or ''}"
                 )
-            recent_reports_text = "\n".join(lines)
+            decision_docs_text = "\n".join(lines)
     except Exception:
-        recent_reports_text = ""
+        decision_docs_text = ""
 
     reviews_text = deps.journal_service.format_trade_reviews_for_prompt(
         deps.contract_symbol
@@ -404,8 +441,9 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         current_position=current_position,
         pos_side=pos_side,
         current_positions_lines=position_lines,
+        position_metrics_lines=position_metrics,
         journal_today_text=journal_today_text,
-        recent_reports_text=recent_reports_text,
+        decision_docs_text=decision_docs_text,
         reviews_text=reviews_text,
         since_open_text=since_open_text,
         chart_images=chart_images,
@@ -423,15 +461,17 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
         f"심볼당 기본 배분 비율: {deps.per_symbol_alloc_pct:.2f}%\n"
-        "[CSV_4H]\n"
+        "[OLCHV]\n"
+        "[CSV_4H_LAST_7D]\n"
         f"{ctx.csv_4h}\n"
-        "[/CSV_4H]\n"
-        "[CSV_1H]\n"
+        "[/CSV_4H_LAST_7D]\n"
+        "[CSV_1H_LAST_3D]\n"
         f"{ctx.csv_1h}\n"
-        "[/CSV_1H]\n"
-        "[CSV_15M]\n"
+        "[/CSV_1H_LAST_3D]\n"
+        "[CSV_15M_LAST_1D]\n"
         f"{ctx.csv_15m}\n"
-        "[/CSV_15M]\n"
+        "[/CSV_15M_LAST_1D]\n"
+        "[/OLCHV]\n"
         "[CURRENT_POSITIONS]\n"
         + (
             "\n".join(ctx.current_positions_lines)
@@ -441,12 +481,20 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         + "\n[/CURRENT_POSITIONS]\n"
     )
 
-    if ctx.reviews_text:
-        prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
-    if ctx.recent_reports_text:
+    if ctx.position_metrics_lines:
         prompt += (
-            "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
+            "[CURRENT_POSITION_VALUES]\n"
+            + "\n".join(ctx.position_metrics_lines)
+            + "\n[/CURRENT_POSITION_VALUES]\n"
         )
+    if ctx.decision_docs_text:
+        prompt += (
+            "[DECISION_DOCS_LAST_24H]\n"
+            + ctx.decision_docs_text
+            + "\n[/DECISION_DOCS_LAST_24H]\n"
+        )
+    if ctx.reviews_text:
+        prompt += "[REVIEW_DOCS_RECENT_5]\n" + ctx.reviews_text + "\n[/REVIEW_DOCS_RECENT_5]\n"
     if ctx.journal_today_text:
         prompt += (
             "[JOURNALS_TODAY]\n" + ctx.journal_today_text + "\n[/JOURNALS_TODAY]\n"
@@ -467,32 +515,12 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     return prompt
 
 
-def _request_trade_decision(
+def _perform_trade_decision_request(
     deps: AutomationDependencies,
     prompt: str,
-    ctx: PromptContext,
+    images_payload: Optional[List[Dict[str, Any]]],
 ) -> Dict[str, Any]:
-    images_payload: Optional[List[Dict[str, Any]]] = None
-    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
-        images_payload = []
-        for timeframe in ("4h", "1h", "15m"):
-            chart_b64 = ctx.chart_images.get(timeframe)
-            if not chart_b64:
-                continue
-            images_payload.append(
-                {
-                    "b64": chart_b64,
-                    "mime": "image/png",
-                    "metadata": {
-                        "symbol": deps.spot_symbol,
-                        "contract_symbol": deps.contract_symbol,
-                        "timeframe": timeframe,
-                        "type": "candlestick",
-                    },
-                }
-            )
-        if not images_payload:
-            images_payload = None
+    """Execute a single trade decision request without retries."""
 
     try:
         parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
@@ -539,6 +567,64 @@ def _request_trade_decision(
         except Exception as exc:
             LOGGER.error("LLM parsed logging failed: %s", exc)
         return value
+
+
+def _request_trade_decision(
+    deps: AutomationDependencies,
+    prompt: str,
+    ctx: PromptContext,
+) -> Dict[str, Any]:
+    images_payload: Optional[List[Dict[str, Any]]] = None
+    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
+        images_payload = []
+        for timeframe in ("4h", "1h", "15m"):
+            chart_b64 = ctx.chart_images.get(timeframe)
+            if not chart_b64:
+                continue
+            images_payload.append(
+                {
+                    "b64": chart_b64,
+                    "mime": "image/png",
+                    "metadata": {
+                        "symbol": deps.spot_symbol,
+                        "contract_symbol": deps.contract_symbol,
+                        "timeframe": timeframe,
+                        "type": "candlestick",
+                    },
+                }
+            )
+        if not images_payload:
+            images_payload = None
+
+    delays = [5, 10, 15]
+    max_attempts = len(delays) + 1
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return _perform_trade_decision_request(deps, prompt, images_payload)
+        except Exception as exc:
+            last_exc = exc
+            LOGGER.error(
+                "판단 요청 실패 (시도 %s/%s): %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+            if attempt == max_attempts:
+                break
+            wait_seconds = delays[attempt - 1]
+            LOGGER.info(
+                "판단 요청 재시도 %s/%s: %s초 후 재시도",
+                attempt + 1,
+                max_attempts,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("판단 요청에 실패했습니다.")
 
 
 def _normalize_bool(val: Any) -> bool:
@@ -1703,3 +1789,17 @@ def run_loss_review(
     )
     journal_service = JournalService(store, AIProvider())
     journal_service.review_losing_trades(since_minutes=since_minutes)
+
+
+def run_profit_review(
+    symbols: Sequence[str] | None = None, since_minutes: int = 600
+) -> None:
+    del symbols
+    store = TradeStore(
+        StorageConfig(
+            mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
+        )
+    )
+    journal_service = JournalService(store, AIProvider())
+    journal_service.review_profitable_trades(since_minutes=since_minutes)
