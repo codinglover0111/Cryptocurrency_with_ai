@@ -1,77 +1,60 @@
-from google.ai.generativelanguage_v1beta.types import content
-import google.generativeai as genai
+from __future__ import annotations
+
 import json
+import os
+from typing import Any, Dict, Optional
+
+from openai import OpenAI  # type: ignore
 
 
 class make_to_object:
-    def __init__(self):
-        generation_config = {
-            "temperature": 0,
-            "top_p": 0.0,
-            "top_k": 40,
-            "max_output_tokens": 400,
-            "response_schema": content.Schema(
-                type=content.Type.OBJECT,
-                required=["Status"],
-                properties={
-                    "Status": content.Schema(
-                        type=content.Type.STRING, enum=["hold", "short", "long", "stop"]
-                    ),
-                    "tp": content.Schema(
-                        type=content.Type.NUMBER,
-                    ),
-                    "sl": content.Schema(
-                        type=content.Type.NUMBER,
-                    ),
-                    "price": content.Schema(
-                        type=content.Type.NUMBER,
-                    ),
-                    "buy_now": content.Schema(
-                        type=content.Type.BOOLEAN,
-                    ),
-                    "stop_order": content.Schema(
-                        type=content.Type.BOOLEAN,
-                    ),
-                    "leverage": content.Schema(
-                        type=content.Type.NUMBER,
-                    ),
-                    "close_now": content.Schema(
-                        type=content.Type.BOOLEAN,
-                    ),
-                    "close_percent": content.Schema(
-                        type=content.Type.NUMBER,
-                    ),
-                    "reduce_only": content.Schema(
-                        type=content.Type.BOOLEAN,
-                    ),
-                },
-            ),
-            "response_mime_type": "application/json",
-        }
-        self.model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash-exp",
-            generation_config=generation_config,
-            system_instruction=(
-                "입력된 트레이딩 결론을 JSON 오브젝트로 변환하시오.\n"
-                "필수: Status in [hold,short,long,stop]. 선택: price, sl, tp, buy_now, leverage.\n"
-                "시장가의 경우 buy_now를 true로 설정합니다.\n"
-                "레버리지를 숫자로 제안할 수 있습니다(예: 3, 5, 10)."
-            ),
-        )
-        self.chat_session = self.model.start_chat(history=[])
+    """LLM 응답을 JSON 오브젝트로 강제 변환하기 위한 헬퍼."""
 
-    def make_it_object(self, inputs: str):
-        response = self.chat_session.send_message(inputs)
-        obj = json.loads(response.text)
-        return obj
+    def __init__(
+        self, client: Optional[OpenAI] = None, *, model: Optional[str] = None
+    ) -> None:
+        if client is None:
+            base_url = os.environ.get("OPENAI_BASE_URL")
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY가 필요합니다")
+            if base_url:
+                self._client = OpenAI(base_url=base_url, api_key=api_key)
+            else:
+                self._client = OpenAI(api_key=api_key)
+        else:
+            self._client = client
+
+        self._model = model or os.environ.get("OPENAI_MODEL", "deepseek-reasoner")
+        self._system_prompt = (
+            "입력된 트레이딩 결론을 JSON 오브젝트로 변환하시오.\n"
+            "필수: Status in [hold, short, long, stop]. 선택: price, sl, tp, buy_now, stop_order, leverage, close_now, close_percent, reduce_only, explain.\n"
+            "숫자 필드는 숫자 타입, 불리언 필드는 불리언 타입으로 반환하십시오."
+        )
+
+    def make_it_object(self, inputs: str) -> Dict[str, Any]:
+        response = self._client.chat.completions.create(
+            model=self._model,
+            messages=[
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": inputs},
+            ],
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content
+        if not content:
+            raise RuntimeError("OpenAI JSON 변환 응답이 비었습니다.")
+        return json.loads(content)
 
 
 if __name__ == "__main__":
     test = make_to_object()
-    value = test.make_it_object("""**Summary:**
+    value = test.make_it_object(
+        """**Summary:**
 
 * **Action:** **SHORT** XRP/USDT
 * **Entry:** **Market Order** around **2.6943**
 * **Stop Loss:** **2.85**
-* **Take Profit:** **2.40**""")
+* **Take Profit:** **2.40**"""
+    )
     print(value)

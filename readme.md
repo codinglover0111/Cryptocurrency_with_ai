@@ -61,12 +61,12 @@ DEFAULT_LEVERAGE=5
 MAX_LOSS_PERCENT=80
 AVAILABLE_NOTIONAL_SAFETY=0.95
 
-# AI (Gemini 기본 / OpenAI 호환 선택)
-AI_PROVIDER=gemini
-GEMINI_API_KEY=...
-OPENAI_BASE_URL=...
+# AI (OpenAI 호환)
 OPENAI_API_KEY=...
-OPENAI_MODEL=...
+# 필요 시 OpenRouter 등 호환 엔드포인트 지정
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_TOOLCALL=0
 
 # 데이터 저장소 (MySQL 또는 SQLite 폴백)
 MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot
