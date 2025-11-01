@@ -177,6 +177,22 @@ class JournalService:
 
     def review_losing_trades(self, since_minutes: int = 600) -> None:
         """Review recent losing trades and store AI-generated feedback."""
+
+        self._review_trades_by_result("loss", since_minutes=since_minutes)
+
+    def review_profitable_trades(self, since_minutes: int = 600) -> None:
+        """Review recent profitable trades and store AI-generated feedback."""
+
+        self._review_trades_by_result("win", since_minutes=since_minutes)
+
+    def _review_trades_by_result(
+        self,
+        result_type: str,
+        *,
+        since_minutes: int,
+    ) -> None:
+        """Shared implementation for loss/profit trade reviews."""
+
         try:
             trades_df = self.store.load_trades()
             if trades_df is None or getattr(trades_df, "empty", True):
@@ -187,12 +203,24 @@ class JournalService:
             now_utc = pd.Timestamp.now(tz="UTC")
             since_ts = now_utc - pd.Timedelta(minutes=int(since_minutes))
 
-            closed_recent = trades_df[
-                (trades_df["status"] == "closed")
-                & (trades_df["pnl"].notna())
-                & (trades_df["pnl"] <= 0)
-                & (trades_df["ts"] >= since_ts)
-            ].copy()
+            result_type_lower = result_type.lower().strip()
+            if result_type_lower == "loss":
+                closed_recent = trades_df[
+                    (trades_df["status"] == "closed")
+                    & (trades_df["pnl"].notna())
+                    & (trades_df["pnl"] < 0)
+                    & (trades_df["ts"] >= since_ts)
+                ].copy()
+            elif result_type_lower == "win":
+                closed_recent = trades_df[
+                    (trades_df["status"] == "closed")
+                    & (trades_df["pnl"].notna())
+                    & (trades_df["pnl"] > 0)
+                    & (trades_df["ts"] >= since_ts)
+                ].copy()
+            else:
+                LOGGER.error("Unknown review result type: %s", result_type)
+                return
 
             if getattr(closed_recent, "empty", True):
                 return
@@ -307,7 +335,7 @@ class JournalService:
                 ]
                 prompt += "\n".join(sections)
 
-                delays = [5, 10, 60]
+                delays = [5, 10, 15]
                 max_attempts = len(delays) + 1
                 review_text = None
 
@@ -317,7 +345,8 @@ class JournalService:
                         break
                     except Exception as exc:
                         LOGGER.error(
-                            "Trade review LLM failed (attempt %s/%s): %s",
+                            "Trade review LLM failed (%s 리뷰, 시도 %s/%s): %s",
+                            "손실" if result_type_lower == "loss" else "익절",
                             attempt,
                             max_attempts,
                             exc,
@@ -326,7 +355,8 @@ class JournalService:
                             break
                         wait_seconds = delays[attempt - 1]
                         LOGGER.info(
-                            "Trade review LLM 재시도 %s/%s: %s초 후 재시도",
+                            "%s 리뷰 재시도 %s/%s: %s초 후 재시도",
+                            "손실" if result_type_lower == "loss" else "익절",
                             attempt + 1,
                             max_attempts,
                             wait_seconds,
@@ -356,4 +386,4 @@ class JournalService:
                 except Exception as exc:
                     LOGGER.error("Journal review write failed: %s", exc)
         except Exception as exc:
-            LOGGER.error("review_losing_trades failed: %s", exc)
+            LOGGER.error("review_%s_trades failed: %s", result_type, exc)
