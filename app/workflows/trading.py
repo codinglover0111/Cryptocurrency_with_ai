@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -27,6 +28,57 @@ from app.services.journal import JournalService
 
 
 LOGGER = logging.getLogger(__name__)
+
+RETRY_DELAYS_SECONDS: Tuple[int, ...] = (5, 10, 15)
+_VALID_AI_STATUSES = {"hold", "long", "short", "stop"}
+_STATUS_ALIASES = {"watch": "hold"}
+
+
+class AutomationRetryableError(RuntimeError):
+    """재시도 대상이 되는 자동화 오류."""
+
+
+class UnknownAIStatusError(AutomationRetryableError):
+    def __init__(self, status: Any) -> None:
+        self.status = status
+        super().__init__(f"Unknown AI status: {status}")
+
+
+class InvalidDecisionStructureError(AutomationRetryableError):
+    def __init__(self, decision: Any) -> None:
+        self.decision_type = type(decision).__name__
+        super().__init__(f"Invalid AI decision structure: {self.decision_type}")
+
+
+def _normalize_ai_status_value(status: Any) -> Optional[str]:
+    try:
+        normalized = str(status or "").strip().lower()
+    except Exception:
+        return None
+    if not normalized:
+        return None
+    normalized = _STATUS_ALIASES.get(normalized, normalized)
+    if normalized not in _VALID_AI_STATUSES:
+        return None
+    return normalized
+
+
+def _validate_decision(decision: Any) -> Dict[str, Any]:
+    if not isinstance(decision, dict):
+        raise InvalidDecisionStructureError(decision)
+
+    status_value = decision.get("Status")
+    if status_value is None:
+        status_value = decision.get("status")
+
+    normalized = _normalize_ai_status_value(status_value)
+    if normalized is None:
+        raise UnknownAIStatusError(status_value)
+
+    validated = dict(decision)
+    validated["Status"] = normalized
+    validated["status"] = normalized
+    return validated
 
 
 @dataclass(slots=True)
@@ -1476,17 +1528,79 @@ def _record_skip(
         pass
 
 
+def _run_automation_cycle_with_retry(deps: AutomationDependencies) -> None:
+    attempt_total = len(RETRY_DELAYS_SECONDS) + 1
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, attempt_total + 1):
+        try:
+            ctx = _gather_prompt_context(deps)
+            prompt = _build_prompt(deps, ctx)
+            decision_raw = _request_trade_decision(deps, prompt, ctx)
+            decision = _validate_decision(decision_raw)
+
+            if _handle_close_now(deps, ctx, decision):
+                return
+
+            _execute_trade(deps, ctx, decision)
+            return
+        except UnknownAIStatusError as exc:
+            last_error = exc
+            LOGGER.warning(
+                "Unknown AI status '%s' (attempt %s/%s)",
+                exc.status,
+                attempt,
+                attempt_total,
+            )
+        except InvalidDecisionStructureError as exc:
+            last_error = exc
+            LOGGER.warning(
+                "Invalid AI decision structure '%s' (attempt %s/%s)",
+                exc.decision_type,
+                attempt,
+                attempt_total,
+            )
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            LOGGER.warning(
+                "AI response JSON decode failed (attempt %s/%s): %s",
+                attempt,
+                attempt_total,
+                exc,
+            )
+        except AttributeError as exc:
+            if "'list' object has no attribute 'get'" in str(exc):
+                last_error = exc
+                LOGGER.warning(
+                    "AI response attribute error (attempt %s/%s): %s",
+                    attempt,
+                    attempt_total,
+                    exc,
+                )
+            else:
+                raise
+
+        if attempt == attempt_total:
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("AI decision failed for unknown reasons")
+
+        delay = RETRY_DELAYS_SECONDS[attempt - 1]
+        LOGGER.info(
+            "Retrying automation in %s seconds (attempt %s/%s)",
+            delay,
+            attempt + 1,
+            attempt_total,
+        )
+        time.sleep(delay)
+
+
 def automation_for_symbol(
     symbol_usdt: str, *, symbols: Sequence[str] | None = None
 ) -> None:
     try:
         deps = _init_dependencies(symbol_usdt, symbols)
-        ctx = _gather_prompt_context(deps)
-        prompt = _build_prompt(deps, ctx)
-        decision = _request_trade_decision(deps, prompt, ctx)
-        if _handle_close_now(deps, ctx, decision):
-            return
-        _execute_trade(deps, ctx, decision)
+        _run_automation_cycle_with_retry(deps)
     except Exception as exc:
         LOGGER.error("Error in automation: %s", exc)
 
