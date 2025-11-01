@@ -1,14 +1,20 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     user: "1000:1000"
     container_name: crypto_bot
+    depends_on:
+      mysql:
+        condition: service_healthy
     env_file:
       - .env
     environment:
-      SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
+      SQLITE_PATH: /app/data/trading.sqlite
+      FORCE_SQLITE: ${FORCE_SQLITE:-1}
+      MYSQL_URL: ${MYSQL_URL:-mysql+pymysql://${MYSQL_USER:-crypto}:${MYSQL_PASSWORD:-crypto_pass}@mysql:3306/${MYSQL_DATABASE:-crypto}}
     volumes:
       - ./.env:/app/.env
       - ./trading.log:/app/trading.log
@@ -17,22 +23,56 @@ services:
     command: ["python", "main.py"]
 
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.web
     user: "1000:1000"
     container_name: crypto_web
     depends_on:
-      - app
+      app:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     env_file:
       - .env
     environment:
       TESTNET: ${TESTNET:-1}
-      SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
+      SQLITE_PATH: /app/data/trading.sqlite
+      FORCE_SQLITE: ${FORCE_SQLITE:-1}
+      MYSQL_URL: ${MYSQL_URL:-mysql+pymysql://${MYSQL_USER:-crypto}:${MYSQL_PASSWORD:-crypto_pass}@mysql:3306/${MYSQL_DATABASE:-crypto}}
     ports:
       - "8000:8000"
-    command: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
     volumes:
       - ./.env:/app/.env
       - ./data:/app/data
+
+  mysql:
+    image: mysql:8.0
+    container_name: crypto_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-crypto}
+      MYSQL_USER: ${MYSQL_USER:-crypto}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-crypto_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
+      TZ: Asia/Seoul
+    command: >-
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD:-root_pass}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:
