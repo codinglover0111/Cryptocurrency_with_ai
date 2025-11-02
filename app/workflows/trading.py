@@ -418,6 +418,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
         f"이미 진입한 포지션의 레버리지는 조절할 수 없습니다.\n"
         f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
+        "잃는 것을 무서워 하지마세요. 언제나 다음이 있습니다.\n"
         "[TRADING_TIPS]\n"
         """# 저항선이란
 
