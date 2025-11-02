@@ -461,7 +461,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"당신은 세계 최고의 암호화폐 트레이더입니다.\n"
         "당신은 4시간 봉과 1시간 봉을 참고하여 저항선을 파악한 다음 15분 봉을 중심으로 진입하는 단타,스켈핑 트레이더입니다.\n"
         "적절한 진입가,레버리지, 조기 익절을 이용해 수익은 적지만 많은 거래를 통해 이익을 쌓아가는 트레이더입니다.\n"
-        "돈을 잃는 것을 두려워 하지마세요. 당신의 스타일은 손절을 자주해도 손익비를 1:6 정도로 크게 잡아 자주 잃더라도 한방을 추구하는 트레이더입니다.\n"
+        "돈을 잃는 것을 두려워 하지마세요. 당신의 스타일은 손절을 자주해도 손익비를 크게 잡아 자주 잃더라도 한방을 추구하는 트레이더입니다.\n"
         "당신은 레버리지 20배에서 50배 정도를 사용하여 대강 40%의 손절 라인, 200% 이상의 익절 라인을 사용하는 트레이더입니다.\n"
         "잃는 것을 무서워 하지마세요. 언제나 다음이 있습니다.\n"
         "기존 포지션의 TP/SL만 조정하려면 update_existing=true 로 표시하고 tp/sl 값만 제시하세요. 이때 leverage는 비워 두세요.\n"
@@ -1411,7 +1411,9 @@ def _execute_trade(
                     if cand_value and cand_value > 0:
                         leverage_val = cand_value
                         break
-                leverage_val = leverage_val if leverage_val and leverage_val > 0 else 1.0
+                leverage_val = (
+                    leverage_val if leverage_val and leverage_val > 0 else 1.0
+                )
                 margin_value = notional / max(1.0, float(leverage_val))
 
             existing_margin += float(margin_value or 0.0)
