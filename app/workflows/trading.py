@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import ta
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
@@ -68,6 +71,9 @@ class PromptContext:
     reviews_text: str
     since_open_text: str
     chart_images: Dict[str, str] = field(default_factory=dict)
+    rsi_4h: Optional[float] = None
+    rsi_1h: Optional[float] = None
+    rsi_15m: Optional[float] = None
 
 
 def _compute_tp_sl_percentages(
@@ -290,6 +296,24 @@ def _summarize_positions(
     return lines, primary_side
 
 
+def _latest_rsi_value(df: Any, window: int = 14) -> Optional[float]:
+    try:
+        if df is None or getattr(df, "empty", True):
+            return None
+        rsi_series = ta.momentum.rsi(df["close"], window=window)
+        if rsi_series is None or rsi_series.empty:
+            return None
+        value = rsi_series.iloc[-1]
+        if value is None:
+            return None
+        value_f = float(value)
+        if math.isnan(value_f):
+            return None
+        return round(value_f, 2)
+    except Exception:
+        return None
+
+
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     price_helper = bybit_utils(deps.spot_symbol, "4h", 100)
     df_4h = price_helper.get_ohlcv()
@@ -301,6 +325,10 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     df_15m = price_helper.get_ohlcv()
     csv_15m = df_15m.to_csv()
     current_price = df_15m["close"].iloc[-1]
+
+    rsi_4h = _latest_rsi_value(df_4h)
+    rsi_1h = _latest_rsi_value(df_1h)
+    rsi_15m = _latest_rsi_value(df_15m)
 
     chart_images: Dict[str, str] = {}
     if deps.ai_provider.provider == "gemini":
@@ -409,13 +437,31 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         reviews_text=reviews_text,
         since_open_text=since_open_text,
         chart_images=chart_images,
+        rsi_4h=rsi_4h,
+        rsi_1h=rsi_1h,
+        rsi_15m=rsi_15m,
     )
 
 
 def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    def _format_rsi(value: Optional[float]) -> str:
+        try:
+            if value is None:
+                return "n/a"
+            return f"{float(value):.2f}"
+        except Exception:
+            return "n/a"
+
+    rsi_4h_str = _format_rsi(ctx.rsi_4h)
+    rsi_1h_str = _format_rsi(ctx.rsi_1h)
+    rsi_15m_str = _format_rsi(ctx.rsi_15m)
+
     prompt = (
-        f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
+        f"당신은 세계 최고의 암호화폐 트레이더입니다.\n"
+        "당신은 4시간 봉과 1시간 봉을 참고하여 15분 봉을 중심을 이용한 단타 트레이더입니다.\n"
+        "낮은 승률에 고레버리지를 이용해 최대 수익을 추구하는 트레이더입니다.\n"
         f"이미 진입한 포지션의 레버리지는 조절할 수 없습니다.\n"
         f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
         "기존 포지션의 TP/SL만 조정하려면 update_existing=true 로 표시하고 tp/sl 값만 제시하세요. 이때 leverage는 비워 두세요.\n"
@@ -432,6 +478,9 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         "[CSV_15M]\n"
         f"{ctx.csv_15m}\n"
         "[/CSV_15M]\n"
+        f"[RSI_4H] {rsi_4h_str} [/RSI_4H]\n"
+        f"[RSI_1H] {rsi_1h_str} [/RSI_1H]\n"
+        f"[RSI_15M] {rsi_15m_str} [/RSI_15M]\n"
         "[CURRENT_POSITIONS]\n"
         + (
             "\n".join(ctx.current_positions_lines)
