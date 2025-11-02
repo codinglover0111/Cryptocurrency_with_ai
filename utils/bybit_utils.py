@@ -981,6 +981,7 @@ class BybitUtils:
     def get_positions_by_symbol(self, symbol: str):
         """지정 심볼의 *활성* 포지션만 반환 (수량이 0인 항목은 제외)."""
         try:
+            self._sync_time_with_bybit(self.exchange.options.get("mode", "mainnet"))
             positions = (
                 self.exchange.fetch_positions(None, self._default_params()) or []
             )
