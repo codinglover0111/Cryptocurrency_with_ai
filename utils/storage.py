@@ -8,7 +8,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, Union
+from typing import Optional, Dict, Any, Tuple, Union, List
 
 import pandas as pd
 import sqlalchemy as sa
@@ -185,6 +185,80 @@ class TradeStore:
             )
         except Exception as e:
             print(f"Error writing database: {e}")
+
+    def update_open_trades_tp_sl(
+        self,
+        symbol: str,
+        *,
+        side: Optional[str] = None,
+        tp: Optional[float] = None,
+        sl: Optional[float] = None,
+    ) -> int:
+        """Update TP/SL for currently opened trades in storage.
+
+        Returns the number of rows affected. Only updates when TP/SL values
+        are provided and the storage engine is configured.
+        """
+
+        if self._engine is None:
+            return 0
+
+        symbol_key = str(symbol or "").strip()
+        if not symbol_key:
+            return 0
+
+        set_clauses: List[str] = []
+        params: Dict[str, Any] = {"symbol": symbol_key, "status": "opened"}
+
+        if tp is not None:
+            try:
+                params["tp"] = float(tp)
+                set_clauses.append("tp = :tp")
+            except Exception:
+                pass
+
+        if sl is not None:
+            try:
+                params["sl"] = float(sl)
+                set_clauses.append("sl = :sl")
+            except Exception:
+                pass
+
+        if not set_clauses:
+            return 0
+
+        where_clauses = ["symbol = :symbol", "status = :status"]
+
+        side_values: List[str] = []
+        if side is not None:
+            try:
+                norm = str(side).strip().lower()
+            except Exception:
+                norm = ""
+            if norm in {"long", "buy"}:
+                side_values = ["long", "buy"]
+            elif norm in {"short", "sell"}:
+                side_values = ["short", "sell"]
+
+        if side_values:
+            placeholders = ", ".join(
+                f":side{i}" for i in range(len(side_values))
+            )
+            where_clauses.append(f"LOWER(side) IN ({placeholders})")
+            for idx, value in enumerate(side_values):
+                params[f"side{idx}"] = value
+
+        query = sa.text(
+            f"UPDATE trades SET {', '.join(set_clauses)} WHERE {' AND '.join(where_clauses)}"
+        )
+
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(query, params)
+                return int(getattr(result, "rowcount", 0) or 0)
+        except Exception as exc:  # pragma: no cover - runtime logging only
+            LOGGER.error("Failed to update trades TP/SL: %s", exc)
+            return 0
 
     @staticmethod
     def _drop_duplicate_orders(df: pd.DataFrame) -> pd.DataFrame:

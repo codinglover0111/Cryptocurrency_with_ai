@@ -966,6 +966,17 @@ def _handle_update_existing_positions(
             }
         )
 
+        try:
+            if tp_val is not None or applied_sl is not None:
+                deps.store.update_open_trades_tp_sl(
+                    deps.contract_symbol,
+                    side=pos_side,
+                    tp=tp_val,
+                    sl=applied_sl,
+                )
+        except Exception as exc:
+            LOGGER.error("Trade store TP/SL update failed: %s", exc)
+
     if not success:
         LOGGER.error("update_existing 요청으로 TP/SL을 수정하지 못했습니다.")
         _record_skip(
