@@ -995,7 +995,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             return
 
     try:
-    bybit = BybitUtils(is_testnet=_is_testnet_mode())
+        bybit = BybitUtils(is_testnet=_is_testnet_mode())
     except Exception:
         return
 
