@@ -1078,40 +1078,22 @@ def _execute_trade(
     if should_skip:
         return
 
-    max_loss_env = os.getenv("MAX_LOSS_PERCENT")
     leverage_factor = max(1.0, float(leverage or 1.0))
-    if max_loss_env is not None:
+    max_lev_loss_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT")
+    if max_lev_loss_env is not None:
         try:
-            max_loss_pct = float(max_loss_env)
+            max_leveraged_loss_pct = float(max_lev_loss_env)
         except Exception:
-            max_loss_pct = 80.0
+            max_leveraged_loss_pct = 80.0
     else:
-        base_max_loss_pct = 4.0
-        max_loss_pct = base_max_loss_pct * leverage_factor
-        cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
-        cap_value: Optional[float]
-        if cap_env is not None:
-            try:
-                cap_value = float(cap_env)
-            except Exception:
-                cap_value = None
-        else:
-            cap_value = 95.0
-        if cap_value is not None:
-            max_loss_pct = min(max_loss_pct, cap_value)
+        max_leveraged_loss_pct = 80.0
 
-    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "85")
-    try:
-        leveraged_cap = float(leveraged_cap_env)
-    except Exception:
-        leveraged_cap = 85.0
-    if leveraged_cap > 0:
-        leveraged_raw_cap = (
-            leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
-        )
-        if leveraged_raw_cap > 0:
-            max_loss_pct = min(max_loss_pct, leveraged_raw_cap)
-
+    max_leveraged_loss_pct = max(0.0, max_leveraged_loss_pct)
+    max_loss_pct = (
+        max_leveraged_loss_pct / leverage_factor
+        if leverage_factor > 0
+        else max_leveraged_loss_pct
+    )
     max_loss_pct = max(0.0, max_loss_pct)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
         try:
