@@ -1165,6 +1165,21 @@ def _execute_trade(
     balance_total = balance_info.get("total") or 0
     balance_free = balance_info.get("free") or 0
 
+    try:
+        num_symbols_avail = max(1, len(deps.symbols))
+    except Exception:
+        num_symbols_avail = 1
+
+    equity_for_sizing = float(balance_total or 0)
+    try:
+        free_equity = float(balance_free or 0)
+        if free_equity > 0:
+            equity_for_sizing = min(equity_for_sizing, free_equity)
+    except Exception:
+        pass
+
+    per_symbol_equity = equity_for_sizing / float(num_symbols_avail)
+
     risk_percent = 20.0
     max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct)))
     leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
@@ -1263,7 +1278,7 @@ def _execute_trade(
     )
 
     quantity = calculate_position_size(
-        balance_usdt=float(balance_total or 0),
+        balance_usdt=float(per_symbol_equity),
         entry_price=float(entry_price),
         stop_price=float(stop_price),
         risk_percent=risk_percent,
@@ -1271,11 +1286,6 @@ def _execute_trade(
         leverage=leverage,
         min_quantity=min_qty,
     )
-
-    try:
-        num_symbols_avail = max(1, len(deps.symbols))
-    except Exception:
-        num_symbols_avail = 1
 
     try:
         avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
