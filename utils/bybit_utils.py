@@ -244,6 +244,44 @@ class BybitUtils:
         except Exception:
             pass
 
+    def get_time_sync_info(self, *, force: bool = False) -> Dict[str, Any]:
+        info: Dict[str, Any] = {
+            "mode": getattr(self, "_mode", None),
+            "time_safety_ms": getattr(self, "_time_safety_ms", None),
+            "time_resync_interval_ms": getattr(self, "_time_resync_interval_ms", None),
+            "last_time_sync_ms": getattr(self, "_last_time_sync_ms", None),
+        }
+
+        try:
+            if force:
+                self._sync_time_with_bybit(getattr(self, "_mode", None))
+            else:
+                self._maybe_resync_time()
+        except Exception as sync_err:
+            info["sync_error"] = str(sync_err)
+
+        try:
+            options = getattr(self.exchange, "options", {}) or {}
+            info["time_difference_option"] = options.get("timeDifference")
+            info["recv_window"] = options.get("recvWindow") or options.get("recvwindow")
+        except Exception:
+            info["time_difference_option"] = None
+            info["recv_window"] = None
+
+        try:
+            info["time_difference_attr"] = getattr(
+                self.exchange, "timeDifference", None
+            )
+        except Exception:
+            info["time_difference_attr"] = None
+
+        try:
+            info["local_timestamp_ms"] = self.exchange.milliseconds()
+        except Exception:
+            info["local_timestamp_ms"] = None
+
+        return info
+
     def _ensure_markets(self) -> None:
         if self._markets_loaded:
             return

@@ -4,6 +4,16 @@ async function fetchJSON(path) {
   return await res.json();
 }
 
+const TIME_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+async function syncBybitTime(force = false) {
+  try {
+    await fetchJSON(`/api/bybit_time?force=${force ? "1" : "0"}`);
+  } catch (err) {
+    console.warn("Bybit 시간 동기화 실패", err);
+  }
+}
+
 function el(id) {
   return document.getElementById(id);
 }
@@ -966,7 +976,9 @@ window.addEventListener("DOMContentLoaded", () => {
   refreshAll();
   // 초기 자동 조회 1회는 유지
   refreshJournals();
+  syncBybitTime(true);
   setInterval(refreshAll, 10000);
+  setInterval(() => syncBybitTime(true), TIME_SYNC_INTERVAL_MS);
 });
 
 async function submitJournal() {

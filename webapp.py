@@ -141,6 +141,28 @@ def _startup():
     pass
 
 
+@app.get("/api/bybit_time")
+def api_bybit_time(force: int = 0):
+    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    info = bybit.get_time_sync_info(force=bool(force))
+    last_sync_ms = info.get("last_time_sync_ms")
+    if isinstance(last_sync_ms, (int, float)) and last_sync_ms > 0:
+        info["last_time_sync_iso"] = (
+            datetime.fromtimestamp(last_sync_ms / 1000.0, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    now_ms = info.get("local_timestamp_ms")
+    if isinstance(now_ms, (int, float)) and now_ms > 0:
+        info["local_timestamp_iso"] = (
+            datetime.fromtimestamp(now_ms / 1000.0, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    info["force"] = bool(force)
+    return info
+
+
 @app.get("/health")
 def health():
     return {
