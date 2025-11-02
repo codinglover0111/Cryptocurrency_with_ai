@@ -140,12 +140,11 @@ def _compute_tp_sl_percentages(
 def _init_dependencies(
     symbol_usdt: str, symbols: Sequence[str] | None
 ) -> AutomationDependencies:
-    is_testnet = bool(int(os.getenv("TESTNET", "1")))
     all_symbols = list(symbols) if symbols else parse_trading_symbols()
     spot_symbol, contract_symbol = to_ccxt_symbols(symbol_usdt)
     per_symbol_pct = per_symbol_allocation(all_symbols)
 
-    bybit = BybitUtils(is_testnet)
+    bybit = BybitUtils()
     store = TradeStore(
         StorageConfig(
             mysql_url=os.getenv("MYSQL_URL"),
