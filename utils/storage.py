@@ -2,14 +2,79 @@
 # ruff: noqa: E722, BLE001
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 import datetime as dt
+import logging
+import os
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, Union
 
 import pandas as pd
 import sqlalchemy as sa
+from sqlalchemy.engine import make_url
+
+LOGGER = logging.getLogger(__name__)
+
+
+def ensure_mysql_database(db_url: str) -> None:
+    """Ensure the MySQL database exists, creating it when absent.
+
+    Retries connection attempts based on environment configuration.
+    """
+
+    if not db_url:
+        return
+
+    try:
+        url = make_url(db_url)
+    except Exception as exc:  # pragma: no cover - defensive, logs for runtime issues
+        LOGGER.warning("잘못된 MYSQL_URL: %s", exc)
+        raise
+
+    if not url.drivername.startswith("mysql"):
+        return
+
+    database = (url.database or "").strip()
+    if not database:
+        raise ValueError("MYSQL_URL에 데이터베이스 이름이 포함되어야 합니다")
+
+    safe_database = database.replace("`", "")
+
+    attempts = int(os.getenv("MYSQL_BOOTSTRAP_ATTEMPTS", "20"))
+    delay = float(os.getenv("MYSQL_BOOTSTRAP_DELAY", "3"))
+
+    connect_url = url.set(database=None)
+
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(1, attempts + 1):
+        engine = None
+        try:
+            engine = sa.create_engine(connect_url)
+            with engine.connect() as conn:
+                conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+                    sa.text(
+                        f"CREATE DATABASE IF NOT EXISTS `{safe_database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                    )
+                )
+            LOGGER.info("MySQL 데이터베이스 '%s' 확인 완료", safe_database)
+            return
+        except Exception as exc:  # pragma: no cover - runtime dependent
+            last_exc = exc
+            LOGGER.warning(
+                "[%s/%s] MySQL 데이터베이스 준비 대기 중: %s",
+                attempt,
+                attempts,
+                exc,
+            )
+            time.sleep(delay)
+        finally:
+            if engine is not None:
+                engine.dispose()
+
+    if last_exc:
+        raise last_exc
 
 
 @dataclass
@@ -56,7 +121,18 @@ class TradeStore:
                 if self._is_sqlite:
                     kwargs["connect_args"] = {"check_same_thread": False}
                 else:
-                    kwargs["pool_pre_ping"] = True
+                    try:
+                        ensure_mysql_database(self._db_url)
+                        kwargs["pool_pre_ping"] = True
+                    except Exception as exc:
+                        print(
+                            f"Warning: failed to prepare MySQL database ({exc}); falling back to SQLite"
+                        )
+                        self._db_url, self._is_sqlite = StorageConfig(
+                            sqlite_path=self.config.sqlite_path
+                        ).resolve()
+                        kwargs = {"connect_args": {"check_same_thread": False}}
+
                 self._engine = sa.create_engine(self._db_url, **kwargs)
                 # 연결 확인 및 실패 시 SQLite로 폴백
                 if not self._is_sqlite:

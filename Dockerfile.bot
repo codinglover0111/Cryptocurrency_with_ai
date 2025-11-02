@@ -1,0 +1,25 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# 환경 변수 기본값 설정 (실행 시 덮어쓰기 가능)
+ENV TZ=Asia/Seoul \
+    PYTHONUNBUFFERED=1 \
+    MYSQL_URL="" \
+    MYSQL_BOOTSTRAP_ATTEMPTS=20 \
+    MYSQL_BOOTSTRAP_DELAY=3
+
+# 필요한 시스템 패키지 설치
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# 프로젝트 의존성 설치
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 전체 프로젝트 복사
+COPY . .
+
+# 컨테이너 시작 시 파이썬 애플리케이션 실행 (MySQL 초기화는 애플리케이션 코드에서 처리)
+CMD ["python", "main.py"]
