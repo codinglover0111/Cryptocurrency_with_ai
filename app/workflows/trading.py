@@ -185,6 +185,14 @@ def _init_dependencies(
     all_symbols = list(symbols) if symbols else parse_trading_symbols()
     spot_symbol, contract_symbol = to_ccxt_symbols(symbol_usdt)
     per_symbol_pct = per_symbol_allocation(all_symbols)
+    max_alloc_env = os.getenv("MAX_ALLOC_PERCENT")
+    if max_alloc_env is not None:
+        try:
+            parsed_alloc = float(max_alloc_env)
+            if parsed_alloc > 0:
+                per_symbol_pct = parsed_alloc
+        except Exception:
+            pass
 
     bybit = BybitUtils(is_testnet)
     store = TradeStore(
@@ -648,7 +656,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"현재 UTC 시간: {now_utc}\n"
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
         f"현재가: {ctx.current_price}\n"
-        f"심볼당 기본 배분 비율: {deps.per_symbol_alloc_pct:.2f}%\n"
+        f"심볼당 최대 배분 비율: {deps.per_symbol_alloc_pct:.2f}%\n"
         "[OLCHV_4H_LAST_7D]\n"
         f"{ctx.csv_4h}\n"
         "[/OLCHV_4H_LAST_7D]\n"
