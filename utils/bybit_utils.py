@@ -6,6 +6,11 @@ from dotenv import load_dotenv
 
 from typing import Optional, Dict, Any, Literal, List
 from pydantic import BaseModel
+import logging
+from app.logging_config import setup_logging
+
+setup_logging()
+LOGGER = logging.getLogger(__name__)
 
 
 class Open_Position(BaseModel):
@@ -146,28 +151,16 @@ class BybitUtils:
                     if server_time:
                         break
                 except Exception:
-                    pass
-            if server_time is not None:
-                local_time = self.exchange.milliseconds()
-                # 안전 마진(밀리초). 로컬 시계가 서버보다 앞서는 경우를 더 엄격히 보정
-                safety_ms = int(os.getenv("BYBIT_TIME_SAFETY_MS", "500"))
-                # timeDifference는 ccxt의 nonce 계산에 더해짐
-                # 서버 시간 - 로컬 시간 - safety => 요청 타임스탬프가 서버 시간보다 약간 작게
-                offset = int(server_time) - int(local_time) - safety_ms
-                self.exchange.options["timeDifference"] = offset
-            else:
+                    LOGGER.error("Failed to fetch server time")
+
                 # 폴백: ccxt의 자동 보정 시도
                 try:
                     self.exchange.load_time_difference()
                 except Exception:
-                    pass
-            td = self.exchange.options.get("timeDifference")
-            rw = self.exchange.options.get("recvWindow") or self.exchange.options.get(
-                "recvwindow"
-            )
-            print(f"Bybit env: {mode}, timeDifference: {td} ms, recvWindow: {rw} ms")
+                    LOGGER.error("Failed to load time difference")
+            LOGGER.info("time synced with Bybit mode: %s", mode)
         except Exception:
-            pass
+            LOGGER.error("Failed to sync time with Bybit")
 
     def _ensure_markets(self) -> None:
         if self._markets_loaded:
@@ -176,7 +169,7 @@ class BybitUtils:
             self.exchange.load_markets()
             self._markets_loaded = True
         except Exception:
-            pass
+            LOGGER.error("Failed to ensure markets")
 
     def _symbol_to_market_id(self, symbol: Optional[str]) -> Optional[str]:
         if not symbol:
