@@ -61,7 +61,7 @@ Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제�
 
 ## Extension Points
 
-- **리스크 정책 변경**: `utils/risk.py`의 `calculate_position_size` 또는 `_execute_trade` 내부 로직을 수정합니다.
+- **리스크 정책 변경**: `app/core/symbols.per_symbol_allocation`과 `app/workflows/trading._execute_trade`가 총 USDT 대비 20% 고정 한도를 계산합니다. 필요 시 `MAX_ALLOC_PERCENT`나 `AVAILABLE_NOTIONAL_SAFETY` 환경 변수를 조정해 배분 규칙을 변경하세요.
 - **프롬프트 커스터마이징**: `app/workflows/trading._build_prompt`에서 섹션별 텍스트를 조정할 수 있습니다.
 - **확장된 리뷰 전략**: `JournalService`를 상속하거나 구성(extending composition)하여 다른 프롬프트/분석 기법을 도입할 수 있습니다.
 - **테스트 도입**: `_init_dependencies` 함수로 외부 의존성을 주입하기 쉬워졌기 때문에, 단위 테스트 시 Mock `BybitUtils`/`AIProvider`를 주입할 수 있습니다.

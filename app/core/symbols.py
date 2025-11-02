@@ -47,6 +47,13 @@ def contract_to_spot_symbol(contract_symbol: str) -> str:
 
 
 def per_symbol_allocation(total_symbols: Sequence[str]) -> float:
-    """Return the percentage allocation per symbol given the configured symbols."""
+    """Return the fixed percentage allocation per symbol based on risk policy."""
     del total_symbols
+
+    env_value = os.getenv("MAX_ALLOC_PERCENT")
+    if env_value is not None:
+        try:
+            return max(0.0, float(env_value))
+        except Exception:
+            return 20.0
     return 20.0
