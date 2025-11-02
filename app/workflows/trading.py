@@ -15,7 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
-from utils.risk import calculate_position_size, enforce_max_loss_sl
+from utils.risk import enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
 
 from app.core.symbols import (
@@ -1114,11 +1114,17 @@ def _execute_trade(
 
     balance_info = deps.bybit.get_balance("USDT") or {}
     balance_total = balance_info.get("total") or 0
-    balance_free = balance_info.get("free") or 0
 
-    risk_percent = 20.0
-    max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct)))
     leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
+
+    try:
+        alloc_percent_env = os.getenv("FIXED_POSITION_PERCENT")
+        allocation_percent = (
+            float(alloc_percent_env) if alloc_percent_env is not None else 20.0
+        )
+    except Exception:
+        allocation_percent = 20.0
+    allocation_ratio = max(0.0, allocation_percent) / 100.0
 
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
@@ -1207,127 +1213,111 @@ def _execute_trade(
         except Exception:
             pass
 
-    stop_price = (
-        float(use_sl)
-        if isinstance(use_sl, (int, float)) and float(use_sl) > 0
-        else entry_price * (0.99 if side == "buy" else 1.01)
-    )
+    total_balance = float(balance_total or 0.0)
+    if allocation_ratio <= 0 or total_balance <= 0:
+        _record_skip(
+            deps,
+            reason="insufficient_balance",
+            decision=decision,
+            meta={
+                "allocation_percent": float(allocation_percent),
+                "total_balance": float(total_balance),
+                "confirm": confirm_meta,
+            },
+        )
+        return
 
-    quantity = calculate_position_size(
-        balance_usdt=float(balance_total or 0),
-        entry_price=float(entry_price),
-        stop_price=float(stop_price),
-        risk_percent=risk_percent,
-        max_allocation_percent=max_alloc,
-        leverage=leverage,
-        min_quantity=min_qty,
-    )
+    per_symbol_cap_notional = total_balance * allocation_ratio
+    if float(entry_price) <= 0:
+        _record_skip(
+            deps,
+            reason="invalid_entry_price",
+            decision=decision,
+            meta={
+                "entry_price": float(entry_price),
+                "confirm": confirm_meta,
+            },
+        )
+        return
 
-    try:
-        num_symbols_avail = max(1, len(deps.symbols))
-    except Exception:
-        num_symbols_avail = 1
-
-    try:
-        avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
-        effective_lev_for_avail = max(1.0, float(leverage))
-        free_usdt = float(balance_free or 0.0)
-        per_symbol_available_notional = (
-            free_usdt * effective_lev_for_avail * avail_safety
-        ) / float(num_symbols_avail)
-        if float(entry_price) > 0:
-            target_qty_by_available = per_symbol_available_notional / float(entry_price)
-            if target_qty_by_available > 0:
-                quantity = min(float(quantity), float(target_qty_by_available))
-    except Exception:
-        pass
+    desired_order_notional = per_symbol_cap_notional
 
     try:
         positions_same_symbol = ctx.current_position or []
-        last_price_fallback = float(ctx.current_price or entry_price)
-        if last_price_fallback <= 0:
-            last_price_fallback = float(entry_price)
-        existing_notional = 0.0
-        pos_max_leverage = 0.0
-        for pos in positions_same_symbol:
-            try:
-                contract_size = pos.get("contractSize") or (
-                    pos.get("info", {}) or {}
-                ).get("contractSize")
-                size_raw = pos.get("size") or pos.get("amount") or pos.get("contracts")
-                try:
-                    size_f = float(size_raw) if size_raw is not None else None
-                except Exception:
-                    size_f = None
-                if (
-                    size_f is not None
-                    and pos.get("size") is None
-                    and pos.get("contracts") is not None
-                    and contract_size is not None
-                ):
-                    try:
-                        size_f = size_f * float(contract_size)
-                    except Exception:
-                        pass
-                if size_f is None:
-                    continue
-                mark = pos.get("markPrice") or (pos.get("info", {}) or {}).get(
-                    "markPrice"
-                )
-                try:
-                    px = float(mark) if mark is not None else float(last_price_fallback)
-                except Exception:
-                    px = last_price_fallback
-                existing_notional += abs(float(size_f)) * float(px)
-                try:
-                    levp = pos.get("leverage") or (pos.get("info", {}) or {}).get(
-                        "leverage"
-                    )
-                    if levp is not None:
-                        pos_max_leverage = max(pos_max_leverage, float(levp))
-                except Exception:
-                    pass
-            except Exception:
-                continue
-        effective_leverage = max(1.0, float(leverage), float(pos_max_leverage or 0.0))
-        max_notional_for_symbol = (
-            float(balance_total or 0)
-            * (float(max_alloc) / 100.0)
-            * float(effective_leverage)
-        )
-        remaining_notional = max(0.0, max_notional_for_symbol - existing_notional)
-        if remaining_notional <= 0:
-            _record_skip(
-                deps,
-                reason="per_symbol_cap_reached",
-                decision=decision,
-                meta={
-                    "existing_notional": float(existing_notional),
-                    "max_notional_for_symbol": float(max_notional_for_symbol),
-                    "confirm": confirm_meta,
-                },
-            )
-            return
-        max_qty_by_remaining = (
-            remaining_notional / float(entry_price)
-            if float(entry_price) > 0
-            else quantity
-        )
-        if max_qty_by_remaining <= 0:
-            _record_skip(
-                deps,
-                reason="no_remaining_capacity",
-                decision=decision,
-                meta={
-                    "existing_notional": float(existing_notional),
-                    "max_notional_for_symbol": float(max_notional_for_symbol),
-                    "confirm": confirm_meta,
-                },
-            )
-            return
-        quantity = min(float(quantity), float(max_qty_by_remaining))
     except Exception:
-        pass
+        positions_same_symbol = []
+
+    last_price_fallback = float(ctx.current_price or entry_price)
+    if last_price_fallback <= 0:
+        last_price_fallback = float(entry_price)
+
+    existing_notional = 0.0
+    for pos in positions_same_symbol:
+        try:
+            contract_size = pos.get("contractSize") or (pos.get("info", {}) or {}).get(
+                "contractSize"
+            )
+            size_raw = pos.get("size") or pos.get("amount") or pos.get("contracts")
+            try:
+                size_f = float(size_raw) if size_raw is not None else None
+            except Exception:
+                size_f = None
+            if (
+                size_f is not None
+                and pos.get("size") is None
+                and pos.get("contracts") is not None
+                and contract_size is not None
+            ):
+                try:
+                    size_f = size_f * float(contract_size)
+                except Exception:
+                    size_f = size_f
+            if size_f is None:
+                continue
+            mark = pos.get("markPrice") or (pos.get("info", {}) or {}).get("markPrice")
+            try:
+                px = float(mark) if mark is not None else float(last_price_fallback)
+            except Exception:
+                px = float(last_price_fallback)
+            existing_notional += abs(float(size_f)) * float(px)
+        except Exception:
+            continue
+
+    max_notional_for_symbol = float(per_symbol_cap_notional)
+    remaining_notional = max(0.0, max_notional_for_symbol - existing_notional)
+    if remaining_notional <= 0:
+        _record_skip(
+            deps,
+            reason="per_symbol_cap_reached",
+            decision=decision,
+            meta={
+                "existing_notional": float(existing_notional),
+                "max_notional_for_symbol": float(max_notional_for_symbol),
+                "confirm": confirm_meta,
+            },
+        )
+        return
+
+    target_notional = min(float(desired_order_notional), float(remaining_notional))
+    if target_notional <= 0:
+        _record_skip(
+            deps,
+            reason="no_remaining_capacity",
+            decision=decision,
+            meta={
+                "existing_notional": float(existing_notional),
+                "max_notional_for_symbol": float(max_notional_for_symbol),
+                "confirm": confirm_meta,
+            },
+        )
+        return
+
+    quantity = target_notional / float(entry_price)
+
+    try:
+        quantity = float(quantity)
+    except Exception:
+        quantity = float(target_notional / float(entry_price))
 
     try:
         quantity = float(
