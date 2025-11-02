@@ -491,16 +491,16 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         + "\n[/CURRENT_POSITIONS]\n"
     )
 
-    if ctx.reviews_text:
-        prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
-    if ctx.recent_reports_text:
-        prompt += (
-            "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
-        )
-    if ctx.journal_today_text:
-        prompt += (
-            "[JOURNALS_TODAY]\n" + ctx.journal_today_text + "\n[/JOURNALS_TODAY]\n"
-        )
+    # if ctx.reviews_text:
+    #     prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
+    # if ctx.recent_reports_text:
+    #     prompt += (
+    #         "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
+    #     )
+    # if ctx.journal_today_text:
+    #     prompt += (
+    #         "[JOURNALS_TODAY]\n" + ctx.journal_today_text + "\n[/JOURNALS_TODAY]\n"
+    #     )
     if ctx.pos_side is not None and ctx.since_open_text:
         prompt += "[SINCE_LAST_OPEN]\n" + ctx.since_open_text + "\n[/SINCE_LAST_OPEN]\n"
 
