@@ -18,7 +18,7 @@ import ta
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
-from utils.risk import calculate_position_size, enforce_max_loss_sl
+from utils.risk import enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
 
 from app.core.symbols import (
@@ -979,91 +979,199 @@ def _run_confirm_step(
     try:
         tp_valid = isinstance(use_tp, (int, float)) and float(use_tp) > 0
         sl_valid = isinstance(use_sl, (int, float)) and float(use_sl) > 0
-        if not (tp_valid and sl_valid and float(entry_price) > 0):
+        entry_valid = isinstance(entry_price, (int, float)) and float(entry_price) > 0
+        if not (tp_valid and sl_valid and entry_valid):
             return order_type, entry_price, use_tp, use_sl, leverage, None, False
 
-        e = float(entry_price)
-        tp_v = float(use_tp)
-        sl_v = float(use_sl)
+        def _apply_confirm_overrides(
+            confirm_obj: Dict[str, Any],
+            cur_order_type: str,
+            cur_entry_price: float,
+            cur_tp: float,
+            cur_sl: float,
+            cur_leverage: float,
+        ) -> Tuple[str, float, float, float, float]:
+            updated_order_type = cur_order_type
+            updated_entry_price = cur_entry_price
+            updated_tp = cur_tp
+            updated_sl = cur_sl
+            updated_leverage = cur_leverage
 
-        pct_info = _compute_tp_sl_percentages(
-            entry_price=e,
-            tp=tp_v,
-            sl=sl_v,
-            ai_status=ai_status,
-            leverage=leverage,
-        )
-        tp_pct = float(pct_info.get("tp_pct") or 0.0)
-        sl_pct = float(pct_info.get("sl_pct") or 0.0)
-        tp_pct_leverage = float(pct_info.get("tp_pct_leverage") or 0.0)
-        sl_pct_leverage = float(pct_info.get("sl_pct_leverage") or 0.0)
+            if confirm_obj.get("tp") is not None:
+                try:
+                    updated_tp = float(confirm_obj.get("tp"))
+                except Exception:
+                    pass
+            if confirm_obj.get("sl") is not None:
+                try:
+                    updated_sl = float(confirm_obj.get("sl"))
+                except Exception:
+                    pass
+            if confirm_obj.get("price") is not None:
+                try:
+                    updated_entry_price = float(confirm_obj.get("price"))
+                except Exception:
+                    pass
 
-        confirm_prompt = (
-            "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
-            f"심볼: {deps.contract_symbol}\n"
-            f"포지션: {ai_status} (내부 side={side})\n"
-            f"진입가(entry): {float(e)}\n"
-            f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}% | 레버리지 기준: {tp_pct_leverage:.4f}%)\n"
-            f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
-            f"레버리지: {float(leverage)}x\n"
-            "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
-            "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
-            "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요.\n"
-            "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
-        )
-        confirm = deps.ai_provider.confirm_trade_json(confirm_prompt)
-        confirm_meta = confirm
-        LOGGER.info(
-            json.dumps(
-                {
-                    "event": "llm_confirm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                    "parsed": confirm,
-                },
-                ensure_ascii=False,
+            override_type = _extract_order_type(confirm_obj)
+            if override_type:
+                updated_order_type = override_type
+            elif confirm_obj.get("buy_now") is not None:
+                updated_order_type = (
+                    "market" if _normalize_bool(confirm_obj.get("buy_now")) else "limit"
+                )
+
+            if confirm_obj.get("leverage") is not None:
+                try:
+                    updated_leverage = float(confirm_obj.get("leverage"))
+                except Exception:
+                    pass
+
+            return (
+                updated_order_type,
+                float(updated_entry_price),
+                float(updated_tp),
+                float(updated_sl),
+                float(updated_leverage),
             )
-        )
-        if not bool(confirm.get("confirm")):
+
+        max_attempts = 3
+        confirm_attempts: List[Dict[str, Any]] = []
+
+        current_order_type = order_type
+        current_entry_price = float(entry_price)
+        current_tp = float(use_tp)
+        current_sl = float(use_sl)
+        current_leverage = float(leverage)
+
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            pct_info = _compute_tp_sl_percentages(
+                entry_price=float(current_entry_price),
+                tp=current_tp,
+                sl=current_sl,
+                ai_status=ai_status,
+                leverage=current_leverage,
+            )
+            tp_pct = float(pct_info.get("tp_pct") or 0.0)
+            sl_pct = float(pct_info.get("sl_pct") or 0.0)
+            tp_pct_leverage = float(pct_info.get("tp_pct_leverage") or 0.0)
+            sl_pct_leverage = float(pct_info.get("sl_pct_leverage") or 0.0)
+
+            confirm_prompt = (
+                "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
+                f"심볼: {deps.contract_symbol}\n"
+                f"포지션: {ai_status} (내부 side={side})\n"
+                f"진입가(entry): {float(current_entry_price)}\n"
+                f"TP: {float(current_tp)} (예상 수익률: {tp_pct:.4f}% | 레버리지 기준: {tp_pct_leverage:.4f}%)\n"
+                f"SL: {float(current_sl)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
+                f"레버리지: {float(current_leverage)}x\n"
+                "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
+                "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
+                "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요.\n"
+                "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
+            )
+            confirm_raw = deps.ai_provider.confirm_trade_json(confirm_prompt)
+            confirm = (
+                confirm_raw if isinstance(confirm_raw, dict) else {"_raw": confirm_raw}
+            )
+            confirm.setdefault("_attempt", attempt)
+            confirm_attempts.append(confirm)
+
+            try:
+                LOGGER.info(
+                    json.dumps(
+                        {
+                            "event": "llm_confirm_response_parsed",
+                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "attempt": attempt,
+                            "parsed": confirm,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception as exc:
+                LOGGER.error("Confirm logging failed: %s", exc)
+
+            (
+                current_order_type,
+                current_entry_price,
+                current_tp,
+                current_sl,
+                current_leverage,
+            ) = _apply_confirm_overrides(
+                confirm,
+                current_order_type,
+                current_entry_price,
+                current_tp,
+                current_sl,
+                current_leverage,
+            )
+
+            if bool(confirm.get("confirm")):
+                confirm_meta = {"attempts": confirm_attempts}
+                return (
+                    current_order_type,
+                    float(current_entry_price),
+                    current_tp,
+                    current_sl,
+                    float(current_leverage),
+                    confirm_meta,
+                    False,
+                )
+
             skip_reason = str(confirm.get("explain") or "").strip()
-            if not skip_reason:
-                skip_reason = "확인 단계에서 거부 사유가 제공되지 않았습니다."
-            _record_skip(
-                deps,
-                reason="skip_after_confirm",
-                decision=decision,
-                meta={"first": decision, "confirm": confirm},
-                reason_text=skip_reason,
-            )
-            return order_type, entry_price, use_tp, use_sl, leverage, confirm_meta, True
 
-        if confirm.get("tp") is not None:
-            try:
-                use_tp = float(confirm.get("tp"))
-            except Exception:
-                pass
-        if confirm.get("sl") is not None:
-            try:
-                use_sl = float(confirm.get("sl"))
-            except Exception:
-                pass
-        if confirm.get("price") is not None:
-            try:
-                entry_price = float(confirm.get("price"))
-            except Exception:
-                pass
-
-        override_type = _extract_order_type(confirm)
-        if override_type:
-            order_type = override_type
-        elif confirm.get("buy_now") is not None:
-            order_type = (
-                "market" if _normalize_bool(confirm.get("buy_now")) else "limit"
+            params_valid = (
+                isinstance(current_tp, (int, float))
+                and isinstance(current_sl, (int, float))
+                and float(current_tp) > 0
+                and float(current_sl) > 0
+                and float(current_entry_price) > 0
             )
-        if confirm.get("leverage") is not None:
-            try:
-                leverage = float(confirm.get("leverage"))
-            except Exception:
-                pass
+
+            if not params_valid:
+                if not skip_reason:
+                    skip_reason = (
+                        "확인 단계에서 유효하지 않은 매개변수가 반환되었습니다."
+                    )
+                _record_skip(
+                    deps,
+                    reason="confirm_parameters_invalid",
+                    decision=decision,
+                    meta={"first": decision, "confirm_attempts": confirm_attempts},
+                    reason_text=skip_reason,
+                )
+                return (
+                    current_order_type,
+                    float(current_entry_price),
+                    current_tp,
+                    current_sl,
+                    float(current_leverage),
+                    {"attempts": confirm_attempts},
+                    True,
+                )
+
+            if attempt >= max_attempts:
+                if not skip_reason:
+                    skip_reason = "LLM confirm 단계에서 3회 연속 거부되었습니다."
+                _record_skip(
+                    deps,
+                    reason="confirm_attempts_exceeded",
+                    decision=decision,
+                    meta={"first": decision, "confirm_attempts": confirm_attempts},
+                    reason_text=f"{skip_reason} (횟수 초과)",
+                )
+                return (
+                    current_order_type,
+                    float(current_entry_price),
+                    current_tp,
+                    current_sl,
+                    float(current_leverage),
+                    {"attempts": confirm_attempts},
+                    True,
+                )
     except Exception as exc:
         LOGGER.error("AI confirm failed: %s", exc)
 
@@ -1167,24 +1275,19 @@ def _execute_trade(
     balance_free = balance_info.get("free") or 0
 
     try:
-        num_symbols_avail = max(1, len(deps.symbols))
+        total_balance = float(balance_total)
     except Exception:
-        num_symbols_avail = 1
-
-    equity_for_sizing = float(balance_total or 0)
+        total_balance = 0.0
     try:
-        free_equity = float(balance_free or 0)
-        if free_equity > 0:
-            equity_for_sizing = min(equity_for_sizing, free_equity)
+        free_balance = float(balance_free)
     except Exception:
-        pass
+        free_balance = 0.0
 
-    per_symbol_equity = equity_for_sizing / float(num_symbols_avail)
-
-    risk_percent = 20.0
-    max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct)))
-    leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
-
+    target_alloc_percent = 20.0
+    try:
+        leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
+    except Exception:
+        leverage = float(os.getenv("DEFAULT_LEVERAGE", "5"))
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
         symbol_min_qty = ((market.get("limits", {}) or {}).get("amount", {}) or {}).get(
@@ -1238,27 +1341,27 @@ def _execute_trade(
         )
         return
 
-    # (
-    #     order_type,
-    #     entry_price,
-    #     use_tp,
-    #     use_sl,
-    #     leverage,
-    #     confirm_meta,
-    #     should_skip,
-    # ) = _run_confirm_step(
-    #     deps=deps,
-    #     decision=decision,
-    #     ai_status=ai_status,
-    #     side=side,
-    #     order_type=order_type,
-    #     entry_price=entry_price,
-    #     use_tp=use_tp,
-    #     use_sl=use_sl,
-    #     leverage=leverage,
-    # )
-    # if should_skip:
-    #     return
+    (
+        order_type,
+        entry_price,
+        use_tp,
+        use_sl,
+        leverage,
+        confirm_meta,
+        should_skip,
+    ) = _run_confirm_step(
+        deps=deps,
+        decision=decision,
+        ai_status=ai_status,
+        side=side,
+        order_type=order_type,
+        entry_price=entry_price,
+        use_tp=use_tp,
+        use_sl=use_sl,
+        leverage=leverage,
+    )
+    if should_skip:
+        return
 
     max_loss_pct = _compute_max_loss_percent(leverage)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
@@ -1272,43 +1375,54 @@ def _execute_trade(
         except Exception:
             pass
 
-    stop_price = (
-        float(use_sl)
-        if isinstance(use_sl, (int, float)) and float(use_sl) > 0
-        else entry_price * (0.99 if side == "buy" else 1.01)
-    )
+    effective_leverage = max(1.0, abs(float(leverage)))
 
-    quantity = calculate_position_size(
-        balance_usdt=float(per_symbol_equity),
-        entry_price=float(entry_price),
-        stop_price=float(stop_price),
-        risk_percent=risk_percent,
-        max_allocation_percent=max_alloc,
-        leverage=leverage,
-        min_quantity=min_qty,
-    )
+    if float(entry_price) <= 0:
+        _record_skip(
+            deps,
+            reason="invalid_entry_price",
+            decision=decision,
+            meta={"entry_price": entry_price, "confirm": confirm_meta},
+        )
+        return
 
-    try:
-        avail_safety = float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"))
-        effective_lev_for_avail = max(1.0, float(leverage))
-        free_usdt = float(balance_free or 0.0)
-        per_symbol_available_notional = (
-            free_usdt * effective_lev_for_avail * avail_safety
-        ) / float(num_symbols_avail)
-        if float(entry_price) > 0:
-            target_qty_by_available = per_symbol_available_notional / float(entry_price)
-            if target_qty_by_available > 0:
-                quantity = min(float(quantity), float(target_qty_by_available))
-    except Exception:
-        pass
+    target_notional = float(total_balance) * (target_alloc_percent / 100.0)
+    if target_notional <= 0:
+        _record_skip(
+            deps,
+            reason="zero_target_notional",
+            decision=decision,
+            meta={
+                "balance_total": float(total_balance),
+                "alloc_percent": target_alloc_percent,
+                "confirm": confirm_meta,
+            },
+        )
+        return
 
+    required_margin = target_notional / effective_leverage
+    if free_balance < required_margin:
+        _record_skip(
+            deps,
+            reason="insufficient_margin_for_target",
+            decision=decision,
+            meta={
+                "balance_free": float(free_balance),
+                "required_margin": float(required_margin),
+                "target_notional": float(target_notional),
+                "leverage": float(leverage),
+                "confirm": confirm_meta,
+            },
+            reason_text="20% 목표 포지션을 위한 증거금이 부족합니다.",
+        )
+        return
+
+    existing_notional = 0.0
     try:
         positions_same_symbol = ctx.current_position or []
         last_price_fallback = float(ctx.current_price or entry_price)
         if last_price_fallback <= 0:
             last_price_fallback = float(entry_price)
-        existing_notional = 0.0
-        pos_max_leverage = 0.0
         for pos in positions_same_symbol:
             try:
                 contract_size = pos.get("contractSize") or (
@@ -1339,55 +1453,43 @@ def _execute_trade(
                 except Exception:
                     px = last_price_fallback
                 existing_notional += abs(float(size_f)) * float(px)
-                try:
-                    levp = pos.get("leverage") or (pos.get("info", {}) or {}).get(
-                        "leverage"
-                    )
-                    if levp is not None:
-                        pos_max_leverage = max(pos_max_leverage, float(levp))
-                except Exception:
-                    pass
             except Exception:
                 continue
-        effective_leverage = max(1.0, float(leverage), float(pos_max_leverage or 0.0))
-        max_notional_for_symbol = (
-            float(balance_total or 0)
-            * (float(max_alloc) / 100.0)
-            * float(effective_leverage)
-        )
-        remaining_notional = max(0.0, max_notional_for_symbol - existing_notional)
-        if remaining_notional <= 0:
-            _record_skip(
-                deps,
-                reason="per_symbol_cap_reached",
-                decision=decision,
-                meta={
-                    "existing_notional": float(existing_notional),
-                    "max_notional_for_symbol": float(max_notional_for_symbol),
-                    "confirm": confirm_meta,
-                },
-            )
-            return
-        max_qty_by_remaining = (
-            remaining_notional / float(entry_price)
-            if float(entry_price) > 0
-            else quantity
-        )
-        if max_qty_by_remaining <= 0:
-            _record_skip(
-                deps,
-                reason="no_remaining_capacity",
-                decision=decision,
-                meta={
-                    "existing_notional": float(existing_notional),
-                    "max_notional_for_symbol": float(max_notional_for_symbol),
-                    "confirm": confirm_meta,
-                },
-            )
-            return
-        quantity = min(float(quantity), float(max_qty_by_remaining))
     except Exception:
-        pass
+        existing_notional = 0.0
+
+    max_notional_for_symbol = float(target_notional)
+    remaining_notional = max(0.0, max_notional_for_symbol - existing_notional)
+    tolerance = max(1e-6, max_notional_for_symbol * 1e-6)
+
+    if remaining_notional <= tolerance:
+        _record_skip(
+            deps,
+            reason="per_symbol_cap_reached",
+            decision=decision,
+            meta={
+                "existing_notional": float(existing_notional),
+                "max_notional_for_symbol": float(max_notional_for_symbol),
+                "confirm": confirm_meta,
+            },
+        )
+        return
+
+    if existing_notional > tolerance:
+        _record_skip(
+            deps,
+            reason="per_symbol_capacity_in_use",
+            decision=decision,
+            meta={
+                "existing_notional": float(existing_notional),
+                "target_notional": float(target_notional),
+                "confirm": confirm_meta,
+            },
+            reason_text="이미 해당 심볼에 노출이 있어 20% 고정 주문을 열 수 없습니다.",
+        )
+        return
+
+    quantity = target_notional / float(entry_price)
 
     try:
         quantity = float(

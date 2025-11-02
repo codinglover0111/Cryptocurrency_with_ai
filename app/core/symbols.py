@@ -48,5 +48,5 @@ def contract_to_spot_symbol(contract_symbol: str) -> str:
 
 def per_symbol_allocation(total_symbols: Sequence[str]) -> float:
     """Return the percentage allocation per symbol given the configured symbols."""
-    count = max(1, len(total_symbols))
-    return 100.0 / float(count)
+    del total_symbols
+    return 20.0
