@@ -71,6 +71,9 @@ OPENAI_MODEL=...
 # 데이터 저장소 (MySQL 또는 SQLite 폴백)
 MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot
 SQLITE_PATH=data/trading.sqlite
+
+# 거래소 설정
+BYBIT_DEFAULT_CATEGORY=linear
 ```
 
 ## 스케줄러 동작

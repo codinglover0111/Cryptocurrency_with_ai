@@ -202,6 +202,51 @@ class BybitUtils:
             pass
         return market_id
 
+    def _resolve_category(self, symbol: Optional[str] = None) -> str:
+        category: Optional[str] = None
+
+        market: Optional[Dict[str, Any]] = None
+        if symbol:
+            try:
+                self._ensure_markets()
+                market = self.exchange.market(symbol)
+            except Exception:
+                market = None
+
+        if market:
+            if market.get("option"):
+                category = "option"
+            elif market.get("linear"):
+                category = "linear"
+            elif market.get("inverse"):
+                category = "inverse"
+            else:
+                settle = str(market.get("settle") or "").upper()
+                if settle in {"USDT", "USDC"}:
+                    category = "linear"
+                elif settle:
+                    category = "inverse"
+
+            if not category:
+                type_hint = str(market.get("type") or "").lower()
+                if type_hint in {"spot"}:
+                    category = "spot"
+
+        if not category:
+            default_category = str(
+                os.getenv("BYBIT_DEFAULT_CATEGORY")
+                or self.exchange.options.get("defaultSubType")
+                or self.exchange.options.get("defaultType")
+                or ""
+            ).lower()
+            if default_category in {"linear", "inverse", "option", "spot"}:
+                category = default_category
+
+        if not category:
+            category = "linear"
+
+        return category
+
     @staticmethod
     def _float_or_none(raw: Any) -> Optional[float]:
         try:
@@ -521,6 +566,9 @@ class BybitUtils:
                 idx = position_idx
 
         params: Dict[str, Any] = {}
+        category = self._resolve_category(symbol)
+        if category:
+            params["category"] = category
         if idx is not None:
             params["positionIdx"] = idx
 
@@ -539,13 +587,17 @@ class BybitUtils:
             except Exception as exc:
                 last_error = str(exc)
 
-        private_method = getattr(self.exchange, "privatePostV5PositionTradingStop", None)
+        private_method = getattr(
+            self.exchange, "privatePostV5PositionTradingStop", None
+        )
         if callable(private_method):
             try:
                 request: Dict[str, Any] = {}
                 market_id = self._symbol_to_market_id(symbol)
                 if market_id:
                     request["symbol"] = market_id
+                if category:
+                    request["category"] = category
                 if take_profit is not None:
                     request["takeProfit"] = str(take_profit)
                 if stop_loss is not None:
