@@ -153,25 +153,23 @@ class JournalService:
         """Return the latest trade reviews as prompt-ready text."""
         try:
             df = self.store.fetch_journals(
-                symbol=contract_symbol, types=["review"], limit=5, ascending=False
+                symbol=contract_symbol, types=["review"], limit=1, ascending=False
             )
             if df is None or getattr(df, "empty", True):
                 return ""
 
-            lines = []
-            for _, row in df.iterrows():
-                ts = row.get("ts")
-                ts_str = (
-                    ts.strftime("%Y-%m-%d %H:%M:%S")
-                    if hasattr(ts, "strftime")
-                    else str(ts)
-                )
-                reason = row.get("reason") or ""
-                content = row.get("content") or ""
-                if len(content) > 500:
-                    content = content[:500]
-                lines.append(f"[{ts_str}] {reason} | {content}")
-            return "\n".join(lines)
+            row = df.iloc[0]
+            ts = row.get("ts")
+            ts_str = (
+                ts.strftime("%Y-%m-%d %H:%M:%S")
+                if hasattr(ts, "strftime")
+                else str(ts)
+            )
+            reason = row.get("reason") or ""
+            content = row.get("content") or ""
+            if len(content) > 500:
+                content = content[:500]
+            return f"[{ts_str}] {reason} | {content}".strip()
         except Exception:
             return ""
 
