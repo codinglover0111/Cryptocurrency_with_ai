@@ -1212,8 +1212,8 @@ def _execute_trade(
         )
         return
 
-    max_symbol_notional = total_usdt * (alloc_percent / 100.0)
-    if max_symbol_notional <= 0:
+    target_margin = total_usdt * (alloc_percent / 100.0)
+    if target_margin <= 0:
         _record_skip(
             deps,
             reason="no_allocation_budget",
@@ -1222,7 +1222,7 @@ def _execute_trade(
                 "total_usdt": total_usdt,
                 "alloc_percent": alloc_percent,
             },
-            reason_text="심볼별 배분 예산이 0 USDT 이하입니다.",
+            reason_text="심볼별 배분 가능한 증거금이 0 USDT 이하입니다.",
         )
         return
 
@@ -1339,87 +1339,158 @@ def _execute_trade(
     if last_price_fallback <= 0:
         last_price_fallback = float(entry_price)
 
-    existing_notional = 0.0
+    existing_margin = 0.0
     for pos in positions_same_symbol:
         try:
-            contract_size = pos.get("contractSize") or (pos.get("info", {}) or {}).get(
-                "contractSize"
-            )
-            size_raw = pos.get("size") or pos.get("amount") or pos.get("contracts")
-            try:
-                size_f = float(size_raw) if size_raw is not None else None
-            except Exception:
-                size_f = None
-            if (
-                size_f is not None
-                and pos.get("size") is None
-                and pos.get("contracts") is not None
-                and contract_size is not None
-            ):
+            info = pos.get("info") if isinstance(pos.get("info"), dict) else {}
+
+            margin_candidates = [
+                pos.get("initialMargin"),
+                pos.get("margin"),
+            ]
+            if info:
+                margin_candidates.extend(
+                    [
+                        info.get("initialMargin"),
+                        info.get("positionInitialMargin"),
+                        info.get("positionIM"),
+                        info.get("startingMargin"),
+                    ]
+                )
+
+            margin_value = None
+            for cand in margin_candidates:
+                cand_value = _safe_float(cand)
+                if cand_value and cand_value > 0:
+                    margin_value = cand_value
+                    break
+
+            if margin_value is None:
+                size_raw = pos.get("size") or pos.get("amount") or pos.get("contracts")
+                contract_size = pos.get("contractSize") or (info or {}).get(
+                    "contractSize"
+                )
                 try:
-                    size_f = size_f * float(contract_size)
+                    size_f = float(size_raw) if size_raw is not None else None
                 except Exception:
-                    pass
-            if size_f is None:
-                continue
-            mark = pos.get("markPrice") or (pos.get("info", {}) or {}).get("markPrice")
-            try:
-                px = float(mark) if mark is not None else float(last_price_fallback)
-            except Exception:
-                px = last_price_fallback
-            existing_notional += abs(float(size_f)) * float(px)
+                    size_f = None
+                if (
+                    size_f is not None
+                    and pos.get("size") is None
+                    and pos.get("contracts") is not None
+                    and contract_size is not None
+                ):
+                    try:
+                        size_f = size_f * float(contract_size)
+                    except Exception:
+                        pass
+                if size_f is None:
+                    continue
+
+                mark = pos.get("markPrice") or (info or {}).get("markPrice")
+                try:
+                    price_for_margin = (
+                        float(mark) if mark is not None else float(last_price_fallback)
+                    )
+                except Exception:
+                    price_for_margin = float(last_price_fallback)
+
+                notional = abs(float(size_f)) * float(price_for_margin)
+                lev_candidates = [pos.get("leverage")]
+                if info:
+                    lev_candidates.extend(
+                        [
+                            info.get("leverage"),
+                            info.get("leverageEr"),
+                            info.get("positionLeverage"),
+                        ]
+                    )
+                leverage_val = None
+                for cand in lev_candidates:
+                    cand_value = _safe_float(cand)
+                    if cand_value and cand_value > 0:
+                        leverage_val = cand_value
+                        break
+                leverage_val = leverage_val if leverage_val and leverage_val > 0 else 1.0
+                margin_value = notional / max(1.0, float(leverage_val))
+
+            existing_margin += float(margin_value or 0.0)
         except Exception:
             continue
 
-    if existing_notional >= max_symbol_notional:
+    if existing_margin >= target_margin:
         _record_skip(
             deps,
             reason="per_symbol_cap_reached",
             decision=decision,
             meta={
-                "existing_notional": float(existing_notional),
-                "max_symbol_notional": float(max_symbol_notional),
+                "existing_margin": float(existing_margin),
+                "target_margin": float(target_margin),
                 "confirm": confirm_meta,
             },
-            reason_text="해당 심볼은 이미 20% 한도에 도달했습니다.",
+            reason_text="해당 심볼은 이미 20% 증거금 한도에 도달했습니다.",
         )
         return
 
-    remaining_notional = max_symbol_notional - existing_notional
-    if remaining_notional <= 0:
+    remaining_margin = max(0.0, target_margin - existing_margin)
+    if remaining_margin <= 0:
         _record_skip(
             deps,
             reason="no_remaining_capacity",
             decision=decision,
             meta={
-                "existing_notional": float(existing_notional),
-                "max_symbol_notional": float(max_symbol_notional),
+                "existing_margin": float(existing_margin),
+                "target_margin": float(target_margin),
                 "confirm": confirm_meta,
             },
-            reason_text="해당 심볼에 추가로 배정할 수 있는 한도가 없습니다.",
+            reason_text="해당 심볼에 추가로 배정할 증거금이 없습니다.",
         )
         return
 
-    requested_notional = remaining_notional
     avail_safety = _safe_float(os.getenv("AVAILABLE_NOTIONAL_SAFETY", "0.95"), 0.95)
-    effective_leverage_for_avail = max(1.0, float(leverage))
-    available_notional_limit = free_usdt * effective_leverage_for_avail * avail_safety
-    if available_notional_limit > 0:
-        order_notional = min(requested_notional, available_notional_limit)
-    else:
-        order_notional = requested_notional
-
-    if order_notional <= 0:
+    available_margin_limit = free_usdt * avail_safety
+    if available_margin_limit <= 0:
         _record_skip(
             deps,
-            reason="insufficient_available_notional",
+            reason="insufficient_available_margin",
             decision=decision,
             meta={
-                "requested_notional": float(requested_notional),
-                "available_notional_limit": float(available_notional_limit),
+                "available_margin_limit": float(available_margin_limit),
+                "free_usdt": float(free_usdt),
                 "confirm": confirm_meta,
             },
             reason_text="가용 증거금이 부족하여 주문을 실행할 수 없습니다.",
+        )
+        return
+
+    order_margin = min(float(remaining_margin), float(available_margin_limit))
+    if order_margin <= 0:
+        _record_skip(
+            deps,
+            reason="no_order_margin",
+            decision=decision,
+            meta={
+                "remaining_margin": float(remaining_margin),
+                "available_margin_limit": float(available_margin_limit),
+                "confirm": confirm_meta,
+            },
+            reason_text="주문에 사용할 증거금이 없습니다.",
+        )
+        return
+
+    effective_leverage = max(1.0, float(leverage))
+    order_notional = order_margin * effective_leverage
+    if order_notional <= 0:
+        _record_skip(
+            deps,
+            reason="non_positive_notional",
+            decision=decision,
+            meta={
+                "order_margin": float(order_margin),
+                "effective_leverage": float(effective_leverage),
+                "confirm": confirm_meta,
+            },
+            reason_text="계산된 주문 명목가가 0 이하입니다.",
         )
         return
 
@@ -1453,6 +1524,7 @@ def _execute_trade(
                 "min_qty": float(min_qty),
                 "entry_price": float(entry_price),
                 "target_qty": float(quantity),
+                "order_margin": float(order_margin),
                 "order_notional": float(order_notional),
                 "confirm": confirm_meta,
             },
@@ -1560,11 +1632,11 @@ def _execute_trade(
         "sl": position_params.sl,
         "leverage": leverage,
         "order_notional": float(order_notional),
-        "requested_notional": float(requested_notional),
-        "remaining_notional": float(remaining_notional),
-        "max_symbol_notional": float(max_symbol_notional),
-        "existing_notional": float(existing_notional),
-        "available_notional_limit": float(available_notional_limit),
+        "order_margin": float(order_margin),
+        "remaining_margin": float(remaining_margin),
+        "existing_margin": float(existing_margin),
+        "target_margin": float(target_margin),
+        "available_margin_limit": float(available_margin_limit),
         "total_usdt": float(total_usdt),
         "alloc_percent": float(alloc_percent),
     }
