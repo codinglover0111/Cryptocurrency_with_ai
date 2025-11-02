@@ -46,11 +46,9 @@ def run_scheduler() -> None:
         except Exception:
             logging.exception("Loss review job error")
 
-    # 매시각 58분 13분 28분 43분에 실행
-    schedule.every().hour.at(":58").do(job)
-    schedule.every().hour.at(":13").do(job)
-    schedule.every().hour.at(":28").do(job)
-    schedule.every().hour.at(":43").do(job)
+    # 매 5분마다 실행 (05, 10, 15, ..., 55, 00분)
+    for minute in range(0, 60, 5):
+        schedule.every().hour.at(f":{minute:02d}").do(job)
     # 5분 주기로 실행
     schedule.every(5).minutes.do(review_job)
 

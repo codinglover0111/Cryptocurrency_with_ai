@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import pandas as pd
+
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
 from utils.ai_provider import AIProvider
@@ -60,6 +62,9 @@ class PromptContext:
     csv_4h: str
     csv_1h: str
     csv_15m: str
+    rsi_4h: str
+    rsi_1h: str
+    rsi_15m: str
     current_position: List[Dict[str, Any]]
     pos_side: Optional[str]
     current_positions_lines: List[str]
@@ -68,6 +73,46 @@ class PromptContext:
     reviews_text: str
     since_open_text: str
     chart_images: Dict[str, str] = field(default_factory=dict)
+
+
+def _compute_rsi_series(close_series: pd.Series, period: int = 14) -> pd.Series:
+    if close_series.empty:
+        return pd.Series(dtype="float64")
+
+    delta = close_series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    alpha = 1 / period
+    avg_gain = gain.ewm(alpha=alpha, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=alpha, adjust=False, min_periods=period).mean()
+
+    avg_loss = avg_loss.replace(0, pd.NA)
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.clip(0, 100)
+
+
+def _rsi_csv_from_df(df: pd.DataFrame, *, period: int = 14) -> str:
+    if df is None or getattr(df, "empty", True):
+        return ""
+
+    df_reset = df.reset_index()
+    if "close" not in df_reset.columns:
+        return ""
+
+    rsi_series = _compute_rsi_series(pd.Series(df_reset["close"]), period=period)
+
+    if "timestamp" in df_reset.columns:
+        out_df = pd.DataFrame({"timestamp": df_reset["timestamp"], "rsi": rsi_series})
+    else:
+        out_df = pd.DataFrame({"rsi": rsi_series})
+
+    out_df = out_df.dropna()
+    if out_df.empty:
+        return ""
+
+    return out_df.to_csv(index=False)
 
 
 def _compute_tp_sl_percentages(
@@ -302,6 +347,10 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     csv_15m = df_15m.to_csv()
     current_price = df_15m["close"].iloc[-1]
 
+    rsi_4h = _rsi_csv_from_df(df_4h)
+    rsi_1h = _rsi_csv_from_df(df_1h)
+    rsi_15m = _rsi_csv_from_df(df_15m)
+
     chart_images: Dict[str, str] = {}
     if deps.ai_provider.provider == "gemini":
         for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
@@ -401,6 +450,9 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         csv_4h=csv_4h,
         csv_1h=csv_1h,
         csv_15m=csv_15m,
+        rsi_4h=rsi_4h,
+        rsi_1h=rsi_1h,
+        rsi_15m=rsi_15m,
         current_position=current_position,
         pos_side=pos_side,
         current_positions_lines=position_lines,
@@ -416,6 +468,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     prompt = (
         f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
+        "현재는 시장가(market) 주문만 가능하며 지정가(limit)는 임시로 비활성화되었습니다.\n"
         f"이미 진입한 포지션의 레버리지는 조절할 수 없습니다.\n"
         f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
         "잃는 것을 무서워 하지마세요. 언제나 다음이 있습니다.\n"
@@ -472,6 +525,15 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         "[CSV_15M]\n"
         f"{ctx.csv_15m}\n"
         "[/CSV_15M]\n"
+        "[RSI_15M]\n"
+        f"{ctx.rsi_15m}\n"
+        "[/RSI_15M]\n"
+        "[RSI_1H]\n"
+        f"{ctx.rsi_1h}\n"
+        "[/RSI_1H]\n"
+        "[RSI_4H]\n"
+        f"{ctx.rsi_4h}\n"
+        "[/RSI_4H]\n"
         "[CURRENT_POSITIONS]\n"
         + (
             "\n".join(ctx.current_positions_lines)
@@ -496,7 +558,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
 
     prompt += (
         "Choose one of: hold, short, long, or stop.\n"
-        "Return your decision as JSON with the following fields: order type (market/limit), "
+        "Return your decision as JSON with the following fields: order type (market only; limit temporarily disabled), "
         "price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number), update_existing (boolean).\n"
         "If you want to immediately take profit or cut loss on an existing position, set close_now=true "
         "and optionally close_percent (1~100).\n"
@@ -667,8 +729,8 @@ def _extract_order_type(data: Dict[str, Any]) -> Optional[str]:
         value = ""
     if value in {"market", "mkt"}:
         return "market"
-    if value in {"limit", "lmt"}:
-        return "limit"
+    # if value in {"limit", "lmt"}:
+    #     return "limit"
     return None
 
 
@@ -1043,12 +1105,19 @@ def _run_confirm_step(
                 pass
 
         override_type = _extract_order_type(confirm)
-        if override_type:
-            order_type = override_type
-        elif confirm.get("buy_now") is not None:
-            order_type = (
-                "market" if _normalize_bool(confirm.get("buy_now")) else "limit"
+        if override_type == "market":
+            order_type = "market"
+        elif override_type:
+            LOGGER.info(
+                "Order type override '%s' ignored; market only supported",
+                override_type,
             )
+            order_type = "market"
+        elif confirm.get("buy_now") is not None:
+            order_type = "market"
+            # order_type = (
+            #     "market" if _normalize_bool(confirm.get("buy_now")) else "limit"
+            # )
         if confirm.get("leverage") is not None:
             try:
                 leverage = float(confirm.get("leverage"))
@@ -1148,12 +1217,14 @@ def _execute_trade(
         return
 
     side = "buy" if ai_status == "long" else "sell"
-    order_type = _extract_order_type(decision) or (
-        "market" if _normalize_bool(decision.get("buy_now")) else "limit"
-    )
+    order_type = _extract_order_type(decision) or "market"
+    # order_type = _extract_order_type(decision) or (
+    #     "market" if _normalize_bool(decision.get("buy_now")) else "limit"
+    # )
 
     balance_info = deps.bybit.get_balance("USDT") or {}
     balance_total = balance_info.get("total") or 0
+    balance_free = balance_info.get("free")
 
     leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
 
@@ -1241,6 +1312,13 @@ def _execute_trade(
     if should_skip:
         return
 
+    try:
+        leverage = float(leverage)
+    except Exception:
+        leverage = 1.0
+    if leverage <= 0:
+        leverage = 1.0
+
     max_loss_pct = _compute_max_loss_percent(leverage)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
         try:
@@ -1254,6 +1332,13 @@ def _execute_trade(
             pass
 
     total_balance = float(balance_total or 0.0)
+    try:
+        free_balance = float(balance_free) if balance_free is not None else None
+    except Exception:
+        free_balance = None
+    usable_balance = total_balance if total_balance > 0 else 0.0
+    if free_balance is not None:
+        usable_balance = max(0.0, min(total_balance, free_balance))
     if allocation_ratio <= 0 or total_balance <= 0:
         _record_skip(
             deps,
@@ -1267,7 +1352,8 @@ def _execute_trade(
         )
         return
 
-    per_symbol_cap_notional = total_balance * allocation_ratio
+    per_symbol_margin_cap = usable_balance * allocation_ratio
+    per_symbol_cap_notional = per_symbol_margin_cap * leverage
     if float(entry_price) <= 0:
         _record_skip(
             deps,
@@ -1311,7 +1397,7 @@ def _execute_trade(
                 try:
                     size_f = size_f * float(contract_size)
                 except Exception:
-                    size_f = size_f
+                    size_f = None
             if size_f is None:
                 continue
             mark = pos.get("markPrice") or (pos.get("info", {}) or {}).get("markPrice")
