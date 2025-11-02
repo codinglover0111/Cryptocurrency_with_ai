@@ -36,7 +36,6 @@ services:
     env_file:
       - .env
     environment:
-      TESTNET: ${TESTNET:-1}
       APP_BASE_DIR: /app
       SQLITE_PATH: /app/data/trading.sqlite
       FORCE_SQLITE: ${FORCE_SQLITE:-1}

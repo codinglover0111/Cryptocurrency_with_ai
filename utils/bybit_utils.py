@@ -1,11 +1,16 @@
 # pylint: disable=broad-except
 # ruff: noqa: E722, BLE001
+import logging
 import os
+import time
 import ccxt
 from dotenv import load_dotenv
 
 from typing import Optional, Dict, Any, Literal, List
 from pydantic import BaseModel
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class Open_Position(BaseModel):
@@ -49,34 +54,14 @@ class BybitUtils:
                 60000, int(os.getenv("BYBIT_TIME_RESYNC_INTERVAL_MS", "300000"))
             )
 
-            # API 키와 시크릿 설정
-            if mode == "demo":
-                api_key = (
-                    os.getenv("BYBIT_DEMO_API_KEY")
-                    or os.getenv("DEMO_BYBIT_API_KEY")
-                    or os.environ.get("BYBIT_API_KEY")
-                )
-                api_secret = (
-                    os.getenv("BYBIT_DEMO_API_SECRET")
-                    or os.getenv("DEMO_BYBIT_API_SECRET")
-                    or os.environ.get("BYBIT_API_SECRET")
-                )
-            elif mode == "testnet":
-                api_key = (
-                    os.getenv("BYBIT_TESTNET_API_KEY")
-                    or os.getenv("TESTNET_BYBIT_API_KEY")
-                    or os.getenv("DEMO_BYBIT_API_KEY")
-                    or os.environ.get("BYBIT_API_KEY")
-                )
-                api_secret = (
-                    os.getenv("BYBIT_TESTNET_API_SECRET")
-                    or os.getenv("TESTNET_BYBIT_API_SECRET")
-                    or os.getenv("DEMO_BYBIT_API_SECRET")
-                    or os.environ.get("BYBIT_API_SECRET")
-                )
-            else:
+            # API 키와 시크릿 설정 (단일 환경 변수 사용)
+            try:
                 api_key = os.environ["BYBIT_API_KEY"]
                 api_secret = os.environ["BYBIT_API_SECRET"]
+            except KeyError as missing:
+                raise KeyError(
+                    "BYBIT_API_KEY와 BYBIT_API_SECRET 설정이 필요합니다"
+                ) from missing
             # Bybit 객체 생성
             self.exchange = ccxt.bybit(
                 {
@@ -619,22 +604,38 @@ class BybitUtils:
             return None
 
     def _fetch_positions(self) -> Optional[List[dict]]:
-        try:
-            positions = self.exchange.fetch_positions(None, self._default_params())
-            return positions or []
-        except Exception as e:
-            handled = self._handle_time_error(e)
-            if handled:
-                try:
-                    positions = self.exchange.fetch_positions(
-                        None, self._default_params()
-                    )
-                    return positions or []
-                except Exception as retry_error:
-                    print(f"Error fetching positions after resync: {retry_error}")
+        retry_delay_seconds = 5.0
+        max_retries = 3
+        attempt = 0
+        last_error: Optional[Exception] = None
+        params = self._default_params()
+
+        while True:
+            try:
+                positions = self.exchange.fetch_positions(None, params)
+                return positions or []
+            except Exception as error:
+                last_error = error
+                handled = self._handle_time_error(error)
+                if not handled:
+                    print(f"Error fetching positions: {error}")
                     return None
-            print(f"Error fetching positions: {e}")
-            return None
+
+                if attempt >= max_retries:
+                    break
+
+                attempt += 1
+                print(
+                    f"Time desync detected; retrying fetch_positions in {retry_delay_seconds:.0f}s (attempt {attempt}/{max_retries})"
+                )
+                time.sleep(retry_delay_seconds)
+                params = self._default_params()
+
+        if last_error is not None:
+            print(
+                f"Error fetching positions after {max_retries} retries due to time desync: {last_error}"
+            )
+        return None
 
     def get_positions(self):
         """포지션 정보들 조회"""
@@ -727,112 +728,17 @@ class BybitUtils:
                 order = _place_with_quantity(position.quantity)
                 return order
             except Exception as first_error:
-                msg = str(first_error)
-                # Bybit 110007: ab not enough for new order (가용 마진 부족)
-                if (
-                    "110007" in msg
-                    or "ab not enough" in msg.lower()
-                    or "insufficient" in msg.lower()
-                ):
-                    try:
-                        # 가용 잔고 및 마켓 스펙을 기반으로 수량 자동 조정 후 재시도
-                        balance = self.get_balance("USDT") or {}
-                        free_usdt = float(balance.get("free") or 0)
-                        if free_usdt <= 0:
-                            print(
-                                "Insufficient free balance for retry after 110007; aborting"
-                            )
-                            return None
-
-                        leverage = float(position.leverage or 1.0)
-                        safety = float(os.getenv("ORDER_SAFETY_MARGIN", "0.96"))
-                        # 가격은 전달된 price 사용(시장가일 경우 main에서 현재가를 전달함)
-                        effective_price = float(position.price or 0)
-                        if effective_price <= 0:
-                            # 폴백: 티커에서 조회
-                            last_price = self.get_last_price(position.symbol) or 0
-                            effective_price = float(last_price)
-                        if effective_price <= 0:
-                            print(
-                                "Cannot determine effective price for retry; aborting"
-                            )
-                            return None
-
-                        # 최대 가능 수량 계산
-                        max_position_value = free_usdt * leverage * safety
-                        computed_max_qty = max_position_value / effective_price
-
-                        # 마켓 스펙 로드
-                        try:
-                            market = self.exchange.market(position.symbol)
-                            min_qty = (
-                                (market.get("limits", {}) or {})
-                                .get("amount", {})
-                                .get("min")
-                            )
-                        except Exception:
-                            market = None
-                            min_qty = None
-
-                        # 수량 반올림(정밀도/스텝에 맞춤) - 안전하게 소수 절삭 효과를 위해 amount_to_precision 사용
-                        def _round_qty(symbol: str, qty: float) -> float:
-                            try:
-                                return float(
-                                    self.exchange.amount_to_precision(symbol, qty)
-                                )
-                            except Exception:
-                                return float(qty)
-
-                        adjusted_qty = _round_qty(
-                            position.symbol,
-                            max(0.0, min(position.quantity, computed_max_qty)),
-                        )
-
-                        # 여전히 너무 크면 단계적으로 축소하며 최대 3회 재시도
-                        retry_quantities = [
-                            adjusted_qty,
-                            _round_qty(position.symbol, adjusted_qty * 0.9),
-                            _round_qty(position.symbol, adjusted_qty * 0.75),
-                            _round_qty(position.symbol, adjusted_qty * 0.5),
-                        ]
-
-                        for idx, rq in enumerate(retry_quantities):
-                            if rq is None or rq <= 0:
-                                continue
-                            if min_qty is not None and rq < float(min_qty):
-                                # 최소 수량보다 작으면 스킵
-                                continue
-                            try:
-                                print(
-                                    f"Retrying order after 110007 with qty={rq} (attempt {idx + 1})"
-                                )
-                                order = _place_with_quantity(rq)
-                                return order
-                            except Exception as re:
-                                # 같은 오류가 계속되면 루프 계속
-                                if not (
-                                    "110007" in str(re).lower()
-                                    or "ab not enough" in str(re).lower()
-                                    or "insufficient" in str(re).lower()
-                                ):
-                                    print(f"Retry failed with non-110007 error: {re}")
-                                    return None
-                        print(
-                            "All retries after 110007 exhausted or qty < min; giving up"
-                        )
-                        return None
-                    except Exception as adjust_error:
-                        print(
-                            f"Error during auto-adjust retry after 110007: {adjust_error}"
-                        )
-                        return None
-                else:
-                    # 기타 오류는 상위로 메시지만 남기고 실패 처리
-                    print(f"Error opening position: {first_error}")
-                    return None
+                LOGGER.warning(
+                    "Order placement failed for %s (type=%s, side=%s): %s",
+                    position.symbol,
+                    position.type,
+                    position.side,
+                    first_error,
+                )
+                return None
 
         except Exception as e:
-            print(f"Error opening position: {e}")
+            LOGGER.error("Error opening position for %s: %s", position.symbol, e)
             return None
 
     # def edit_tp_sl(self, symbol, order_id, tp=None, sl=None):

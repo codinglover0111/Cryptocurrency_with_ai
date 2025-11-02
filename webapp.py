@@ -39,6 +39,11 @@ STATUS_CACHE = {"ts": 0.0, "data": None}
 STATUS_CACHE_LOCK = threading.Lock()
 
 
+def _is_testnet_mode() -> bool:
+    mode_env = (os.getenv("BYBIT_ENV") or "").strip().lower()
+    return mode_env in {"demo", "testnet"}
+
+
 def _redact_sensitive(obj):
     """Recursively redact sensitive-looking keys in dict/list structures."""
     sensitive_keys = (
@@ -143,7 +148,7 @@ def _startup():
 
 @app.get("/api/bybit_time")
 def api_bybit_time(force: int = 0):
-    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     info = bybit.get_time_sync_info(force=bool(force))
     last_sync_ms = info.get("last_time_sync_ms")
     if isinstance(last_sync_ms, (int, float)) and last_sync_ms > 0:
@@ -183,7 +188,7 @@ def status():
     if cached_payload is not None and now - cached_ts < STATUS_CACHE_TTL:
         return cached_payload
 
-    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     try:
         data = bybit.get_account_overview()
         try:
@@ -222,7 +227,7 @@ def status():
 
 @app.post("/leverage")
 def set_leverage(body: LeverageBody):
-    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     res = bybit.set_leverage(body.symbol, body.leverage, body.margin_mode or "cross")
     return {"ok": True, "result": res}
 
@@ -295,7 +300,7 @@ def stats_range(
 
 @app.post("/close_all")
 def close_all():
-    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     res = bybit.close_all_positions()
     return {"ok": True, "result": res}
 
@@ -764,7 +769,7 @@ def list_journals_filtered(
 
 @app.get("/api/positions_debug")
 def positions_debug(symbol: Optional[str] = None):
-    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     positions = bybit.get_positions() or []
     debug_items = []
     for p in positions:
@@ -949,7 +954,7 @@ def positions_summary(
     force_exchange_pnl: int = 0,
     force_roe: int = 0,
 ):
-    bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     positions = bybit.get_positions() or []
     items = _summarize_positions(
         bybit,
@@ -990,7 +995,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             return
 
     try:
-        bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
+    bybit = BybitUtils(is_testnet=_is_testnet_mode())
     except Exception:
         return
 
