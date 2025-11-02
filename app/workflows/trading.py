@@ -1238,27 +1238,27 @@ def _execute_trade(
         )
         return
 
-    (
-        order_type,
-        entry_price,
-        use_tp,
-        use_sl,
-        leverage,
-        confirm_meta,
-        should_skip,
-    ) = _run_confirm_step(
-        deps=deps,
-        decision=decision,
-        ai_status=ai_status,
-        side=side,
-        order_type=order_type,
-        entry_price=entry_price,
-        use_tp=use_tp,
-        use_sl=use_sl,
-        leverage=leverage,
-    )
-    if should_skip:
-        return
+    # (
+    #     order_type,
+    #     entry_price,
+    #     use_tp,
+    #     use_sl,
+    #     leverage,
+    #     confirm_meta,
+    #     should_skip,
+    # ) = _run_confirm_step(
+    #     deps=deps,
+    #     decision=decision,
+    #     ai_status=ai_status,
+    #     side=side,
+    #     order_type=order_type,
+    #     entry_price=entry_price,
+    #     use_tp=use_tp,
+    #     use_sl=use_sl,
+    #     leverage=leverage,
+    # )
+    # if should_skip:
+    #     return
 
     max_loss_pct = _compute_max_loss_percent(leverage)
     if isinstance(use_sl, (int, float)) and float(use_sl) > 0:
