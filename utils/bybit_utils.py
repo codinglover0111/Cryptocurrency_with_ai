@@ -147,20 +147,11 @@ class BybitUtils:
                         break
                 except Exception:
                     pass
-            if server_time is not None:
-                local_time = self.exchange.milliseconds()
-                # 안전 마진(밀리초). 로컬 시계가 서버보다 앞서는 경우를 더 엄격히 보정
-                safety_ms = int(os.getenv("BYBIT_TIME_SAFETY_MS", "500"))
-                # timeDifference는 ccxt의 nonce 계산에 더해짐
-                # 서버 시간 - 로컬 시간 - safety => 요청 타임스탬프가 서버 시간보다 약간 작게
-                offset = int(server_time) - int(local_time) - safety_ms
-                self.exchange.options["timeDifference"] = offset
-            else:
-                # 폴백: ccxt의 자동 보정 시도
-                try:
-                    self.exchange.load_time_difference()
-                except Exception:
-                    pass
+            # 폴백: ccxt의 자동 보정 시도
+            try:
+                self.exchange.load_time_difference()
+            except Exception:
+                pass
             td = self.exchange.options.get("timeDifference")
             rw = self.exchange.options.get("recvWindow") or self.exchange.options.get(
                 "recvwindow"
@@ -539,7 +530,9 @@ class BybitUtils:
             except Exception as exc:
                 last_error = str(exc)
 
-        private_method = getattr(self.exchange, "privatePostV5PositionTradingStop", None)
+        private_method = getattr(
+            self.exchange, "privatePostV5PositionTradingStop", None
+        )
         if callable(private_method):
             try:
                 request: Dict[str, Any] = {}

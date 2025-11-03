@@ -12,6 +12,44 @@ import pandas as pd
 import sqlalchemy as sa
 
 
+SCHEMA_METADATA = sa.MetaData()
+
+
+TRADES_TABLE = sa.Table(
+    "trades",
+    SCHEMA_METADATA,
+    sa.Column("ts", sa.DateTime, nullable=True),
+    sa.Column("symbol", sa.String(64), nullable=True),
+    sa.Column("side", sa.String(8), nullable=True),
+    sa.Column("type", sa.String(8), nullable=True),
+    sa.Column("price", sa.Float, nullable=True),
+    sa.Column("quantity", sa.Float, nullable=True),
+    sa.Column("tp", sa.Float, nullable=True),
+    sa.Column("sl", sa.Float, nullable=True),
+    sa.Column("leverage", sa.Float, nullable=True),
+    sa.Column("status", sa.String(16), nullable=True),
+    sa.Column("order_id", sa.String(128), nullable=True),
+    sa.Column("pnl", sa.Float, nullable=True),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+)
+
+
+JOURNALS_TABLE = sa.Table(
+    "journals",
+    SCHEMA_METADATA,
+    sa.Column("ts", sa.DateTime, nullable=True),
+    sa.Column("symbol", sa.String(64), nullable=True),
+    sa.Column("entry_type", sa.String(16), nullable=True),
+    sa.Column("content", sa.Text, nullable=True),
+    sa.Column("reason", sa.Text, nullable=True),
+    sa.Column("meta", sa.JSON, nullable=True),
+    sa.Column("ref_order_id", sa.String(128), nullable=True),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+)
+
+
 @dataclass
 class StorageConfig:
     # DB 전용으로 단순화
@@ -75,6 +113,19 @@ class TradeStore:
                         self._engine = sa.create_engine(self._db_url, **kwargs)
             except Exception as e:
                 print(f"Warning: failed to init database engine: {e}")
+
+        if self._engine is not None:
+            self._ensure_schema()
+
+    def _ensure_schema(self) -> None:
+        try:
+            SCHEMA_METADATA.create_all(
+                self._engine,
+                tables=[TRADES_TABLE, JOURNALS_TABLE],
+                checkfirst=True,
+            )
+        except Exception as e:
+            print(f"Warning: failed to ensure database schema: {e}")
 
     def record_trade(self, trade: Dict[str, Any]) -> None:
         # DB 기록 전용
