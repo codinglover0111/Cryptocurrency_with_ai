@@ -75,7 +75,9 @@ class AIProvider:
 
         model = os.environ.get("OPENAI_MODEL", "deepseek-reasoner")
         response = self._openai_client.chat.completions.create(
-            model=model, messages=[{"role": "system", "content": prompt}]
+            temperature=0.2,
+            model=model,
+            messages=[{"role": "system", "content": prompt}],
         )
         return response.choices[0].message.content
 
@@ -163,6 +165,7 @@ class AIProvider:
                 model=model,
                 messages=[{"role": "system", "content": prompt}],
                 tools=tools,
+                temperature=0.2,
                 tool_choice="auto",
                 parallel_tool_calls=False,
                 response_format={"type": "json_object"},
@@ -190,6 +193,7 @@ class AIProvider:
 
         resp = self._openai_client.chat.completions.create(
             model=model,
+            temperature=0.2,
             messages=[
                 {
                     "role": "system",
@@ -285,6 +289,7 @@ class AIProvider:
 
         resp = self._openai_client.chat.completions.create(
             model=model,
+            temperature=0.2,
             messages=[
                 {
                     "role": "system",
