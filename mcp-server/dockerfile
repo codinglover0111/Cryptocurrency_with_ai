@@ -11,4 +11,4 @@ COPY . .
 ENV TZ=Asia/Seoul \
     PYTHONUNBUFFERED=1
 
-CMD ["uv", "run", "main.py"]
+CMD ["uv", "run", "main:app", "--reload"]
