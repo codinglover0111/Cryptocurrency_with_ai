@@ -1,9 +1,0 @@
-*.png
-.venv
-__pycache__
-.env
-*.log
-.env.local
-trading.log
-data/trading.sqlite
-trading.sqlite
