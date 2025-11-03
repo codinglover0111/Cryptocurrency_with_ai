@@ -16,11 +16,15 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from dotenv import load_dotenv
+
 from app.core.symbols import parse_trading_symbols, to_ccxt_symbols
 from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
 from utils.ai_provider import AIProvider
 
+
+load_dotenv()
 
 app = FastAPI(title="Crypto Bot UI")
 

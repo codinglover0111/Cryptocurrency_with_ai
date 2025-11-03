@@ -1,14 +1,45 @@
 services:
+  db:
+    image: mysql:8.0
+    container_name: crypto_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: cryptobot
+      MYSQL_USER: bot
+      MYSQL_PASSWORD: botpass
+    command:
+      [
+        "mysqld",
+        "--default-authentication-plugin=mysql_native_password",
+        "--character-set-server=utf8mb4",
+        "--collation-server=utf8mb4_unicode_ci",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -uroot -p\"$MYSQL_ROOT_PASSWORD\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - db-data:/var/lib/mysql
+
   app:
     build: .
     user: "1000:1000"
     container_name: crypto_bot
+    depends_on:
+      - db
     env_file:
       - .env
     environment:
+      MYSQL_URL: mysql+pymysql://bot:botpass@db:3306/cryptobot
       SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
     volumes:
       - ./.env:/app/.env
       - ./trading.log:/app/trading.log
@@ -22,13 +53,14 @@ services:
     container_name: crypto_web
     depends_on:
       - app
+      - db
     env_file:
       - .env
     environment:
       TESTNET: ${TESTNET:-1}
+      MYSQL_URL: mysql+pymysql://bot:botpass@db:3306/cryptobot
       SQLITE_PATH: /app/data/trading.sqlite
       APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
     ports:
       - "8000:8000"
     command: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -36,3 +68,6 @@ services:
     volumes:
       - ./.env:/app/.env
       - ./data:/app/data
+
+volumes:
+  db-data:

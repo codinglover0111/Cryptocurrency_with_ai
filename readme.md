@@ -51,6 +51,8 @@ utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
    docker compose up -d --build
    ```
 
+   기본 MySQL 접속 정보는 `MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot`이며, 컨테이너는 자동으로 초기화됩니다.
+
 ## 주요 환경변수
 
 ```text
@@ -68,9 +70,12 @@ OPENAI_BASE_URL=...
 OPENAI_API_KEY=...
 OPENAI_MODEL=...
 
-# 데이터 저장소 (MySQL 또는 SQLite 폴백)
+# 데이터 저장소 (MySQL 기본 / 옵션)
 MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot
 SQLITE_PATH=data/trading.sqlite
+DB_CONNECT_RETRIES=5            # MySQL 연결 재시도 횟수 (선택)
+DB_CONNECT_RETRY_DELAY=2        # 재시도 간격(초)
+ALLOW_SQLITE_FALLBACK=0         # MySQL 실패 시 SQLite 폴백 허용 여부
 ```
 
 ## 스케줄러 동작
