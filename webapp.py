@@ -1048,6 +1048,8 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                 if val:
                     existing_close_ids.add(str(val))
 
+    processed_close_ids: set[str] = set(existing_close_ids)
+
     history_cache: Dict[str, List[Dict[str, Any]]] = {}
     used_history_ids: set[str] = set()
 
@@ -1309,7 +1311,14 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         if order_id is None:
             synthetic_id = f"{symbol}:{int(_ts_to_ms(close_ts_dt) or 0)}"
             order_id = synthetic_id
-            existing_close_ids.add(synthetic_id)
+
+        order_id_str = str(order_id) if order_id is not None else None
+        if not order_id_str:
+            continue
+        if order_id_str in processed_close_ids:
+            continue
+        processed_close_ids.add(order_id_str)
+        existing_close_ids.add(order_id_str)
 
         try:
             store.record_trade(
@@ -1324,7 +1333,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                     "sl": sl_f,
                     "leverage": row.get("leverage"),
                     "status": "closed",
-                    "order_id": order_id,
+                    "order_id": order_id_str,
                     "pnl": float(pnl),
                 }
             )
