@@ -1,3 +1,13 @@
 [project]
+name = "mcp-server"
+version = "0.1.0"
+description = "MCP 서버입니다."
+readme = "README.md"
+requires-python = ">=3.11"
 dependencies = [
+    "fastapi-mcp>=0.4.0",
+    "fastapi[standard]>=0.121.0",
+    "ccxt==4.5.14",
+    "supabase>=2.23.1",
+    "python-dotenv>=1.2.1",
 ]
