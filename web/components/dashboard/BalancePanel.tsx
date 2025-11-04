@@ -9,8 +9,8 @@ import { useMemo } from "react";
 
 function normalizeSide(side: unknown): string {
   const raw = String(side ?? "").toLowerCase();
-  if (raw === "long" || raw === "buy") return "롱";
-  if (raw === "short" || raw === "sell") return "숏";
+  if (raw === "long" || raw === "buy") return "Long";
+  if (raw === "short" || raw === "sell") return "Short";
   if (!raw) return "-";
   return String(side);
 }
