@@ -1,0 +1,114 @@
+/* 추가 스타일 필요 시 확장 */
+
+[hidden] {
+  display: none !important;
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1.5px solid var(--checkbox-border, rgba(148, 163, 184, 0.55));
+  background: var(--checkbox-bg, rgba(15, 23, 42, 0.45));
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+input[type="checkbox"]::after {
+  content: "";
+  display: block;
+  width: 6px;
+  height: 10px;
+  border: 2px solid transparent;
+  border-bottom-color: var(--checkbox-icon, #ffffff);
+  border-right-color: var(--checkbox-icon, #ffffff);
+  transform: rotate(45deg) scale(0);
+  transform-origin: center;
+  transition: transform 0.12s ease;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--checkbox-checked, #38bdf8);
+  border-color: var(--checkbox-checked, #38bdf8);
+}
+
+input[type="checkbox"]:checked::after {
+  transform: rotate(45deg) scale(1);
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.45);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.modal {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  width: min(720px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #1f2937;
+  font-weight: 700;
+}
+
+.modal-body {
+  padding: 16px;
+  color: #e5e7eb;
+}
+
+.modal-body pre {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+@media (prefers-color-scheme: light) {
+  .modal {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
+  }
+
+  .modal-header {
+    border-bottom-color: #e2e8f0;
+  }
+
+  .modal-body {
+    color: #1e293b;
+  }
+
+  .modal-body pre {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+  }
+}

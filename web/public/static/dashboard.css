@@ -18,8 +18,7 @@
   --radius-lg: 18px;
   --shadow-soft: 0 18px 36px rgba(2, 6, 23, 0.35);
   --shadow-inner: inset 0 1px 0 rgba(148, 163, 184, 0.12);
-  --font-base: var(--font-inter, "Inter"), system-ui, -apple-system, "Segoe UI",
-    sans-serif;
+  --font-base: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --body-background: radial-gradient(
     circle at 10% 20%,
     #0b1940 0%,
@@ -373,13 +372,6 @@ select:focus {
   box-shadow: none;
 }
 
-.btn:disabled,
-.btn[disabled] {
-  opacity: 0.6;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
 .btn--ghost {
   background: rgba(15, 23, 42, 0.7);
   color: var(--text);
@@ -544,12 +536,6 @@ select:focus {
   background: rgba(56, 189, 248, 0.18);
 }
 
-.pager-btn:disabled,
-.pager-btn[disabled] {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .pager-btn--active {
   background: var(--accent);
   border-color: var(--accent);
@@ -566,114 +552,6 @@ select:focus {
 
 .table-wrapper a.btn {
   margin: 6px 0;
-}
-
-[hidden] {
-  display: none !important;
-}
-
-input[type="checkbox"] {
-  appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 6px;
-  border: 1.5px solid var(--checkbox-border);
-  background: var(--checkbox-bg);
-  display: inline-grid;
-  place-content: center;
-  cursor: pointer;
-  transition: border-color 0.18s ease, background-color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-input[type="checkbox"]::after {
-  content: "";
-  display: block;
-  width: 6px;
-  height: 10px;
-  border: 2px solid transparent;
-  border-bottom-color: var(--checkbox-icon);
-  border-right-color: var(--checkbox-icon);
-  transform: rotate(45deg) scale(0);
-  transform-origin: center;
-  transition: transform 0.12s ease;
-}
-
-input[type="checkbox"]:checked {
-  background: var(--checkbox-checked);
-  border-color: var(--checkbox-checked);
-}
-
-input[type="checkbox"]:checked::after {
-  transform: rotate(45deg) scale(1);
-}
-
-input[type="checkbox"]:focus-visible {
-  outline: 2px solid rgba(56, 189, 248, 0.45);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
-}
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  z-index: 1000;
-}
-
-.modal {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 12px;
-  width: min(720px, 92vw);
-  max-height: 80vh;
-  overflow: auto;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #1f2937;
-  font-weight: 700;
-}
-
-.modal-body {
-  padding: 16px;
-  color: #e5e7eb;
-}
-
-.modal-body pre {
-  margin: 8px 0 0;
-  padding: 12px;
-  background: #0b1220;
-  border: 1px solid #1f2937;
-  border-radius: 8px;
-  white-space: pre-wrap;
-  overflow-x: auto;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 13px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  transition: color 0.18s ease, background 0.18s ease;
-}
-
-.modal-close:hover {
-  color: var(--accent);
-  background: rgba(56, 189, 248, 0.12);
 }
 
 @media (prefers-color-scheme: light) {
@@ -826,30 +704,6 @@ input[type="checkbox"]:focus-visible {
     color: #0369a1;
     border-color: rgba(2, 132, 199, 0.4);
     background: rgba(191, 219, 254, 0.6);
-  }
-
-  .modal {
-    background: #ffffff;
-    border-color: #e2e8f0;
-    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
-  }
-
-  .modal-header {
-    border-bottom-color: #e2e8f0;
-  }
-
-  .modal-body {
-    color: #1e293b;
-  }
-
-  .modal-body pre {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-  }
-
-  .modal-close:hover {
-    color: #0284c7;
-    background: rgba(2, 132, 199, 0.1);
   }
 }
 
