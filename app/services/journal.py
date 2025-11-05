@@ -299,7 +299,7 @@ class JournalService:
     def list_pending_reviews(
         self,
         *,
-        wait_hours: int = 4,
+        wait_hours: int = 48,
         since_hours: int = 24,
     ) -> list[dict[str, object]]:
         """Return closed-loss trades waiting for review availability."""
