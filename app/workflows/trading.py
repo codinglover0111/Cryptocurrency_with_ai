@@ -655,7 +655,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
 
     prompt += (
         "Choose one of: watch/hold, short, long, or stop.\n"
-        "Return your decision as JSON with the following fields: order type (market/limit), "
+        "Return your decision as JSON with the following fields: order type (market), "
         "price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number), update_existing (boolean).\n"
         "If you want to immediately take profit or cut loss on an existing position, set close_now=true "
         "and optionally close_percent (1~100).\n"

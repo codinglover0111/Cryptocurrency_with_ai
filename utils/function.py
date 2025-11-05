@@ -52,7 +52,7 @@ class make_to_object:
             "response_mime_type": "application/json",
         }
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash-exp",
+            model_name="models/gemini-2.5-pro",
             generation_config=generation_config,
             system_instruction=(
                 "입력된 트레이딩 결론을 JSON 오브젝트로 변환하시오.\n"
