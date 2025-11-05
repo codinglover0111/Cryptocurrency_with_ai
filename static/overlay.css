@@ -224,15 +224,18 @@ body {
   body {
     padding: 10px;
     font-size: 15px;
+    overflow: auto;
   }
 
   .overlay-board {
     gap: 10px;
+    flex-direction: column;
   }
 
   .card {
     min-width: calc(100% - 20px);
     max-width: calc(100% - 20px);
+    width: calc(100% - 20px);
   }
 
   .overlay-controls {
@@ -242,5 +245,30 @@ body {
     flex-wrap: wrap;
     border-radius: var(--overlay-radius);
     margin-top: 10px;
+    gap: 10px;
+  }
+
+  .overlay-toggle {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .overlay-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  body {
+    font-size: 14px;
+  }
+
+  .title {
+    font-size: 1em;
+  }
+
+  .row {
+    flex-direction: column;
+    gap: 4px;
   }
 }
