@@ -570,6 +570,57 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     return prompt
 
 
+def _normalize_decision_payload(payload: Any) -> Dict[str, Any]:
+    """
+    Flatten tool-call formatted AI responses into a uniform decision dict.
+    """
+
+    if isinstance(payload, dict):
+        if payload.get("_type") == "tool_call":
+            arguments = payload.get("arguments")
+            if isinstance(arguments, dict):
+                merged = dict(arguments)
+                tool_name = payload.get("tool")
+                if tool_name and "_tool_name" not in merged:
+                    merged["_tool_name"] = tool_name
+                return merged
+        return payload
+    return {}
+
+
+def _normalize_status_value(value: Any) -> str:
+    """Normalize status text to supported keywords."""
+
+    try:
+        text = str(value).strip().lower()
+    except Exception:
+        return ""
+
+    if not text:
+        return ""
+
+    if text in {"watch", "wait", "observe", "관망"}:
+        return "hold"
+
+    if text in {"long", "short", "hold", "stop"}:
+        return text
+
+    return ""
+
+
+def _decision_is_actionable(decision: Dict[str, Any]) -> bool:
+    """Determine whether the AI decision includes enough info to act."""
+
+    if not isinstance(decision, dict):
+        return False
+
+    if bool(decision.get("close_now")):
+        return True
+
+    status = _normalize_status_value(decision.get("Status") or decision.get("status"))
+    return bool(status)
+
+
 def _request_trade_decision(
     deps: AutomationDependencies,
     prompt: str,
@@ -600,50 +651,86 @@ def _request_trade_decision(
             images_payload = None
 
     try:
-        parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
-        LOGGER.info(
-            json.dumps(
-                {
-                    "event": "llm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                    "parsed": parsed,
-                },
-                ensure_ascii=False,
-            )
-        )
-        return parsed
+        max_attempts = max(1, int(os.getenv("AI_DECISION_MAX_RETRIES", "3")))
     except Exception:
-        response = deps.ai_provider.decide(prompt, images=images_payload)
-        try:
-            LOGGER.info(
-                json.dumps(
-                    {
-                        "event": "llm_response_raw",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                        "response": response,
-                    },
-                    ensure_ascii=False,
-                )
-            )
-        except Exception as exc:
-            LOGGER.error("LLM raw logging failed: %s", exc)
+        max_attempts = 3
 
-        parser = deps.parser
-        value = parser.make_it_object(response)
+    try:
+        retry_delay = float(os.getenv("AI_DECISION_RETRY_DELAY_SECONDS", "2"))
+    except Exception:
+        retry_delay = 2.0
+    retry_delay = max(0.0, retry_delay)
+
+    last_decision: Dict[str, Any] = {}
+
+    for attempt in range(1, max_attempts + 1):
         try:
+            parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
+            normalized = _normalize_decision_payload(parsed)
             LOGGER.info(
                 json.dumps(
                     {
                         "event": "llm_response_parsed",
                         "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                        "parsed": value,
+                        "attempt": attempt,
+                        "parsed": parsed,
+                        "normalized": normalized,
                     },
                     ensure_ascii=False,
                 )
             )
-        except Exception as exc:
-            LOGGER.error("LLM parsed logging failed: %s", exc)
-        return value
+        except Exception:
+            response = deps.ai_provider.decide(prompt, images=images_payload)
+            try:
+                LOGGER.info(
+                    json.dumps(
+                        {
+                            "event": "llm_response_raw",
+                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "attempt": attempt,
+                            "response": response,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception as exc:
+                LOGGER.error("LLM raw logging failed: %s", exc)
+
+            parser = deps.parser
+            value = parser.make_it_object(response)
+            normalized = _normalize_decision_payload(value)
+            try:
+                LOGGER.info(
+                    json.dumps(
+                        {
+                            "event": "llm_response_parsed",
+                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "attempt": attempt,
+                            "parsed": value,
+                            "normalized": normalized,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            except Exception as exc:
+                LOGGER.error("LLM parsed logging failed: %s", exc)
+
+        last_decision = normalized if isinstance(normalized, dict) else {}
+
+        if _decision_is_actionable(last_decision):
+            return last_decision
+
+        status_display = last_decision.get("Status") or last_decision.get("status")
+        LOGGER.warning(
+            "AI decision attempt %s/%s missing actionable status: %s",
+            attempt,
+            max_attempts,
+            status_display,
+        )
+        if attempt < max_attempts and retry_delay > 0:
+            time.sleep(retry_delay)
+
+    return last_decision
 
 
 def _normalize_bool(val: Any) -> bool:
@@ -1255,7 +1342,18 @@ def _execute_trade(
 ) -> None:
     """Translate a validated AI decision into exchange orders and journal logs."""
 
-    ai_status = str(decision.get("Status") or decision.get("status") or "").lower()
+    raw_status = decision.get("Status") or decision.get("status")
+    ai_status = _normalize_status_value(raw_status)
+    if not ai_status and raw_status is not None:
+        try:
+            ai_status = str(raw_status).strip().lower()
+        except Exception:
+            ai_status = ""
+
+    if ai_status:
+        decision.setdefault("status", ai_status)
+        if "Status" not in decision:
+            decision["Status"] = ai_status
     if ai_status not in {"long", "short"}:
         _handle_non_trade_actions(deps, decision, ctx.current_price, ai_status)
         return
