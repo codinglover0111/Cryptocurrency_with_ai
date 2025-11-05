@@ -149,6 +149,17 @@ a {
   gap: 24px;
 }
 
+.panel-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.panel-row > .panel {
+  flex: 1 1 340px;
+  min-width: 0;
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
@@ -717,6 +728,10 @@ select:focus {
     flex-direction: column;
     align-items: flex-start;
     padding: 26px;
+  }
+
+  .panel-row {
+    flex-direction: column;
   }
 
   .panel {
