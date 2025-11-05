@@ -57,7 +57,7 @@ class PromptContext:
     csv_4h: str
     csv_1h: str
     csv_15m: str
-    current_position: List[Dict[str, Any]]
+    current_positions: List[Dict[str, Any]]
     pos_side: Optional[str]
     current_positions_lines: List[str]
     journal_today_text: str
@@ -91,6 +91,25 @@ def _values_almost_equal(
         )
     except Exception:
         return False
+
+
+def _extract_position_symbol(position: Dict[str, Any]) -> Optional[str]:
+    """Best-effort extraction of the symbol from a position payload."""
+
+    if not isinstance(position, dict):
+        return None
+
+    symbol = position.get("symbol")
+    if symbol:
+        return str(symbol)
+
+    info = position.get("info")
+    if isinstance(info, dict):
+        symbol_info = info.get("symbol")
+        if symbol_info:
+            return str(symbol_info)
+
+    return None
 
 
 def _result_indicates_no_change(result: Any) -> bool:
@@ -280,25 +299,44 @@ def _summarize_positions(
 
     lines: List[str] = []
     primary_side: Optional[str] = None
-    last_fallback = _safe_float(current_price) or 0.0
+    last_fallback = _safe_float(current_price)
 
     for raw in positions or []:
         try:
-            sym = raw.get("symbol") or (raw.get("info", {}) or {}).get("symbol")
-            if sym != contract_symbol:
+            info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+            sym = _extract_position_symbol(raw)
+
+            if sym is None or sym != contract_symbol:
                 continue
-            side = raw.get("side") or (raw.get("info", {}) or {}).get("side")
+
+            side = raw.get("side") or (info or {}).get("side")
             if primary_side is None and side:
                 primary_side = side
-            entry = raw.get("entryPrice") or (raw.get("info", {}) or {}).get("avgPrice")
-            contract_size = raw.get("contractSize") or (raw.get("info", {}) or {}).get(
-                "contractSize"
-            )
-            size_raw = raw.get("size") or raw.get("contracts") or raw.get("amount")
-            try:
-                size_f = float(size_raw) if size_raw is not None else None
-            except Exception:
-                size_f = None
+
+            contract_size = raw.get("contractSize") or (info or {}).get("contractSize")
+
+            size_candidates = [
+                raw.get("size"),
+                raw.get("contracts"),
+                raw.get("amount"),
+            ]
+            if isinstance(info, dict):
+                size_candidates.extend(
+                    [
+                        info.get("size"),
+                        info.get("contracts"),
+                        info.get("amount"),
+                        info.get("positionAmt"),
+                    ]
+                )
+
+            size_f: Optional[float] = None
+            for cand in size_candidates:
+                value = _safe_float(cand)
+                if value is not None:
+                    size_f = value
+                    break
+
             if (
                 size_f is not None
                 and raw.get("size") is None
@@ -309,24 +347,51 @@ def _summarize_positions(
                     size_f = size_f * float(contract_size)
                 except Exception:
                     pass
-            mark = raw.get("markPrice") or (raw.get("info", {}) or {}).get("markPrice")
-            try:
-                last = float(mark) if mark is not None else float(last_fallback)
-            except Exception:
-                last = last_fallback
-            try:
-                entry_f = float(entry) if entry is not None else None
-            except Exception:
-                entry_f = None
-            unreal = raw.get("unrealizedPnl") or (raw.get("info", {}) or {}).get(
-                "unrealisedPnl"
-            )
-            pct_raw = raw.get("percentage") or (raw.get("info", {}) or {}).get(
-                "unrealisedPnlPcnt"
-            )
-            tp = raw.get("takeProfit") or (raw.get("info", {}) or {}).get("takeProfit")
-            sl = raw.get("stopLoss") or (raw.get("info", {}) or {}).get("stopLoss")
-            lev = raw.get("leverage") or (raw.get("info", {}) or {}).get("leverage")
+
+            if size_f is None or abs(size_f) <= 1e-12:
+                continue
+
+            entry_candidates = [
+                raw.get("entryPrice"),
+                (info or {}).get("avgPrice"),
+                (info or {}).get("entryPrice"),
+            ]
+            entry_f: Optional[float] = None
+            for cand in entry_candidates:
+                candidate_value = _safe_float(cand)
+                if candidate_value is not None:
+                    entry_f = candidate_value
+                    break
+
+            mark_candidates = [
+                raw.get("markPrice"),
+                (info or {}).get("markPrice"),
+                raw.get("lastPrice"),
+                (info or {}).get("lastPrice"),
+                raw.get("last"),
+                (info or {}).get("last"),
+                raw.get("price"),
+                (info or {}).get("price"),
+            ]
+            last: Optional[float] = None
+            for cand in mark_candidates:
+                candidate_value = _safe_float(cand)
+                if candidate_value is not None:
+                    last = candidate_value
+                    break
+            if last is None:
+                if entry_f is not None:
+                    last = entry_f
+                elif sym == contract_symbol and last_fallback is not None:
+                    last = last_fallback
+                else:
+                    last = 0.0
+
+            unreal = raw.get("unrealizedPnl") or (info or {}).get("unrealisedPnl")
+            pct_raw = raw.get("percentage") or (info or {}).get("unrealisedPnlPcnt")
+            tp = raw.get("takeProfit") or (info or {}).get("takeProfit")
+            sl = raw.get("stopLoss") or (info or {}).get("stopLoss")
+            lev = raw.get("leverage") or (info or {}).get("leverage")
 
             lev_f = _safe_float(lev)
             pct_raw_f = _safe_float(pct_raw)
@@ -364,6 +429,7 @@ def _summarize_positions(
                 pct_baseline = None
                 pct_leverage = None
 
+            symbol_fmt = str(sym)
             side_fmt = side if side is not None else "n/a"
             size_fmt = _format_decimal(size_f) if size_f is not None else "n/a"
             entry_fmt = _format_decimal(entry_f) if entry_f is not None else "n/a"
@@ -380,12 +446,13 @@ def _summarize_positions(
             )
 
             lines.append(
-                f"side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
+                f"symbol={symbol_fmt}, side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
                 f"tp={tp_fmt}, sl={sl_fmt}, lev={lev_fmt}, unreal_PNL={unreal_fmt} "
                 f"(ROI_leverage={pct_fmt}%, ROI_baseline={pct_raw_fmt}%)"
             )
         except Exception:
             continue
+
     return lines, primary_side
 
 
@@ -417,9 +484,28 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
             except Exception as exc:
                 LOGGER.warning("%s 차트 생성 실패: %s", timeframe, exc)
 
-    current_position = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
+    raw_positions = deps.bybit.get_positions()
+    current_positions: List[Dict[str, Any]] = []
+    if isinstance(raw_positions, list):
+        current_positions = [pos for pos in raw_positions if isinstance(pos, dict)]
+    elif isinstance(raw_positions, dict):
+        for value in raw_positions.values():
+            if isinstance(value, dict):
+                current_positions.append(value)
+            elif isinstance(value, list):
+                current_positions.extend(
+                    item for item in value if isinstance(item, dict)
+                )
+    elif raw_positions:
+        try:
+            current_positions = [
+                item for item in list(raw_positions) if isinstance(item, dict)
+            ]
+        except Exception:
+            current_positions = []
+
     position_lines, pos_side = _summarize_positions(
-        current_position, deps.contract_symbol, current_price
+        current_positions, deps.contract_symbol, current_price
     )
 
     try:
@@ -480,7 +566,7 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         csv_4h=csv_4h,
         csv_1h=csv_1h,
         csv_15m=csv_15m,
-        current_position=current_position,
+        current_positions=current_positions,
         pos_side=pos_side,
         current_positions_lines=position_lines,
         journal_today_text=journal_today_text,
@@ -569,7 +655,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
 
     prompt += (
         "Choose one of: watch/hold, short, long, or stop.\n"
-        "Return your decision as JSON with the following fields: order type (market/limit), "
+        "Return your decision as JSON with the following fields: order type (market), "
         "price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number), update_existing (boolean).\n"
         "If you want to immediately take profit or cut loss on an existing position, set close_now=true "
         "and optionally close_percent (1~100).\n"
@@ -953,7 +1039,11 @@ def _handle_update_existing_positions(
         )
         return
 
-    positions = list(ctx.current_position or [])
+    positions = [
+        pos
+        for pos in (ctx.current_positions or [])
+        if _extract_position_symbol(pos) == deps.contract_symbol
+    ]
     if not positions:
         try:
             positions = deps.bybit.get_positions_by_symbol(deps.contract_symbol) or []
@@ -1219,8 +1309,8 @@ def _run_confirm_step(
             f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
             f"레버리지: {float(leverage)}x\n"
             "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
-            "필수: confirm(boolean). 선택: tp, sl, price, buy_now, leverage, explain.\n"
-            "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요.\n"
+            "필수: confirm(boolean), explain(string). 선택: tp, sl, price, buy_now, leverage.\n"
+            "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요. confirm=true라면 결정 근거를 간단히 남기세요.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
         )
 
@@ -1504,7 +1594,11 @@ def _execute_trade(
         pass
 
     try:
-        positions_same_symbol = ctx.current_position or []
+        positions_same_symbol = [
+            pos
+            for pos in (ctx.current_positions or [])
+            if _extract_position_symbol(pos) == deps.contract_symbol
+        ]
         last_price_fallback = float(ctx.current_price or entry_price)
         if last_price_fallback <= 0:
             last_price_fallback = float(entry_price)
@@ -1622,26 +1716,27 @@ def _execute_trade(
         leverage=leverage,
     )
 
-    price_precision = None
-    try:
-        market = deps.bybit.exchange.market(deps.contract_symbol)
-        price_precision = (market.get("precision", {}) or {}).get("price") or (
-            market.get("limits", {}) or {}
-        ).get("price", {}).get("min")
-    except Exception:
-        market = None
-
     if position_params.type == "limit":
         try:
-            price_precision_digits = (
-                int(price_precision) if isinstance(price_precision, int) else None
-            )
-            if price_precision_digits is not None:
-                position_params.price = round(
-                    float(position_params.price), price_precision_digits
+            position_params.price = float(
+                deps.bybit.exchange.price_to_precision(
+                    deps.contract_symbol, position_params.price
                 )
+            )
         except Exception:
-            pass
+            position_params.price = float(position_params.price)
+
+    for attr in ("tp", "sl"):
+        value = getattr(position_params, attr)
+        if value is None:
+            continue
+        try:
+            quantized = float(
+                deps.bybit.exchange.price_to_precision(deps.contract_symbol, value)
+            )
+            setattr(position_params, attr, quantized)
+        except Exception:
+            setattr(position_params, attr, float(value))
 
     order = deps.bybit.open_position(position_params)
     if order is None:

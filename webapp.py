@@ -433,9 +433,9 @@ def list_pending_reviews(wait_hours: int = 48, since_hours: int = 24):
         safe_wait = 4
 
     try:
-        safe_since = max(safe_wait, int(since_hours))
+        safe_since = max(0, int(since_hours))
     except Exception:
-        safe_since = max(safe_wait, 24)
+        safe_since = 24
 
     store = TradeStore(
         StorageConfig(

@@ -416,8 +416,10 @@ function renderPendingReviews(payload) {
           ? "pnl-negative"
           : ""
         : "";
-      const closedAt = item && item.closed_ts ? formatTimeWithTZ(item.closed_ts) : "-";
-      const readyAt = item && item.ready_at ? formatTimeWithTZ(item.ready_at) : "-";
+      const closedAt =
+        item && item.closed_ts ? formatTimeWithTZ(item.closed_ts) : "-";
+      const readyAt =
+        item && item.ready_at ? formatTimeWithTZ(item.ready_at) : "-";
       const stateRaw = String(item.state || "waiting");
       const isWaiting = stateRaw === "waiting";
       const stateLabel = isWaiting ? "대기" : "검토 필요";
@@ -1278,6 +1280,176 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function sanitizeHref(value) {
+  if (value == null) return null;
+  try {
+    let href = String(value).trim();
+    if (!href) return null;
+    const lower = href.toLowerCase();
+    if (lower.startsWith("javascript:") || lower.startsWith("data:")) {
+      return null;
+    }
+    if (href.startsWith("#")) return href;
+    if (href.startsWith("/")) return href;
+    const parsed = new URL(href, window.location.origin);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.href;
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+function applyInlineMarkdown(line) {
+  if (!line) return "";
+  const placeholderMatch =
+    line.trim() && /^@@CODE_BLOCK_\d+@@$/.test(line.trim());
+  if (placeholderMatch) return line.trim();
+
+  let safe = escapeHtml(line);
+
+  safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
+    const href = sanitizeHref(url);
+    if (!href) return label;
+    return `<a href="${escapeHtml(
+      href
+    )}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+
+  safe = safe.replace(/`([^`]+)`/g, (match, code) => `<code>${code}</code>`);
+
+  safe = safe.replace(
+    /\*\*([\s\S]+?)\*\*/g,
+    (match, text) => `<strong>${text}</strong>`
+  );
+  safe = safe.replace(
+    /__([\s\S]+?)__/g,
+    (match, text) => `<strong>${text}</strong>`
+  );
+
+  safe = safe.replace(
+    /(^|[^*])\*([^*\n]+)\*(?!\*)/g,
+    (match, prefix, text) => `${prefix}<em>${text}</em>`
+  );
+  safe = safe.replace(
+    /(^|[^_])_([^_\n]+)_(?!_)/g,
+    (match, prefix, text) => `${prefix}<em>${text}</em>`
+  );
+
+  return safe;
+}
+
+function renderMarkdownToHtml(raw) {
+  if (raw === null || raw === undefined) {
+    return '<div class="markdown-body"><p class="muted">내용 없음</p></div>';
+  }
+
+  let text = String(raw);
+  if (!text.trim()) {
+    return '<div class="markdown-body"><p class="muted">내용 없음</p></div>';
+  }
+
+  text = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\t/g, "    ")
+    .replace(/\\n/g, "\n");
+
+  const codeBlocks = [];
+  text = text.replace(/```([\s\S]*?)```/g, (_, code) => {
+    const index = codeBlocks.length;
+    const cleaned = code.replace(/^\s*[\r\n]?/, "").replace(/[\r\n\s]*$/, "");
+    codeBlocks.push(`<pre><code>${escapeHtml(cleaned)}</code></pre>`);
+    return `@@CODE_BLOCK_${index}@@`;
+  });
+
+  const lines = text.split("\n");
+  const blocks = [];
+  let listBuffer = [];
+  let paragraphBuffer = [];
+
+  const flushParagraph = () => {
+    if (!paragraphBuffer.length) return;
+    const paragraph = paragraphBuffer.join("<br />");
+    blocks.push(`<p>${paragraph}</p>`);
+    paragraphBuffer = [];
+  };
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    blocks.push(`<ul>${listBuffer.join("")}</ul>`);
+    listBuffer = [];
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+
+    if (trimmed && /^@@CODE_BLOCK_\d+@@$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      blocks.push(trimmed);
+      return;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      const level = headingMatch[1].length;
+      const content = headingMatch[2];
+      blocks.push(`<h${level}>${applyInlineMarkdown(content)}</h${level}>`);
+      return;
+    }
+
+    if (/^[-*+]\s+/.test(trimmed)) {
+      flushParagraph();
+      const itemText = trimmed.replace(/^[-*+]\s+/, "");
+      listBuffer.push(`<li>${applyInlineMarkdown(itemText)}</li>`);
+      return;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      const quoteText = trimmed.replace(/^>\s?/, "");
+      blocks.push(`<blockquote>${applyInlineMarkdown(quoteText)}</blockquote>`);
+      return;
+    }
+
+    if (/^( {4}|\t)/.test(line)) {
+      flushParagraph();
+      flushList();
+      blocks.push(
+        `<pre><code>${escapeHtml(line.replace(/^( {4}|\t)/, ""))}</code></pre>`
+      );
+      return;
+    }
+
+    paragraphBuffer.push(applyInlineMarkdown(line));
+  });
+
+  flushParagraph();
+  flushList();
+
+  if (!blocks.length) {
+    return '<div class="markdown-body"><p class="muted">내용 없음</p></div>';
+  }
+
+  let html = blocks.join("");
+  codeBlocks.forEach((blockHtml, index) => {
+    const placeholder = `@@CODE_BLOCK_${index}@@`;
+    html = html.replace(placeholder, blockHtml);
+  });
+
+  return `<div class="markdown-body">${html}</div>`;
+}
+
 function ensureJournalModalDOM() {
   if (document.getElementById("jr-modal-backdrop")) return;
   const wrap = document.createElement("div");
@@ -1338,18 +1510,23 @@ function showJournalModal(it) {
     const tsStr = formatTimeWithTZ(it.ts, {});
     const symbol = it.symbol || "";
     const decision = extractDecisionInfo(it);
+    const reasonSection = it.reason
+      ? `
+      <div style="margin-top:8px"><strong>사유</strong></div>
+      ${renderMarkdownToHtml(it.reason)}
+    `
+      : "";
+    const contentSection = `
+      <div style="margin-top:8px"><strong>내용</strong></div>
+      ${renderMarkdownToHtml(it.content)}
+    `;
     const body = `
       <div><strong>시간</strong>: ${escapeHtml(tsStr)}</div>
       <div><strong>유형</strong>: ${escapeHtml(it.entry_type)}</div>
       <div><strong>심볼</strong>: ${escapeHtml(symbol || "-")}</div>
       <div id="jr-trade-info" class="muted" style="margin:6px 0 8px">거래 정보 조회 중...</div>
-      ${
-        it.reason
-          ? `<div><strong>사유</strong>: ${escapeHtml(it.reason)}</div>`
-          : ""
-      }
-      <div style=\"margin-top:8px\"><strong>내용</strong></div>
-      <pre>${escapeHtml(it.content || "-")}</pre>
+      ${reasonSection}
+      ${contentSection}
       <div style=\"margin-top:8px\"><strong>메타</strong></div>
       <pre>${escapeHtml(JSON.stringify(it.meta || {}, null, 2))}</pre>
     `;

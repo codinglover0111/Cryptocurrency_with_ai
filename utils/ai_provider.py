@@ -91,7 +91,7 @@ class AIProvider:
                 max_output_tokens=4096,
                 response_schema=genai.protos.Schema(
                     type=genai.protos.Type.OBJECT,
-                    required=["Status"],
+                    required=["Status", "explain"],
                     properties={
                         "Status": genai.protos.Schema(
                             type=genai.protos.Type.STRING,
@@ -212,7 +212,7 @@ class AIProvider:
                 max_output_tokens=2048,
                 response_schema=genai.protos.Schema(
                     type=genai.protos.Type.OBJECT,
-                    required=["confirm"],
+                    required=["confirm", "explain"],
                     properties={
                         "confirm": genai.protos.Schema(type=genai.protos.Type.BOOLEAN),
                         "tp": genai.protos.Schema(type=genai.protos.Type.NUMBER),
@@ -391,8 +391,12 @@ class AIProvider:
         for candidate in candidates:
             content = getattr(candidate, "content", None)
             parts = getattr(content, "parts", None) if content is not None else None
+            texts: List[str] = []
             for part in parts or []:
                 part_text = getattr(part, "text", None)
-                if isinstance(part_text, str) and part_text.strip():
-                    return part_text
+                if isinstance(part_text, str) and part_text:
+                    texts.append(part_text)
+            combined = "".join(texts).strip()
+            if combined:
+                return combined
         return ""
