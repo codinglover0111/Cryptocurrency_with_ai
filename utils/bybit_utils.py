@@ -1,6 +1,8 @@
 # pylint: disable=broad-except
 # ruff: noqa: E722, BLE001
 import os
+import time
+
 import ccxt
 from dotenv import load_dotenv
 
@@ -137,26 +139,58 @@ class BybitUtils:
 
     def _sync_time_with_bybit(self, mode: str) -> None:
         try:
-            # 서버 시간 조회 후 timeDifference를 직접 설정(보수적 안전 마진 적용)
-            # 일부 환경에서 load_time_difference가 동작하지 않는 경우 대비
-            server_time = None
+            safety_env = os.getenv("BYBIT_TIME_SAFETY_MS", "500")
+            try:
+                safety_margin_ms = max(0, int(safety_env))
+            except Exception:
+                safety_margin_ms = 500
+
+            best_offset = None
+            best_rtt = None
+
             for _ in range(3):
                 try:
+                    start_ms = int(time.time() * 1000)
                     server_time = self.exchange.fetch_time()
-                    if server_time:
-                        break
+                    end_ms = int(time.time() * 1000)
+                except Exception:
+                    continue
+
+                if server_time is None:
+                    continue
+
+                try:
+                    server_ms = int(server_time)
+                except Exception:
+                    continue
+
+                rtt = max(0, end_ms - start_ms)
+                estimated_local_at_response = start_ms + rtt // 2
+                offset = server_ms - estimated_local_at_response - safety_margin_ms
+
+                if best_offset is None or rtt < (best_rtt or float("inf")):
+                    best_offset = offset
+                    best_rtt = rtt
+
+            if best_offset is not None:
+                self.exchange.options["timeDifference"] = best_offset
+                try:
+                    setattr(self.exchange, "timeDifference", best_offset)
                 except Exception:
                     pass
-            # 폴백: ccxt의 자동 보정 시도
-            try:
-                self.exchange.load_time_difference()
-            except Exception:
-                pass
+            else:
+                try:
+                    self.exchange.load_time_difference()
+                except Exception:
+                    pass
+
             td = self.exchange.options.get("timeDifference")
             rw = self.exchange.options.get("recvWindow") or self.exchange.options.get(
                 "recvwindow"
             )
-            print(f"Bybit env: {mode}, timeDifference: {td} ms, recvWindow: {rw} ms")
+            print(
+                f"Bybit env: {mode}, timeDifference: {td} ms, recvWindow: {rw} ms, safety: {safety_margin_ms} ms"
+            )
         except Exception:
             pass
 
