@@ -44,13 +44,13 @@ Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제�
 
 ## Module Breakdown
 
-| 경로 | 역할 | 주요 함수 |
-|------|------|-----------|
-| `app/core/symbols.py` | 심볼 관련 유틸리티 | `parse_trading_symbols`, `to_ccxt_symbols`, `per_symbol_allocation` |
-| `app/services/market_data.py` | OHLCV 수집 래퍼 | `ohlcv_csv_between` |
-| `app/services/journal.py` | 저널/리뷰 도메인 서비스 | `JournalService.format_trade_reviews_for_prompt`, `JournalService.review_losing_trades` |
-| `app/workflows/trading.py` | 자동매매 파이프라인 | `_gather_prompt_context`, `_build_prompt`, `_run_confirm_step`, `_execute_trade`, `automation_for_symbol` |
-| `utils/` | 거래소/AI/스토리지 레거시 모듈 | `BybitUtils`, `AIProvider`, `TradeStore`, etc. |
+| 경로                          | 역할                           | 주요 함수                                                                                                 |
+| ----------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `app/core/symbols.py`         | 심볼 관련 유틸리티             | `parse_trading_symbols`, `to_ccxt_symbols`, `per_symbol_allocation`                                       |
+| `app/services/market_data.py` | OHLCV 수집 래퍼                | `ohlcv_csv_between`                                                                                       |
+| `app/services/journal.py`     | 저널/리뷰 도메인 서비스        | `JournalService.format_trade_reviews_for_prompt`, `JournalService.review_losing_trades`                   |
+| `app/workflows/trading.py`    | 자동매매 파이프라인            | `_gather_prompt_context`, `_build_prompt`, `_run_confirm_step`, `_execute_trade`, `automation_for_symbol` |
+| `utils/`                      | 거래소/AI/스토리지 레거시 모듈 | `BybitUtils`, `AIProvider`, `TradeStore`, etc.                                                            |
 
 ## Data Persistence
 
@@ -90,3 +90,9 @@ Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제�
 - `_gather_prompt_context`는 이 CSV를 프롬프트에 그대로 삽입해 LLM이 가격 패턴과 추세를 직접 파싱하게 합니다.
 - 최신 가격, 미청산 수량, 손익 정보는 `BybitUtils.get_position`과 `BybitUtils.get_last_price`에서 가져옵니다.
 - 외부 데이터 오류나 API Rate Limit 발생 시, 로깅 후 실패 지표를 프롬프트에 기록해 LLM이 데이터 부족 상황을 인지하도록 합니다.
+
+## Refactoring Notes (2025-11)
+
+- `app/workflows/trading.py`는 `_safe_float`, `_format_journal_dataframe` 등의 유틸리티로 포지션 요약·저널 텍스트 생성을 공통화하여 중복을 줄였습니다.
+- `JournalService`는 `_load_recent_review_keys`, `_resolve_open_context`, `_build_review_prompt`, `_record_review_entry`로 손실 리뷰 파이프라인을 모듈화해 예외 처리를 세분화했습니다.
+- 모든 핵심 함수에 Docstring과 주석을 추가해 프롬프트 구조를 유지하면서도 가독성과 유지보수성을 높였습니다.

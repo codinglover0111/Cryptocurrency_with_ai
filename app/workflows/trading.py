@@ -66,6 +66,58 @@ class PromptContext:
     chart_images: Dict[str, str] = field(default_factory=dict)
 
 
+def _safe_float(value: Any) -> Optional[float]:
+    """Return ``float`` representation of ``value`` or ``None`` on failure."""
+
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _format_decimal(value: Any, *, default: str = "n/a", precision: int = 6) -> str:
+    """Format numeric ``value`` with the given precision, handling errors gracefully."""
+
+    try:
+        return f"{float(value):.{precision}f}"
+    except Exception:
+        if value is None:
+            return default if default is not None else "n/a"
+        return str(value)
+
+
+def _format_journal_dataframe(
+    df: Any,
+    *,
+    timestamp_format: str,
+    empty_value: str = "",
+) -> str:
+    """Convert a journal dataframe into a newline-joined textual summary."""
+
+    if df is None or getattr(df, "empty", True):
+        return empty_value
+
+    lines: List[str] = []
+    for _, row in df.iterrows():
+        ts = row.get("ts")
+        ts_str = ts.strftime(timestamp_format) if hasattr(ts, "strftime") else str(ts)
+        entry_type = (row.get("entry_type") or "").strip()
+        reason = (row.get("reason") or "").strip()
+        content = (row.get("content") or "").strip()
+        line = f"[{ts_str}]"
+        if entry_type:
+            line += f" ({entry_type})"
+        if reason:
+            line += f" {reason}"
+        if content:
+            line += f" | {content}"
+        lines.append(line.strip())
+
+    return "\n".join(lines)
+
+
 def _compute_tp_sl_percentages(
     *,
     entry_price: float,
@@ -130,6 +182,8 @@ def _compute_tp_sl_percentages(
 def _init_dependencies(
     symbol_usdt: str, symbols: Sequence[str] | None
 ) -> AutomationDependencies:
+    """Build and return dependency bundle required for a trading cycle."""
+
     is_testnet = bool(int(os.getenv("TESTNET", "1")))
     all_symbols = list(symbols) if symbols else parse_trading_symbols()
     spot_symbol, contract_symbol = to_ccxt_symbols(symbol_usdt)
@@ -165,9 +219,11 @@ def _summarize_positions(
     contract_symbol: str,
     current_price: float,
 ) -> Tuple[List[str], Optional[str]]:
+    """Summarise active positions for logging and prompt context generation."""
+
     lines: List[str] = []
     primary_side: Optional[str] = None
-    last_fallback = float(current_price or 0)
+    last_fallback = _safe_float(current_price) or 0.0
 
     for raw in positions or []:
         try:
@@ -215,14 +271,6 @@ def _summarize_positions(
             sl = raw.get("stopLoss") or (raw.get("info", {}) or {}).get("stopLoss")
             lev = raw.get("leverage") or (raw.get("info", {}) or {}).get("leverage")
 
-            def _safe_float(value: Any) -> Optional[float]:
-                try:
-                    if value is None:
-                        return None
-                    return float(value)
-                except Exception:
-                    return None
-
             lev_f = _safe_float(lev)
             pct_raw_f = _safe_float(pct_raw)
 
@@ -259,22 +307,20 @@ def _summarize_positions(
                 pct_baseline = None
                 pct_leverage = None
 
-            def _fmt(value: Any) -> str:
-                try:
-                    return f"{float(value):.6f}"
-                except Exception:
-                    return str(value)
-
             side_fmt = side if side is not None else "n/a"
-            size_fmt = _fmt(size_f) if size_f is not None else "n/a"
-            entry_fmt = _fmt(entry_f) if entry_f is not None else "n/a"
-            last_fmt = _fmt(last)
-            tp_fmt = _fmt(tp) if tp is not None else "n/a"
-            sl_fmt = _fmt(sl) if sl is not None else "n/a"
-            lev_fmt = _fmt(lev) if lev is not None else "n/a"
-            unreal_fmt = _fmt(unreal) if unreal is not None else "n/a"
-            pct_fmt = _fmt(pct_leverage) if pct_leverage is not None else "n/a"
-            pct_raw_fmt = _fmt(pct_baseline) if pct_baseline is not None else "n/a"
+            size_fmt = _format_decimal(size_f) if size_f is not None else "n/a"
+            entry_fmt = _format_decimal(entry_f) if entry_f is not None else "n/a"
+            last_fmt = _format_decimal(last)
+            tp_fmt = _format_decimal(tp) if tp is not None else "n/a"
+            sl_fmt = _format_decimal(sl) if sl is not None else "n/a"
+            lev_fmt = _format_decimal(lev) if lev is not None else "n/a"
+            unreal_fmt = _format_decimal(unreal) if unreal is not None else "n/a"
+            pct_fmt = (
+                _format_decimal(pct_leverage) if pct_leverage is not None else "n/a"
+            )
+            pct_raw_fmt = (
+                _format_decimal(pct_baseline) if pct_baseline is not None else "n/a"
+            )
 
             lines.append(
                 f"side={side_fmt}, size={size_fmt}, entry={entry_fmt}, last={last_fmt}, "
@@ -287,6 +333,8 @@ def _summarize_positions(
 
 
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
+    """Collect market snapshots, journal excerpts, and position context."""
+
     price_helper = bybit_utils(deps.spot_symbol, "4h", 100)
     df_4h = price_helper.get_ohlcv()
     csv_4h = df_4h.to_csv()
@@ -321,16 +369,10 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
         journals_today_df = deps.store.fetch_journals(
             symbol=deps.contract_symbol, today_only=True, limit=50, ascending=True
         )
-        journal_today_text = ""
-        if journals_today_df is not None and not journals_today_df.empty:
-            lines = []
-            for _, row in journals_today_df.iterrows():
-                ts = row.get("ts")
-                ts_str = ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else str(ts)
-                lines.append(
-                    f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
-                )
-            journal_today_text = "\n".join(lines)
+        journal_today_text = _format_journal_dataframe(
+            journals_today_df,
+            timestamp_format="%H:%M:%S",
+        )
     except Exception:
         journal_today_text = ""
 
@@ -342,17 +384,10 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
             limit=10,
             ascending=False,
         )
-        if recent_df is not None and not recent_df.empty:
-            lines = []
-            for _, row in recent_df.iterrows():
-                ts = row.get("ts")
-                ts_str = (
-                    ts.strftime("%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
-                )
-                lines.append(
-                    f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
-                )
-            recent_reports_text = "\n".join(lines)
+        recent_reports_text = _format_journal_dataframe(
+            recent_df,
+            timestamp_format="%m-%d %H:%M",
+        )
     except Exception:
         recent_reports_text = ""
 
@@ -376,19 +411,10 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
                         limit=50,
                         ascending=True,
                     )
-                    if journals_since_df is not None and not journals_since_df.empty:
-                        lines = []
-                        for _, row in journals_since_df.iterrows():
-                            ts = row.get("ts")
-                            ts_str = (
-                                ts.strftime("%H:%M:%S")
-                                if hasattr(ts, "strftime")
-                                else str(ts)
-                            )
-                            lines.append(
-                                f"[{ts_str}] ({row.get('entry_type')}) {row.get('reason') or ''} | {row.get('content') or ''}"
-                            )
-                        since_open_text = "\n".join(lines)
+                    since_open_text = _format_journal_dataframe(
+                        journals_since_df,
+                        timestamp_format="%H:%M:%S",
+                    )
     except Exception:
         since_open_text = ""
 
@@ -409,6 +435,8 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
 
 
 def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
+    """Compose the LLM prompt while preserving the established block order."""
+
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     prompt = (
         f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
@@ -490,6 +518,8 @@ def _request_trade_decision(
     prompt: str,
     ctx: PromptContext,
 ) -> Dict[str, Any]:
+    """Obtain a structured decision from the AI provider with logging fallbacks."""
+
     images_payload: Optional[List[Dict[str, Any]]] = None
     if deps.ai_provider.provider == "gemini" and ctx.chart_images:
         images_payload = []
@@ -560,6 +590,8 @@ def _request_trade_decision(
 
 
 def _normalize_bool(val: Any) -> bool:
+    """Interpret truthy indicators coming from heterogeneous AI responses."""
+
     try:
         if isinstance(val, bool):
             return val
@@ -581,6 +613,8 @@ def _normalize_bool(val: Any) -> bool:
 
 
 def _normalize_position_side(value: Any) -> Optional[str]:
+    """Map provider-specific side representations into canonical long/short."""
+
     try:
         if value is None:
             return None
@@ -595,6 +629,8 @@ def _normalize_position_side(value: Any) -> Optional[str]:
 
 
 def _compute_max_loss_percent(leverage: float) -> float:
+    """Derive maximum tolerated loss percentage based on leverage settings."""
+
     leverage_factor = max(1.0, float(leverage or 1.0))
     max_loss_env = os.getenv("MAX_LOSS_PERCENT")
     if max_loss_env is not None:
@@ -632,6 +668,8 @@ def _compute_max_loss_percent(leverage: float) -> float:
 
 
 def _extract_order_type(data: Dict[str, Any]) -> Optional[str]:
+    """Normalize order type values coming from loosely structured payloads."""
+
     try:
         value = (
             data.get("type")
@@ -655,6 +693,8 @@ def _handle_close_now(
     ctx: PromptContext,
     decision: Dict[str, Any],
 ) -> bool:
+    """Execute immediate close instructions and persist the resulting journal."""
+
     if not bool(decision.get("close_now")):
         return False
 
@@ -743,6 +783,8 @@ def _handle_update_existing_positions(
     use_tp: Optional[float],
     use_sl: Optional[float],
 ) -> None:
+    """Update TP/SL for existing positions when the AI requests modifications."""
+
     tp_val = float(use_tp) if isinstance(use_tp, (int, float)) else None
     sl_val = float(use_sl) if isinstance(use_sl, (int, float)) else None
 
@@ -776,14 +818,6 @@ def _handle_update_existing_positions(
         return
 
     target_side = _normalize_position_side(ai_status)
-
-    def _safe_float(value: Any) -> Optional[float]:
-        try:
-            if value is None:
-                return None
-            return float(value)
-        except Exception:
-            return None
 
     def _extract_position_idx(position: Dict[str, Any]) -> Optional[int]:
         candidates = [
@@ -942,6 +976,8 @@ def _run_confirm_step(
 ) -> Tuple[
     str, float, Optional[float], Optional[float], float, Optional[Dict[str, Any]], bool
 ]:
+    """Run confirm prompt to sanity-check order parameters before execution."""
+
     confirm_meta: Optional[Dict[str, Any]] = None
 
     try:
@@ -979,18 +1015,73 @@ def _run_confirm_step(
             "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
         )
-        confirm = deps.ai_provider.confirm_trade_json(confirm_prompt)
-        confirm_meta = confirm
-        LOGGER.info(
-            json.dumps(
-                {
-                    "event": "llm_confirm_response_parsed",
-                    "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                    "parsed": confirm,
-                },
-                ensure_ascii=False,
+
+        confirm: Optional[Dict[str, Any]] = None
+        confirm_error: Optional[Exception] = None
+        max_attempts = 3
+        retry_delay_seconds = 5
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                candidate = deps.ai_provider.confirm_trade_json(confirm_prompt)
+                if not isinstance(candidate, dict):
+                    raise ValueError("confirm 응답이 dict 형식이 아닙니다.")
+                internal_error = candidate.get("_internal.tool_calls_error")
+                if internal_error:
+                    raise RuntimeError(str(internal_error))
+                if "confirm" not in candidate:
+                    raise ValueError("confirm 키가 포함되지 않은 응답입니다.")
+                confirm = candidate
+                LOGGER.info(
+                    json.dumps(
+                        {
+                            "event": "llm_confirm_response_parsed",
+                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "parsed": confirm,
+                            "attempt": attempt,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                break
+            except Exception as exc:
+                confirm_error = exc
+                LOGGER.warning(
+                    "AI confirm attempt %s/%s failed: %s",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                if attempt < max_attempts:
+                    time.sleep(retry_delay_seconds)
+
+        if confirm is None:
+            LOGGER.error(
+                "AI confirm failed after %s attempts: %s",
+                max_attempts,
+                confirm_error,
             )
-        )
+            _record_skip(
+                deps,
+                reason="confirm_failed",
+                decision=decision,
+                meta={
+                    "first": decision,
+                    "confirm_error": str(confirm_error) if confirm_error else None,
+                },
+                reason_text="confirm 단계 호출에 실패했습니다.",
+            )
+            return (
+                order_type,
+                float(entry_price),
+                use_tp,
+                use_sl,
+                leverage,
+                None,
+                True,
+            )
+
+        confirm_meta = confirm
         if not bool(confirm.get("confirm")):
             skip_reason = str(confirm.get("explain") or "").strip()
             if not skip_reason:
@@ -1051,6 +1142,8 @@ def _execute_trade(
     ctx: PromptContext,
     decision: Dict[str, Any],
 ) -> None:
+    """Translate a validated AI decision into exchange orders and journal logs."""
+
     ai_status = str(decision.get("Status") or decision.get("status") or "").lower()
     if ai_status not in {"long", "short"}:
         _handle_non_trade_actions(deps, decision, ctx.current_price, ai_status)
@@ -1459,6 +1552,8 @@ def _handle_non_trade_actions(
     current_price: float,
     ai_status: str,
 ) -> None:
+    """Persist journaling or emergency close instructions when no trade opens."""
+
     if ai_status == "hold":
         LOGGER.info("No trading signal generated")
         try:
@@ -1548,6 +1643,8 @@ def _record_skip(
     meta: Optional[Dict[str, Any]] = None,
     reason_text: Optional[str] = None,
 ) -> None:
+    """Log skip decisions to the journal for downstream auditing."""
+
     try:
         deps.store.record_journal(
             {
@@ -1575,6 +1672,8 @@ def _record_journal_fetch_error(
     symbols: Sequence[str] | None,
     exc: Exception,
 ) -> None:
+    """Persist failures encountered while loading journals to aid debugging."""
+
     try:
         use_deps = deps or _init_dependencies(symbol_usdt, symbols)
     except Exception as init_exc:
@@ -1604,6 +1703,8 @@ def _record_journal_fetch_error(
 def automation_for_symbol(
     symbol_usdt: str, *, symbols: Sequence[str] | None = None
 ) -> None:
+    """Execute the full automation pipeline for a single symbol with retries."""
+
     delays = [5, 10, 60]
 
     for attempt in range(len(delays) + 1):
@@ -1641,6 +1742,8 @@ def automation_for_symbol(
 def run_loss_review(
     symbols: Sequence[str] | None = None, since_minutes: int = 600
 ) -> None:
+    """Trigger the AI-powered loss review job for recently closed positions."""
+
     del symbols
     store = TradeStore(
         StorageConfig(
