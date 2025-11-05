@@ -149,21 +149,34 @@ a {
   gap: 24px;
 }
 
-.panel-row {
-  display: flex;
-  flex-wrap: wrap;
+.layout-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
   gap: 24px;
+  align-items: start;
 }
 
-.panel-row > .panel {
-  flex: 1 1 340px;
+.layout-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
   min-width: 0;
+}
+
+.layout-column--secondary {
+  position: sticky;
+  top: 28px;
+  align-self: flex-start;
 }
 
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 24px;
+}
+
+.panel-grid--balanced {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .panel-grid--wide {
@@ -260,6 +273,7 @@ a {
   border-radius: var(--radius-md);
   border: 1px solid rgba(148, 163, 184, 0.1);
   background: rgba(11, 16, 28, 0.6);
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
@@ -464,9 +478,9 @@ select:focus {
 }
 
 .journal-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 14px;
   align-items: center;
   padding: 12px 14px;
   border-radius: var(--radius-md);
@@ -482,14 +496,15 @@ select:focus {
   gap: 8px;
   font-size: 13px;
   color: var(--text-muted);
+  min-width: 0;
 }
 
 .journal-limit select {
-  width: 110px;
+  width: min(150px, 100%);
 }
 
 .journal-sort select {
-  width: 140px;
+  width: min(180px, 100%);
 }
 
 .journal-type-filters {
@@ -500,6 +515,8 @@ select:focus {
   border-radius: var(--radius-md);
   border: 1px solid rgba(148, 163, 184, 0.16);
   background: rgba(15, 23, 42, 0.6);
+  grid-column: 1 / -1;
+  justify-content: flex-start;
 }
 
 .journal-type-label {
@@ -515,6 +532,13 @@ select:focus {
   gap: 6px;
   font-size: 13px;
   color: var(--text);
+}
+
+.journal-controls .btn,
+.journal-controls .btn--ghost {
+  display: flex;
+  width: 100%;
+  justify-content: center;
 }
 
 .journal-type-filters input {
@@ -719,6 +743,14 @@ select:focus {
 }
 
 @media (max-width: 960px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .layout-column--secondary {
+    position: static;
+  }
+
   .page-shell {
     margin: 32px auto;
     padding: 0 20px 40px;
@@ -730,8 +762,9 @@ select:focus {
     padding: 26px;
   }
 
-  .panel-row {
-    flex-direction: column;
+  .page-meta {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .panel {
@@ -766,7 +799,23 @@ select:focus {
     font-size: 26px;
   }
 
+  .panel-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .panel-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .panel-actions .btn,
+  .panel-actions .btn--ghost {
+    width: 100%;
+  }
+
   .journal-controls {
+    display: flex;
     flex-direction: column;
     align-items: stretch;
   }
@@ -779,7 +828,65 @@ select:focus {
     flex-wrap: wrap;
   }
 
+  .journal-controls > * {
+    width: 100%;
+  }
+
+  .journal-type-filters {
+    justify-content: space-between;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .stats-actions .btn,
+  .stats-actions .btn--ghost {
+    width: 100%;
+  }
+
+  .balance-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
   table {
     min-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-shell {
+    padding: 0 14px 28px;
+  }
+
+  .card,
+  .panel,
+  .panel-body {
+    padding: 18px;
+  }
+
+  .balance-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .journal-type-filters {
+    gap: 10px;
+  }
+
+  .journal-type-filters label {
+    flex: 1 1 45%;
+  }
+
+  .panel-title {
+    font-size: 18px;
+  }
+
+  .panel-subtitle {
+    font-size: 12px;
   }
 }
