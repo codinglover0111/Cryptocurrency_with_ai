@@ -217,7 +217,16 @@ class JournalService:
                 )
 
                 prompt = (
-                    f"당신은 암호화폐 트레이딩 {role_line}입니다. 한국어로 간결히 답하세요.\n"
+                    f"당신은 암호화폐 트레이딩 {role_line}입니다. 한국어로 답하세요.\n"
+                    """[출력 양식]
+- 심볼
+- 진입가,TP가격,SL가격
+# 판단 내용
+- 임의로 익절 할 수 있었는가?
+- 임의로 손절 할 수 있었는가?
+- 너무 욕심을 부려서 익절/손절 할 수 없었는가?
+- 차트의 시나리오는 내가 예상한 시나리오로 흘러갔는가?
+[/출력 양식]\n"""
                     f"심볼: {contract_symbol} (spot={spot_symbol})\n"
                     f"포지션: {side}, 손익: {pnl} USDT\n"
                     f"기간: {open_ts_str} ~ {close_ts_str}\n"

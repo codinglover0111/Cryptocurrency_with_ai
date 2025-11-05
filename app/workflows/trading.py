@@ -459,8 +459,8 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         + "\n[/CURRENT_POSITIONS]\n"
     )
 
-    # if ctx.reviews_text:
-    #     prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
+    if ctx.reviews_text:
+        prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
     if ctx.recent_reports_text:
         prompt += (
             "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
