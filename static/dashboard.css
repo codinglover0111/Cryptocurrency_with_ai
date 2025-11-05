@@ -52,9 +52,10 @@ a {
 }
 
 .page-shell {
-  max-width: 1120px;
-  margin: 48px auto;
-  padding: 0 24px 48px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 48px clamp(24px, 5vw, 96px) 72px;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -154,6 +155,10 @@ a {
   grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
+}
+
+.layout-grid--single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .layout-column {
@@ -752,8 +757,7 @@ select:focus {
   }
 
   .page-shell {
-    margin: 32px auto;
-    padding: 0 20px 40px;
+    padding: 32px 24px 48px;
   }
 
   .page-header {
@@ -778,8 +782,7 @@ select:focus {
 
 @media (max-width: 640px) {
   .page-shell {
-    margin: 24px auto;
-    padding: 0 16px 32px;
+    padding: 24px 20px 36px;
     gap: 20px;
   }
 
@@ -861,7 +864,7 @@ select:focus {
 
 @media (max-width: 480px) {
   .page-shell {
-    padding: 0 14px 28px;
+    padding: 20px 14px 28px;
   }
 
   .card,
