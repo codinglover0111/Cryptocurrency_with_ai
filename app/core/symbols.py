@@ -9,11 +9,11 @@ from typing import List, Sequence, Tuple
 
 DEFAULT_SYMBOLS: Tuple[str, ...] = (
     "XRPUSDT",
-    "WLDUSDT",
     "ETHUSDT",
     "BTCUSDT",
     "SOLUSDT",
-    "DOGEUSDT",
+    # "WLDUSDT",
+    # "DOGEUSDT",
 )
 
 
