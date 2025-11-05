@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -75,6 +76,62 @@ def _safe_float(value: Any) -> Optional[float]:
         return float(value)
     except Exception:
         return None
+
+
+def _values_almost_equal(
+    first: Any, second: Any, *, abs_tol: float = 1e-8, rel_tol: float = 1e-9
+) -> bool:
+    """Return True when two numeric values are effectively identical."""
+
+    try:
+        if first is None or second is None:
+            return False
+        return math.isclose(
+            float(first), float(second), rel_tol=rel_tol, abs_tol=abs_tol
+        )
+    except Exception:
+        return False
+
+
+def _result_indicates_no_change(result: Any) -> bool:
+    """Heuristically detect exchange responses that mean 'no TP/SL change applied'."""
+
+    if result is None:
+        return False
+
+    snippets: List[str] = []
+    if isinstance(result, dict):
+        for key in (
+            "error",
+            "message",
+            "msg",
+            "retMsg",
+            "ret_msg",
+            "detail",
+            "reason",
+            "status",
+        ):
+            value = result.get(key)
+            if value:
+                snippets.append(str(value))
+        if not snippets:
+            try:
+                snippets.append(json.dumps(result, ensure_ascii=False))
+            except Exception:
+                snippets.append(str(result))
+    else:
+        snippets.append(str(result))
+
+    lowered = " ".join(snippets).lower()
+    keywords = (
+        "no change",
+        "unchanged",
+        "no modification",
+        "nothing to update",
+        "already set",
+        "same as",
+    )
+    return any(keyword in lowered for keyword in keywords)
 
 
 def _format_decimal(value: Any, *, default: str = "n/a", precision: int = 6) -> str:
@@ -857,6 +914,28 @@ def _handle_update_existing_positions(
     for pos, pos_side in matching:
         info = pos.get("info") if isinstance(pos.get("info"), dict) else {}
 
+        current_tp: Optional[float] = None
+        for candidate in (
+            pos.get("takeProfit"),
+            info.get("takeProfit") if isinstance(info, dict) else None,
+            info.get("tp") if isinstance(info, dict) else None,
+            info.get("take_profit") if isinstance(info, dict) else None,
+        ):
+            current_tp = _safe_float(candidate)
+            if current_tp is not None:
+                break
+
+        current_sl: Optional[float] = None
+        for candidate in (
+            pos.get("stopLoss"),
+            info.get("stopLoss") if isinstance(info, dict) else None,
+            info.get("sl") if isinstance(info, dict) else None,
+            info.get("stop_loss") if isinstance(info, dict) else None,
+        ):
+            current_sl = _safe_float(candidate)
+            if current_sl is not None:
+                break
+
         entry_price: Optional[float] = None
         for candidate in (
             pos.get("entryPrice"),
@@ -893,6 +972,14 @@ def _handle_update_existing_positions(
             except Exception:
                 applied_sl = sl_val
 
+        tp_needs_update = bool(
+            tp_val is not None and not _values_almost_equal(current_tp, tp_val)
+        )
+        sl_needs_update = bool(
+            applied_sl is not None and not _values_almost_equal(current_sl, applied_sl)
+        )
+        needs_update = tp_needs_update or sl_needs_update
+
         try:
             result = deps.bybit.update_symbol_tpsl(
                 deps.contract_symbol,
@@ -917,6 +1004,8 @@ def _handle_update_existing_positions(
         else:
             meta_result = str(result)
 
+        result_no_change = _result_indicates_no_change(result) or not needs_update
+
         updates.append(
             {
                 "side": pos_side,
@@ -926,19 +1015,41 @@ def _handle_update_existing_positions(
                 "requested_tp": tp_val,
                 "requested_sl": sl_val,
                 "applied_sl": applied_sl,
+                "current_tp": current_tp,
+                "current_sl": current_sl,
+                "tp_needs_update": tp_needs_update,
+                "sl_needs_update": sl_needs_update,
+                "needs_update": needs_update,
+                "result_no_change": result_no_change,
                 "result": meta_result,
             }
         )
 
     if not success:
-        LOGGER.error("update_existing 요청으로 TP/SL을 수정하지 못했습니다.")
-        _record_skip(
-            deps,
-            reason="update_failed",
-            decision=decision,
-            meta={"decision": decision, "updates": updates},
-            reason_text="TP/SL 업데이트 API 호출에 실패했습니다.",
+        change_requested = any(update.get("needs_update") for update in updates)
+        no_change_only = not change_requested or all(
+            update.get("result_no_change") for update in updates
         )
+        if no_change_only:
+            LOGGER.error(
+                "update_existing 요청이 있었지만 TP/SL 값이 기존과 동일하여 변경을 적용하지 않았습니다."
+            )
+            _record_skip(
+                deps,
+                reason="update_failed_no_change",
+                decision=decision,
+                meta={"decision": decision, "updates": updates},
+                reason_text="제공된 TP/SL 값이 기존 값과 동일합니다.",
+            )
+        else:
+            LOGGER.error("update_existing 요청으로 TP/SL을 수정하지 못했습니다.")
+            _record_skip(
+                deps,
+                reason="update_failed_other",
+                decision=decision,
+                meta={"decision": decision, "updates": updates},
+                reason_text="TP/SL 업데이트 API 호출에 실패했습니다.",
+            )
         return
 
     try:
