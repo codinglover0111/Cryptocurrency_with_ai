@@ -21,6 +21,10 @@ from app.services.market_data import ohlcv_csv_between
 LOGGER = logging.getLogger(__name__)
 
 
+TRADE_REVIEW_WAIT_HOURS = 48
+TRADE_REVIEW_OHLCV_TIMEFRAME = "15m"
+
+
 @dataclass(slots=True)
 class JournalService:
     """Encapsulates journal and review operations on top of TradeStore."""
@@ -203,7 +207,7 @@ class JournalService:
         open_ts: pd.Timestamp,
         close_ts: pd.Timestamp,
         entry_price: Optional[float],
-        csv_1m: Optional[str],
+        csv_between: Optional[str],
         csv_after_close: Optional[str] = None,
         is_loss: bool,
         entry_notes: str = "",
@@ -212,15 +216,14 @@ class JournalService:
 
         open_ts_str = pd.Timestamp(open_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
         close_ts_str = pd.Timestamp(close_ts).strftime("%Y-%m-%d %H:%M:%S UTC")
+        timeframe_label = TRADE_REVIEW_OHLCV_TIMEFRAME.upper()
         role_line = "손실 원인 분석가" if is_loss else "수익 요인 분석가"
         task_line = (
-            "아래 CSV_1m 구간의 가격 흐름을 참고하여, 손실 발생의 핵심 원인과 재발 방지를 위한 교훈/체크리스트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
+            f"아래 CSV_{timeframe_label} 구간의 가격 흐름을 참고하여, 손실 발생의 핵심 원인과 재발 방지를 위한 교훈/체크리스트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
             if is_loss
-            else "아래 CSV_1m 구간의 가격 흐름을 참고하여, 수익 발생의 핵심 요인과 재현 방법, 리스크 관리/익절·손절 개선 포인트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
+            else f"아래 CSV_{timeframe_label} 구간의 가격 흐름을 참고하여, 수익 발생의 핵심 요인과 재현 방법, 리스크 관리/익절·손절 개선 포인트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
         )
-        task_line += (
-            "청산 후 1시간 경과한 가격 흐름도 함께 참고해 판단의 적절성을 평가하세요.\n"
-        )
+        task_line += f"청산 후 {TRADE_REVIEW_WAIT_HOURS}시간 경과한 가격 흐름도 함께 참고해 판단의 적절성을 평가하세요.\n"
 
         entry_line = f"진입가(추정): {entry_price}\n" if entry_price else ""
         prompt = (
@@ -232,7 +235,7 @@ class JournalService:
 - 임의로 익절 할 수 있었는가?
 - 임의로 손절 할 수 있었는가?
 - 너무 욕심을 부려서 익절/손절 할 수 없었는가?
-- 차트의 시나리오는 내가 예상한 시나리오로 흘러갔는가?
+- 차트의 시나리오는 판단 문서에 있는 시나리오대로 흘러갔는가?
 [/Explain 출력 양식]
 """
             f"심볼: {contract_symbol} (spot={spot_symbol})\n"
@@ -246,9 +249,17 @@ class JournalService:
                 + (entry_notes if entry_notes else "(관련 기록 없음)")
                 + "\n"
             )
-
-        prompt += "[CSV_1m_BETWEEN]\n" + (csv_1m or "(no data)") + "\n"
-        prompt += "[CSV_1m_AFTER_CLOSE]\n" + (csv_after_close or "(no data)")
+        prompt += (
+            f"[CSV_{timeframe_label}_BETWEEN]\n"
+            + (csv_between or "(no data)")
+            + "\n"
+            + "[/CSV_{timeframe_label}_BETWEEN]\n"
+        )
+        prompt += (
+            f"[CSV_{timeframe_label}_AFTER_CLOSE]\n"
+            + (csv_after_close or "(no data)")
+            + "[/CSV_{timeframe_label}_AFTER_CLOSE]\n"
+        )
 
         return prompt
 
@@ -278,7 +289,7 @@ class JournalService:
                         "pnl": pnl,
                         "side": side,
                         "spot_symbol": spot_symbol,
-                        "timeframe": "1m",
+                        "timeframe": TRADE_REVIEW_OHLCV_TIMEFRAME,
                     },
                 }
             )
@@ -407,14 +418,16 @@ class JournalService:
             trades_df["ts"] = pd.to_datetime(trades_df["ts"], errors="coerce", utc=True)
 
             now_utc = pd.Timestamp.now(tz="UTC")
-            since_ts = now_utc - pd.Timedelta(minutes=int(since_minutes))
-            review_ready_cutoff = now_utc - pd.Timedelta(hours=48)
+            review_ready_cutoff = now_utc - pd.Timedelta(hours=TRADE_REVIEW_WAIT_HOURS)
+            lookback_start = review_ready_cutoff - pd.Timedelta(
+                minutes=max(int(since_minutes), 1)
+            )
 
             closed_recent = trades_df[
                 (trades_df["status"] == "closed")
                 & (trades_df["pnl"].notna())
                 & (trades_df["pnl"] <= 0)
-                & (trades_df["ts"] >= since_ts)
+                & (trades_df["ts"] >= lookback_start)
                 & (trades_df["ts"] <= review_ready_cutoff)
             ].copy()
 
@@ -453,12 +466,19 @@ class JournalService:
                         open_ts_utc = open_ts_utc.tz_convert("UTC")
                     since_ms = int(open_ts_utc.timestamp() * 1000)
                     until_ms = int(close_ts.timestamp() * 1000)
-                    csv_1m = ohlcv_csv_between(spot_symbol, "1m", since_ms, until_ms)
+                    csv_between = ohlcv_csv_between(
+                        spot_symbol, TRADE_REVIEW_OHLCV_TIMEFRAME, since_ms, until_ms
+                    )
 
-                    post_close_until = close_ts + pd.Timedelta(hours=1)
+                    post_close_until = close_ts + pd.Timedelta(
+                        hours=TRADE_REVIEW_WAIT_HOURS
+                    )
                     post_close_until_ms = int(post_close_until.timestamp() * 1000)
                     csv_after_close = ohlcv_csv_between(
-                        spot_symbol, "1m", until_ms, post_close_until_ms
+                        spot_symbol,
+                        TRADE_REVIEW_OHLCV_TIMEFRAME,
+                        until_ms,
+                        post_close_until_ms,
                     )
 
                     is_loss = pnl < 0
@@ -480,7 +500,7 @@ class JournalService:
                         open_ts=open_ts_utc,
                         close_ts=close_ts,
                         entry_price=entry_price,
-                        csv_1m=csv_1m,
+                        csv_between=csv_between,
                         csv_after_close=csv_after_close,
                         is_loss=is_loss,
                         entry_notes=entry_notes,
