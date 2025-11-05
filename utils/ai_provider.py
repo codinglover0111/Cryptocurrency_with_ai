@@ -91,7 +91,7 @@ class AIProvider:
                 max_output_tokens=4096,
                 response_schema=genai.protos.Schema(
                     type=genai.protos.Type.OBJECT,
-                    required=["Status"],
+                    required=["Status", "explain"],
                     properties={
                         "Status": genai.protos.Schema(
                             type=genai.protos.Type.STRING,
@@ -212,7 +212,7 @@ class AIProvider:
                 max_output_tokens=2048,
                 response_schema=genai.protos.Schema(
                     type=genai.protos.Type.OBJECT,
-                    required=["confirm"],
+                    required=["confirm", "explain"],
                     properties={
                         "confirm": genai.protos.Schema(type=genai.protos.Type.BOOLEAN),
                         "tp": genai.protos.Schema(type=genai.protos.Type.NUMBER),
