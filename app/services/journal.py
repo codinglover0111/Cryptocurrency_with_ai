@@ -408,7 +408,7 @@ class JournalService:
 
             now_utc = pd.Timestamp.now(tz="UTC")
             since_ts = now_utc - pd.Timedelta(minutes=int(since_minutes))
-            review_ready_cutoff = now_utc - pd.Timedelta(hours=4)
+            review_ready_cutoff = now_utc - pd.Timedelta(hours=48)
 
             closed_recent = trades_df[
                 (trades_df["status"] == "closed")
