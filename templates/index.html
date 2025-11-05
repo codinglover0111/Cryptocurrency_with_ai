@@ -115,9 +115,7 @@
               <div class="table-wrapper" id="pending-reviews"></div>
             </div>
           </article>
-        </div>
 
-        <aside class="layout-column layout-column--secondary">
           <section class="card panel">
             <header class="panel-header">
               <div>
@@ -170,7 +168,11 @@
                 <div id="jr-type-filters" class="journal-type-filters">
                   <span class="journal-type-label">유형</span>
                   <label
-                    ><input type="checkbox" value="decision" checked />판단</label
+                    ><input
+                      type="checkbox"
+                      value="decision"
+                      checked
+                    />판단</label
                   >
                   <label
                     ><input type="checkbox" value="action" checked />액션</label
@@ -184,11 +186,15 @@
                 </div>
                 <div id="jr-status-filters" class="journal-type-filters">
                   <span class="journal-type-label">포지션</span>
-                  <label><input type="checkbox" value="long" checked />롱</label>
+                  <label
+                    ><input type="checkbox" value="long" checked />롱</label
+                  >
                   <label
                     ><input type="checkbox" value="hold" checked />홀딩</label
                   >
-                  <label><input type="checkbox" value="short" checked />숏</label>
+                  <label
+                    ><input type="checkbox" value="short" checked />숏</label
+                  >
                 </div>
                 <button class="btn btn--ghost" id="jr-refresh">조회</button>
                 <button class="btn btn--ghost" id="jr-reset">초기화</button>
@@ -211,7 +217,7 @@
               <div class="journal-pagination" id="jr-pagination" hidden></div>
             </div>
           </section>
-        </aside>
+        </div>
       </main>
     </div>
   </body>
