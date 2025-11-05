@@ -55,6 +55,10 @@ def run_scheduler() -> None:
     # 5분 주기로 실행
     schedule.every(5).minutes.do(review_job)
 
+    if os.getenv("COLD_START") == "1":
+        job()
+        review_job()
+
     while True:
         try:
             schedule.run_pending()
