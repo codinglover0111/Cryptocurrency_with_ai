@@ -193,6 +193,33 @@ class BybitUtils:
             pass
         return market_id
 
+    def _detect_category(self, symbol: Optional[str]) -> str:
+        try:
+            if symbol:
+                self._ensure_markets()
+                market = self.exchange.market(symbol)
+                if isinstance(market, dict):
+                    if market.get("linear"):
+                        return "linear"
+                    if market.get("inverse"):
+                        return "inverse"
+                    if market.get("option"):
+                        return "option"
+        except Exception:
+            pass
+
+        try:
+            if symbol and ":" in symbol:
+                suffix = symbol.split(":")[-1].upper()
+                if suffix in {"USDT", "USDC"}:
+                    return "linear"
+                if suffix in {"BTC", "ETH"}:
+                    return "inverse"
+        except Exception:
+            pass
+
+        return "linear"
+
     @staticmethod
     def _float_or_none(raw: Any) -> Optional[float]:
         try:
@@ -515,11 +542,15 @@ class BybitUtils:
         if idx is not None:
             params["positionIdx"] = idx
 
+        category = self._detect_category(symbol)
+        params.setdefault("category", category)
+
         last_error: Optional[str] = None
 
         if hasattr(self.exchange, "set_trading_stop"):
             try:
                 merged = self._merge_params(params)
+                merged.setdefault("category", category)
                 response = self.exchange.set_trading_stop(
                     symbol,
                     stopLoss=stop_loss,
@@ -539,6 +570,7 @@ class BybitUtils:
                 market_id = self._symbol_to_market_id(symbol)
                 if market_id:
                     request["symbol"] = market_id
+                request["category"] = category
                 if take_profit is not None:
                     request["takeProfit"] = str(take_profit)
                 if stop_loss is not None:
