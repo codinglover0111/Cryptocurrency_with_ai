@@ -139,7 +139,7 @@ class JournalService:
         recent_reviews: dict[tuple[str, str], bool] = {}
         try:
             review_df = self.store.fetch_journals(
-                types=["review"], limit=100, ascending=False
+                types=["review"], limit=500, ascending=False
             )
             if review_df is None or getattr(review_df, "empty", True):
                 return recent_reviews
@@ -204,6 +204,7 @@ class JournalService:
         close_ts: pd.Timestamp,
         entry_price: Optional[float],
         csv_1m: Optional[str],
+        csv_after_close: Optional[str] = None,
         is_loss: bool,
         entry_notes: str = "",
     ) -> str:
@@ -217,11 +218,14 @@ class JournalService:
             if is_loss
             else "아래 CSV_1m 구간의 가격 흐름을 참고하여, 수익 발생의 핵심 요인과 재현 방법, 리스크 관리/익절·손절 개선 포인트를 3~5개 불릿으로 제시하세요. 600자 이내.\n"
         )
+        task_line += (
+            "청산 후 1시간 경과한 가격 흐름도 함께 참고해 판단의 적절성을 평가하세요.\n"
+        )
 
         entry_line = f"진입가(추정): {entry_price}\n" if entry_price else ""
         prompt = (
             f"당신은 암호화폐 트레이딩 {role_line}입니다. 한국어로 답하세요.\n"
-            """[출력 양식]
+            """[Explain 출력 양식]
 - 심볼
 - 진입가,TP가격,SL가격
 # 판단 내용
@@ -229,7 +233,7 @@ class JournalService:
 - 임의로 손절 할 수 있었는가?
 - 너무 욕심을 부려서 익절/손절 할 수 없었는가?
 - 차트의 시나리오는 내가 예상한 시나리오로 흘러갔는가?
-[/출력 양식]
+[/Explain 출력 양식]
 """
             f"심볼: {contract_symbol} (spot={spot_symbol})\n"
             f"포지션: {side}, 손익: {pnl} USDT\n"
@@ -243,7 +247,8 @@ class JournalService:
                 + "\n"
             )
 
-        prompt += "[CSV_1m_BETWEEN]\n" + (csv_1m or "(no data)")
+        prompt += "[CSV_1m_BETWEEN]\n" + (csv_1m or "(no data)") + "\n"
+        prompt += "[CSV_1m_AFTER_CLOSE]\n" + (csv_after_close or "(no data)")
 
         return prompt
 
@@ -280,6 +285,118 @@ class JournalService:
         except Exception as exc:
             LOGGER.error("Journal review write failed: %s", exc)
 
+    def list_pending_reviews(
+        self,
+        *,
+        wait_hours: int = 4,
+        since_hours: int = 24,
+    ) -> list[dict[str, object]]:
+        """Return closed-loss trades waiting for review availability."""
+
+        try:
+            trades_df = self.store.load_trades()
+        except Exception:
+            return []
+
+        if trades_df is None or getattr(trades_df, "empty", True):
+            return []
+
+        try:
+            trades_df["ts"] = pd.to_datetime(trades_df["ts"], errors="coerce", utc=True)
+        except Exception:
+            trades_df["ts"] = pd.to_datetime(trades_df["ts"], errors="coerce", utc=True)
+
+        now_utc = pd.Timestamp.now(tz="UTC")
+        since_ts = now_utc - pd.Timedelta(hours=float(since_hours))
+        wait_delta = pd.Timedelta(hours=float(wait_hours))
+
+        closed_df = trades_df[
+            (trades_df["status"] == "closed")
+            & (trades_df["pnl"].notna())
+            & (trades_df["pnl"] <= 0)
+            & (trades_df["ts"] >= since_ts)
+        ].copy()
+
+        if getattr(closed_df, "empty", True):
+            return []
+
+        reviewed_keys: dict[tuple[str, str], bool] = {}
+        try:
+            review_df = self.store.fetch_journals(
+                types=["review"], limit=500, ascending=False
+            )
+        except Exception:
+            review_df = None
+
+        if review_df is not None and not getattr(review_df, "empty", True):
+            for _, row in review_df.iterrows():
+                symbol = row.get("symbol")
+                meta = row.get("meta")
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = None
+                if not isinstance(meta, dict):
+                    continue
+                closed_ts_val = meta.get("closed_ts")
+                if not closed_ts_val:
+                    continue
+                try:
+                    closed_ts_pd = pd.Timestamp(closed_ts_val)
+                    if closed_ts_pd.tz is None:
+                        closed_ts_pd = closed_ts_pd.tz_localize("UTC")
+                    else:
+                        closed_ts_pd = closed_ts_pd.tz_convert("UTC")
+                except Exception:
+                    continue
+                key = (str(symbol), closed_ts_pd.isoformat())
+                reviewed_keys[key] = True
+
+        pending: list[dict[str, object]] = []
+
+        for _, row in closed_df.sort_values("ts").iterrows():
+            symbol_raw = row.get("symbol")
+            symbol = str(symbol_raw) if symbol_raw is not None else ""
+            if not symbol:
+                continue
+
+            close_ts_val = row.get("ts")
+            if pd.isna(close_ts_val):
+                continue
+
+            close_ts = pd.Timestamp(close_ts_val)
+            if close_ts.tz is None:
+                close_ts = close_ts.tz_localize("UTC")
+            else:
+                close_ts = close_ts.tz_convert("UTC")
+
+            key = (symbol, close_ts.isoformat())
+            if reviewed_keys.get(key):
+                continue
+
+            ready_at = close_ts + wait_delta
+            wait_seconds = int(max(0, (ready_at - now_utc).total_seconds()))
+            state = "waiting" if ready_at > now_utc else "ready"
+
+            item: dict[str, object] = {
+                "symbol": symbol,
+                "side": row.get("side"),
+                "pnl": float(row.get("pnl") or 0.0),
+                "closed_ts": close_ts.isoformat(),
+                "ready_at": ready_at.isoformat(),
+                "state": state,
+                "wait_seconds": wait_seconds,
+            }
+
+            order_id = row.get("order_id")
+            if order_id is not None and not pd.isna(order_id):
+                item["order_id"] = str(order_id)
+
+            pending.append(item)
+
+        return pending
+
     def review_losing_trades(self, since_minutes: int = 600) -> None:
         """Review recent losing trades and store AI-generated feedback."""
         try:
@@ -291,12 +408,14 @@ class JournalService:
 
             now_utc = pd.Timestamp.now(tz="UTC")
             since_ts = now_utc - pd.Timedelta(minutes=int(since_minutes))
+            review_ready_cutoff = now_utc - pd.Timedelta(hours=4)
 
             closed_recent = trades_df[
                 (trades_df["status"] == "closed")
                 & (trades_df["pnl"].notna())
                 & (trades_df["pnl"] <= 0)
                 & (trades_df["ts"] >= since_ts)
+                & (trades_df["ts"] <= review_ready_cutoff)
             ].copy()
 
             if getattr(closed_recent, "empty", True):
@@ -336,6 +455,12 @@ class JournalService:
                     until_ms = int(close_ts.timestamp() * 1000)
                     csv_1m = ohlcv_csv_between(spot_symbol, "1m", since_ms, until_ms)
 
+                    post_close_until = close_ts + pd.Timedelta(hours=1)
+                    post_close_until_ms = int(post_close_until.timestamp() * 1000)
+                    csv_after_close = ohlcv_csv_between(
+                        spot_symbol, "1m", until_ms, post_close_until_ms
+                    )
+
                     is_loss = pnl < 0
                     entry_notes = (
                         self._collect_entry_notes(
@@ -356,6 +481,7 @@ class JournalService:
                         close_ts=close_ts,
                         entry_price=entry_price,
                         csv_1m=csv_1m,
+                        csv_after_close=csv_after_close,
                         is_loss=is_loss,
                         entry_notes=entry_notes,
                     )

@@ -378,6 +378,80 @@ function renderStatsRange(data) {
   `;
 }
 
+function formatDurationShort(seconds) {
+  const num = Number(seconds);
+  if (!Number.isFinite(num)) return "-";
+  if (num <= 0) return "곧";
+  const total = Math.max(0, Math.floor(num));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours}시간`);
+  if (minutes) parts.push(`${minutes}분`);
+  if (!hours && !minutes) parts.push(`${secs}초`);
+  return parts.join(" ") || "곧";
+}
+
+function renderPendingReviews(payload) {
+  const container = el("pending-reviews");
+  if (!container) return;
+  const items = payload && Array.isArray(payload.items) ? payload.items : [];
+  if (!items.length) {
+    container.innerHTML = '<div class="muted">대기 중인 리뷰가 없습니다.</div>';
+    return;
+  }
+
+  const rows = items
+    .map((item) => {
+      const symbol = item.symbol || "-";
+      const sideRaw = item.side || "";
+      const side = statusLabel(String(sideRaw).toLowerCase()) || sideRaw || "-";
+      const pnlNum = Number(item.pnl);
+      const pnlText = formatNumberBrief(item.pnl) ?? item.pnl ?? "-";
+      const pnlClass = Number.isFinite(pnlNum)
+        ? pnlNum > 0
+          ? "pnl-positive"
+          : pnlNum < 0
+          ? "pnl-negative"
+          : ""
+        : "";
+      const closedAt = item && item.closed_ts ? formatTimeWithTZ(item.closed_ts) : "-";
+      const readyAt = item && item.ready_at ? formatTimeWithTZ(item.ready_at) : "-";
+      const stateRaw = String(item.state || "waiting");
+      const isWaiting = stateRaw === "waiting";
+      const stateLabel = isWaiting ? "대기" : "검토 필요";
+      const remaining = isWaiting
+        ? formatDurationShort(item.wait_seconds)
+        : "즉시 가능";
+
+      return `<tr>
+        <td>${symbol}</td>
+        <td>${side}</td>
+        <td class="text-right ${pnlClass}">${pnlText}</td>
+        <td>${closedAt}</td>
+        <td>${readyAt}</td>
+        <td>${stateLabel}<div class="muted">${remaining}</div></td>
+      </tr>`;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>심볼</th>
+          <th>사이드</th>
+          <th class="text-right">PNL</th>
+          <th>청산 시각</th>
+          <th>리뷰 가능</th>
+          <th>상태</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 function getTzParam() {
   try {
     const url = new URL(window.location.href);
@@ -726,14 +800,21 @@ function statusLabel(status) {
 
 async function refreshAll() {
   try {
-    const [status, stats, syms] = await Promise.all([
+    const pendingPromise = fetchJSON("/api/reviews/pending").catch((err) => {
+      console.warn("/api/reviews/pending 실패", err);
+      return { items: [] };
+    });
+
+    const [status, stats, syms, pending] = await Promise.all([
       fetchJSON("/status"),
       fetchJSON(buildStatsRangeUrl()),
       fetchJSON("/symbols"),
+      pendingPromise,
     ]);
     renderBalance(status);
     renderPositions(status);
     renderStatsRange(stats);
+    renderPendingReviews(pending);
     const statsSymbolSelect = el("st-symbol");
     if (statsSymbolSelect && syms && Array.isArray(syms.symbols)) {
       const previousValue = statsSymbolSelect.value;

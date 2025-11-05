@@ -499,7 +499,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
         f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
         f"이미 진입한 포지션의 레버리지는 조절할 수 없습니다.\n"
         f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
-        """[출력 양식]
+        """[Explain 출력 양식]
 - 차트 분석
 - 저항선 분석
 - 지지선 분석
@@ -520,7 +520,7 @@ def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
     - 예상 시나리오
     - 어떤 경우 임의로 손절 할건지
     - 어떤 경우 임의로 익절 할건지
-[/출력 양식]\n"""
+[/Explain 출력 양식]\n"""
         "기존 포지션의 TP/SL만 조정하려면 update_existing=true 로 표시하고 tp/sl 값만 제시하세요. 이때 leverage는 비워 두세요.\n"
         f"현재 UTC 시간: {now_utc}\n"
         f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"

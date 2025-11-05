@@ -20,6 +20,7 @@ from app.core.symbols import parse_trading_symbols, to_ccxt_symbols
 from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
 from utils.ai_provider import AIProvider
+from app.services.journal import JournalService
 
 
 app = FastAPI(title="Crypto Bot UI")
@@ -422,6 +423,41 @@ def list_journals(
             }
         )
     return {"items": items}
+
+
+@app.get("/api/reviews/pending")
+def list_pending_reviews(wait_hours: int = 4, since_hours: int = 24):
+    try:
+        safe_wait = max(0, int(wait_hours))
+    except Exception:
+        safe_wait = 4
+
+    try:
+        safe_since = max(safe_wait, int(since_hours))
+    except Exception:
+        safe_since = max(safe_wait, 24)
+
+    store = TradeStore(
+        StorageConfig(
+            mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
+        )
+    )
+
+    journal_service = JournalService(store=store)
+
+    try:
+        items = journal_service.list_pending_reviews(
+            wait_hours=safe_wait, since_hours=safe_since
+        )
+    except Exception:
+        items = []
+
+    return {
+        "items": items,
+        "wait_hours": safe_wait,
+        "since_hours": safe_since,
+    }
 
 
 @app.get("/api/journals_filtered")
