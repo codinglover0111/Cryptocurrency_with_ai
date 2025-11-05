@@ -426,7 +426,7 @@ def list_journals(
 
 
 @app.get("/api/reviews/pending")
-def list_pending_reviews(wait_hours: int = 4, since_hours: int = 24):
+def list_pending_reviews(wait_hours: int = 48, since_hours: int = 24):
     try:
         safe_wait = max(0, int(wait_hours))
     except Exception:
