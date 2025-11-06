@@ -243,6 +243,12 @@ def stats_range(
             sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
+    # 자동 청산(TP/SL)으로 인해 통계에서 누락되는 건을 방지하기 위해
+    # stats_range 조회 시에도 보정 로직을 실행한다.
+    try:
+        _reconcile_auto_closed_positions(store)
+    except Exception:
+        pass
 
     def _parse_iso(ts: Optional[str]):
         if not ts:
@@ -1247,6 +1253,7 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                 trades = sorted(trades, key=lambda t: t.get("timestamp") or 0)
                 total_value = 0.0
                 total_amount = 0.0
+                latest_trade_ts = None
                 for t in trades:
                     try:
                         if (t.get("side") or "").lower() != reduce_side:
@@ -1266,12 +1273,19 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                             or t.get("order")
                             or (t.get("info", {}) or {}).get("orderId")
                         )
+                        trade_ts = t.get("timestamp")
+                        if trade_ts is None:
+                            trade_ts = (t.get("info", {}) or {}).get("timestamp")
+                        if trade_ts is not None:
+                            latest_trade_ts = trade_ts
                         if amount > 0 and total_amount >= amount:
                             break
                     except Exception:
                         continue
                 if total_amount > 0:
                     vwap_close = total_value / total_amount
+                if close_ts_dt is None and latest_trade_ts is not None:
+                    close_ts_dt = _ms_to_naive_utc(latest_trade_ts)
             except Exception:
                 pass
 
@@ -1292,6 +1306,12 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
                     vwap_close = float(avg)
                     if order_id is None:
                         order_id = o.get("id")
+                    if close_ts_dt is None:
+                        close_ts_dt = _ms_to_naive_utc(
+                            o.get("timestamp")
+                            or o.get("lastTradeTimestamp")
+                            or (o.get("info", {}) or {}).get("updateTime")
+                        )
                     info_str = (str(o.get("type")) + " " + str(o.get("info"))).lower()
                     if "take" in info_str and "profit" in info_str:
                         closed_by = CLOSED_BY_TARGET_PROFIT
