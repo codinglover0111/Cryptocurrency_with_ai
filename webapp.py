@@ -8,7 +8,7 @@ import math
 import time
 import threading
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Tuple, Any, Dict, cast
+from typing import Optional, List, Tuple, Any, Dict, Set, cast
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -135,6 +135,11 @@ class LeverageBody(BaseModel):
     symbol: str
     leverage: float
     margin_mode: Optional[str] = "cross"
+
+
+class StatsReconcileRequest(BaseModel):
+    symbol: Optional[str] = None
+    symbols: Optional[List[str]] = None
 
 
 @app.on_event("startup")
@@ -276,6 +281,36 @@ def stats_range(
     except Exception:
         pass
     return result
+
+
+@app.post("/stats/reconcile")
+def stats_reconcile(body: StatsReconcileRequest):
+    store = TradeStore(
+        StorageConfig(
+            mysql_url=os.getenv("MYSQL_URL"),
+            sqlite_path=os.getenv("SQLITE_PATH"),
+        )
+    )
+
+    symbol_candidates: Set[str] = set()
+    if body.symbol:
+        symbol_candidates.add(str(body.symbol).strip())
+    if body.symbols:
+        for sym in body.symbols:
+            if sym:
+                symbol_candidates.add(str(sym).strip())
+
+    try:
+        result = _reconcile_auto_closed_positions(
+            store, symbols=symbol_candidates or None
+        )
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "result": {"auto_closed": 0, "journal_entries": 0, "review_entries": 0},
+        }
 
 
 @app.post("/close_all")
@@ -982,16 +1017,40 @@ def positions_summary(
     return {"items": items}
 
 
-def _reconcile_auto_closed_positions(store: TradeStore) -> None:
-    """열린(opened) 거래가 있는데 현재 포지션이 없다면 자동 청산으로 간주하여
-    closed 레코드를 기록하고 저널/AI 리뷰를 추가한다. (멱등)
+def _reconcile_auto_closed_positions(
+    store: TradeStore, symbols: Optional[Set[str]] = None
+) -> Dict[str, int]:
+    """열린(opened) 거래 상태를 CCXT 결과와 비교하여 자동 청산 기록을 보강한다.
+
+    Args:
+        store: TradeStore 인스턴스
+        symbols: 대상 심볼 집합(옵션). 지정 시 해당 심볼만 동기화.
+
+    Returns:
+        dict: 생성된 청산/저널 건수 통계
     """
+
+    result = {"auto_closed": 0, "journal_entries": 0, "review_entries": 0}
+
     try:
         df = store.load_trades()
     except Exception:
-        return
+        return result
     if df is None or getattr(df, "empty", True):
-        return
+        return result
+
+    symbol_filter: Optional[Set[str]] = None
+    if symbols:
+        normalized = {str(sym).strip() for sym in symbols if str(sym).strip()}
+        symbol_filter = normalized or None
+
+    if symbol_filter is not None:
+        try:
+            df = df[df["symbol"].astype(str).isin(symbol_filter)].copy()
+        except Exception:
+            df = df[df["symbol"].isin(symbol_filter)].copy()
+        if getattr(df, "empty", True):
+            return result
 
     # 필수 컬럼 확인
     for col in (
@@ -1007,17 +1066,25 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
         "leverage",
     ):
         if col not in df.columns:
-            return
+            return result
 
     try:
         bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
     except Exception:
-        return
+        return result
 
     # opened 행과 이미 closed 기록 수집
     opened_df = df[df["status"].astype(str) == "opened"].copy()
+    if symbol_filter is not None:
+        try:
+            opened_df = opened_df[
+                opened_df["symbol"].astype(str).isin(symbol_filter)
+            ].copy()
+        except Exception:
+            opened_df = opened_df[opened_df["symbol"].isin(symbol_filter)].copy()
+
     if opened_df.empty:
-        return
+        return result
     try:
         import pandas as pd  # 지역 임포트
 
@@ -1030,6 +1097,14 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             closed_df["ts"] = pd.to_datetime(closed_df["ts"], errors="coerce")
     except Exception:
         closed_df = df[df["status"].astype(str) == "closed"].copy()
+
+    if symbol_filter is not None and not closed_df.empty:
+        try:
+            closed_df = closed_df[
+                closed_df["symbol"].astype(str).isin(symbol_filter)
+            ].copy()
+        except Exception:
+            closed_df = closed_df[closed_df["symbol"].isin(symbol_filter)].copy()
 
     def _ts_to_ms(value: Any) -> Optional[int]:
         if value is None:
@@ -1395,6 +1470,8 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             )
         except Exception:
             pass
+        else:
+            result["auto_closed"] += 1
 
         close_str = f"{vwap_close:.6f}" if vwap_close is not None else str(vwap_close)
         qty_str = f"{amount:.6f}"
@@ -1429,6 +1506,8 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             )
         except Exception:
             pass
+        else:
+            result["journal_entries"] += 1
 
         try:
             review = _try_ai_review(
@@ -1437,17 +1516,24 @@ def _reconcile_auto_closed_positions(store: TradeStore) -> None:
             if review:
                 review_meta = dict(meta_payload)
                 review_meta["reason"] = closed_by
-                store.record_journal(
-                    {
-                        "symbol": symbol,
-                        "entry_type": "review",
-                        "content": review,
-                        "reason": "auto_close_review",
-                        "meta": review_meta,
-                    }
-                )
+                try:
+                    store.record_journal(
+                        {
+                            "symbol": symbol,
+                            "entry_type": "review",
+                            "content": review,
+                            "reason": "auto_close_review",
+                            "meta": review_meta,
+                        }
+                    )
+                except Exception:
+                    pass
+                else:
+                    result["review_entries"] += 1
         except Exception:
             pass
+
+    return result
 
 
 def _try_ai_review(

@@ -878,6 +878,50 @@ function buildStatsRangeUrl() {
 }
 
 async function manualRefreshStats() {
+  const btn = document.getElementById("st-refresh");
+  const hint = document.getElementById("st-refresh-hint");
+  const updateHint = (message, timeoutMs) => {
+    if (!hint) return;
+    hint.textContent = message || "";
+    if (timeoutMs && timeoutMs > 0) {
+      const captured = message;
+      setTimeout(() => {
+        if (hint.textContent === captured) {
+          hint.textContent = "";
+        }
+      }, timeoutMs);
+    }
+  };
+
+  if (btn) {
+    btn.disabled = true;
+  }
+
+  const symbolSelect = document.getElementById("st-symbol");
+  const symbolValue = symbolSelect ? symbolSelect.value.trim() : "";
+  const reconcilePayload = symbolValue ? { symbol: symbolValue } : {};
+
+  try {
+    updateHint("주문 상태 동기화 중...");
+    const res = await fetch("/stats/reconcile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reconcilePayload),
+    });
+    if (!res.ok) {
+      throw new Error(`/stats/reconcile ${res.status}`);
+    }
+    try {
+      await res.json();
+    } catch (_) {
+      // ignore json parse errors (optional)
+    }
+    updateHint("동기화 완료", 2500);
+  } catch (err) {
+    console.warn("/stats/reconcile 실패", err);
+    updateHint("동기화 실패", 4000);
+  }
+
   try {
     try {
       await fetchJSON("/stats");
@@ -889,6 +933,10 @@ async function manualRefreshStats() {
     renderStatsRange(data);
   } catch (e) {
     console.error(e);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+    }
   }
 }
 
