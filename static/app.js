@@ -1367,40 +1367,66 @@ function renderMarkdownToHtml(raw) {
   const blocks = [];
   let listBuffer = [];
   let paragraphBuffer = [];
+  let lineIndex = 0;
+  let listBufferSince = null;
+  let paragraphBufferSince = null;
 
   const flushParagraph = () => {
     if (!paragraphBuffer.length) return;
     const paragraph = paragraphBuffer.join("<br />");
     blocks.push(`<p>${paragraph}</p>`);
     paragraphBuffer = [];
+    paragraphBufferSince = null;
   };
 
   const flushList = () => {
     if (!listBuffer.length) return;
     blocks.push(`<ul>${listBuffer.join("")}</ul>`);
     listBuffer = [];
+    listBufferSince = null;
+  };
+
+  const flushPendingInOrder = () => {
+    if (!listBuffer.length && !paragraphBuffer.length) return;
+    const pending = [];
+    if (listBuffer.length) {
+      pending.push({ type: "list", since: listBufferSince ?? lineIndex });
+    }
+    if (paragraphBuffer.length) {
+      pending.push({
+        type: "paragraph",
+        since: paragraphBufferSince ?? lineIndex,
+      });
+    }
+    pending
+      .sort((a, b) => a.since - b.since)
+      .forEach((entry) => {
+        if (entry.type === "list") {
+          flushList();
+        } else {
+          flushParagraph();
+        }
+      });
   };
 
   lines.forEach((line) => {
+    lineIndex += 1;
     const trimmed = line.trim();
 
     if (trimmed && /^@@CODE_BLOCK_\d+@@$/.test(trimmed)) {
-      flushParagraph();
-      flushList();
+      flushPendingInOrder();
       blocks.push(trimmed);
       return;
     }
 
     if (!trimmed) {
-      flushParagraph();
-      flushList();
+      flushPendingInOrder();
       return;
     }
 
     const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
     if (headingMatch) {
-      flushParagraph();
-      flushList();
+      flushPendingInOrder();
       const level = headingMatch[1].length;
       const content = headingMatch[2];
       blocks.push(`<h${level}>${applyInlineMarkdown(content)}</h${level}>`);
@@ -1411,20 +1437,21 @@ function renderMarkdownToHtml(raw) {
       flushParagraph();
       const itemText = trimmed.replace(/^[-*+]\s+/, "");
       listBuffer.push(`<li>${applyInlineMarkdown(itemText)}</li>`);
+      if (listBufferSince === null) {
+        listBufferSince = lineIndex;
+      }
       return;
     }
 
     if (/^>\s?/.test(trimmed)) {
-      flushParagraph();
-      flushList();
+      flushPendingInOrder();
       const quoteText = trimmed.replace(/^>\s?/, "");
       blocks.push(`<blockquote>${applyInlineMarkdown(quoteText)}</blockquote>`);
       return;
     }
 
     if (/^( {4}|\t)/.test(line)) {
-      flushParagraph();
-      flushList();
+      flushPendingInOrder();
       blocks.push(
         `<pre><code>${escapeHtml(line.replace(/^( {4}|\t)/, ""))}</code></pre>`
       );
@@ -1432,10 +1459,12 @@ function renderMarkdownToHtml(raw) {
     }
 
     paragraphBuffer.push(applyInlineMarkdown(line));
+    if (paragraphBufferSince === null) {
+      paragraphBufferSince = lineIndex;
+    }
   });
 
-  flushParagraph();
-  flushList();
+  flushPendingInOrder();
 
   if (!blocks.length) {
     return '<div class="markdown-body"><p class="muted">내용 없음</p></div>';
