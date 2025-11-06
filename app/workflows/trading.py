@@ -1299,7 +1299,7 @@ def _run_confirm_step(
         sl_pct = float(pct_info.get("sl_pct") or 0.0)
         tp_pct_leverage = float(pct_info.get("tp_pct_leverage") or 0.0)
         sl_pct_leverage = float(pct_info.get("sl_pct_leverage") or 0.0)
-
+        max_loss_pct = int(os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "65"))
         confirm_prompt = (
             "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
             f"심볼: {deps.contract_symbol}\n"
@@ -1308,7 +1308,7 @@ def _run_confirm_step(
             f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}% | 레버리지 기준: {tp_pct_leverage:.4f}%)\n"
             f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
             f"레버리지: {float(leverage)}x\n"
-            "레버리지 기준 손실률은 청산 방지를 위해 85%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
+            f"레버리지 기준 손실률은 청산 방지를 위해 {max_loss_pct}%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
             "필수: confirm(boolean), explain(string). 선택: tp, sl, price, buy_now, leverage.\n"
             "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요. confirm=true라면 결정 근거를 간단히 남기세요.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
