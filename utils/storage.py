@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 import datetime as dt
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, Union
 
@@ -88,6 +89,11 @@ class TradeStore:
         self.config = config
         self._engine = None
         self._db_url, self._is_sqlite = config.resolve()
+        self._prefer_mysql = bool(
+            self.config.mysql_url and not str(os.getenv("FORCE_SQLITE", "0")).lower()
+            in ("1", "true", "yes", "on")
+        )
+
         if self._db_url:
             try:
                 kwargs: Dict[str, Any] = {}
@@ -96,26 +102,56 @@ class TradeStore:
                 else:
                     kwargs["pool_pre_ping"] = True
                 self._engine = sa.create_engine(self._db_url, **kwargs)
-                # 연결 확인 및 실패 시 SQLite로 폴백
                 if not self._is_sqlite:
-                    try:
-                        with self._engine.connect() as conn:
-                            conn.execute(sa.text("SELECT 1"))
-                    except Exception as e:
-                        print(
-                            f"Warning: failed to connect to database ({e}); falling back to SQLite"
-                        )
-                        # SQLite로 강제 전환
-                        self._db_url, self._is_sqlite = StorageConfig(
-                            sqlite_path=self.config.sqlite_path
-                        ).resolve()
-                        kwargs = {"connect_args": {"check_same_thread": False}}
-                        self._engine = sa.create_engine(self._db_url, **kwargs)
+                    self._wait_for_connection(self._engine)
             except Exception as e:
-                print(f"Warning: failed to init database engine: {e}")
+                allow_fallback = self._should_allow_sqlite_fallback()
+                if not self._is_sqlite and allow_fallback:
+                    print(
+                        f"Warning: failed to connect to database ({e}); falling back to SQLite"
+                    )
+                    self._db_url, self._is_sqlite = StorageConfig(
+                        sqlite_path=self.config.sqlite_path
+                    ).resolve()
+                    kwargs = {"connect_args": {"check_same_thread": False}}
+                    try:
+                        self._engine = sa.create_engine(self._db_url, **kwargs)
+                    except Exception as sqlite_exc:
+                        print(f"Warning: failed to init SQLite fallback: {sqlite_exc}")
+                        self._engine = None
+                else:
+                    raise RuntimeError(
+                        "Failed to initialize database engine"
+                    ) from e
 
         if self._engine is not None:
             self._ensure_schema()
+
+    def _should_allow_sqlite_fallback(self) -> bool:
+        if not self._prefer_mysql:
+            return True
+        val = os.getenv("ALLOW_SQLITE_FALLBACK")
+        if val is None:
+            return False
+        return str(val).lower() in {"1", "true", "yes", "on"}
+
+    def _wait_for_connection(self, engine: sa.engine.Engine) -> None:
+        retries = max(1, int(os.getenv("DB_CONNECT_RETRIES", "5")))
+        delay = max(0.1, float(os.getenv("DB_CONNECT_RETRY_DELAY", "2")))
+        last_error: Optional[Exception] = None
+        for attempt in range(retries):
+            try:
+                with engine.connect() as conn:
+                    conn.execute(sa.text("SELECT 1"))
+                return
+            except Exception as exc:  # pragma: no cover - simple retry loop
+                last_error = exc
+                if attempt + 1 < retries:
+                    time.sleep(delay)
+        if last_error is not None:
+            raise RuntimeError(
+                "Failed to connect to database after retries"
+            ) from last_error
 
     def _ensure_schema(self) -> None:
         try:
