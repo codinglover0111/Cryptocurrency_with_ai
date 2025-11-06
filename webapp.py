@@ -243,6 +243,12 @@ def stats_range(
             sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
+    # 자동 청산(TP/SL)으로 인해 통계에서 누락되는 건을 방지하기 위해
+    # stats_range 조회 시에도 보정 로직을 실행한다.
+    try:
+        _reconcile_auto_closed_positions(store)
+    except Exception:
+        pass
 
     def _parse_iso(ts: Optional[str]):
         if not ts:
