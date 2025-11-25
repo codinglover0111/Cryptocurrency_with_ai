@@ -11,12 +11,32 @@
 - `function.py`: LangChain 함수/도구 포맷 변환 헬퍼
 - `price_utils.py`: 캔들 데이터프레임 → 이미지/CSV 변환, 지표 계산 보조
 - `risk.py`: 포지션 사이징, 최대 손실 강제(`enforce_max_loss_sl`) 등 리스크 유틸
-- `storage.py`: SQLite/MySQL 스토리지 백엔드, `TradeStore`로 트레이드/저널/리뷰 CRUD 제공
+- `storage.py`: SQLite/MySQL 스토리지 백엔드, `TradeStore` 클래스 제공
+  - 트레이드/저널/리뷰 CRUD
+  - **스케줄러 상태 관리**: `set_scheduler_state`, `get_scheduler_state`, `get_all_scheduler_states`
+  - **공유 분석 결과**: `save_shared_analysis`, `get_btc_analysis` (BTC 분석 결과 공유용)
 - `types.py`: 타입 힌트 플레이스홀더
 - `__init__.py`: 익스포트
+
+## 스케줄러 상태 테이블 (`scheduler_state`)
+
+| 키 | 설명 |
+| --- | --- |
+| `is_running` | 스케줄러 실행 중 여부 ("1" / "0") |
+| `paused` | 일시 중단 상태 ("1" / "0") |
+| `last_automation_run` | 마지막 자동매매 실행 시간 (ISO 형식) |
+| `last_review_run` | 마지막 손실 리뷰 실행 시간 (ISO 형식) |
+| `automation_minutes` | 자동매매 주기 (분) |
+| `loss_review_minutes` | 손실 리뷰 주기 (분) |
+
+## 공유 분석 테이블 (`shared_analysis`)
+
+- BTC 분석 결과를 저장하여 다른 심볼 분석 시 컨텍스트로 제공
+- `get_btc_analysis(max_age_minutes)`: 지정 시간 내 BTC 분석 결과 조회
 
 ## 유지보수 체크리스트
 
 - API 키/엔드포인트 변경 시 `ai_provider.py`와 `.env.sample`을 함께 수정하고 호출 제한(재시도 간격)을 조정하세요.
 - Bybit 래퍼는 예외 메시지를 그대로 전달하므로, 프런트/워크플로에서 사용자 친화적 메시지가 필요한 경우 래핑을 고려하세요.
 - 스토리지 경로와 엔진(`SQLITE_PATH`, `MYSQL_URL`)은 환경변수에 의존합니다. 마이그레이션 시 스키마(`SCHEMA_METADATA`)를 같이 업데이트하세요.
+- 스케줄러 상태와 공유 분석 테이블은 앱 시작 시 자동 생성됩니다 (`_ensure_schema`).

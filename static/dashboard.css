@@ -464,6 +464,27 @@ select:focus {
   color: var(--text);
 }
 
+/* Theme Toggle Icons */
+.theme-icon {
+  transition: opacity 0.2s ease;
+}
+
+.moon-icon {
+  display: block;
+}
+
+.sun-icon {
+  display: none;
+}
+
+[data-theme="light"] .moon-icon {
+  display: none;
+}
+
+[data-theme="light"] .sun-icon {
+  display: block;
+}
+
 /* Journal Controls */
 .journal-controls {
   display: grid;

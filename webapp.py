@@ -146,8 +146,9 @@ templates = Jinja2Templates(directory="templates")
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request, tz: Optional[str] = None):
-    return templates.TemplateResponse("index.html", {"request": request, "tz": tz})
+def public_dashboard(request: Request):
+    """공개 대시보드 렌더링 (로그인 불필요)."""
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -1812,3 +1813,71 @@ def overlay_positions(
         "overlay_positions.html",
         {"request": request, "symbol": symbol, "refresh": refresh},
     )
+
+
+@app.get("/admin/logs")
+def get_logs(lines: int = 500, level: Optional[str] = None):
+    """로그 파일의 마지막 N줄을 반환합니다."""
+    import os
+    from pathlib import Path
+
+    log_file = Path("trading.log")
+    if not log_file.exists():
+        # 대체 경로 시도
+        alt_paths = [
+            Path("logs/trading.log"),
+            Path("data/trading.log"),
+        ]
+        for alt in alt_paths:
+            if alt.exists():
+                log_file = alt
+                break
+
+    if not log_file.exists():
+        return {"logs": [], "total_lines": 0, "file": None}
+
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+
+        # 마지막 N줄 가져오기
+        tail_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+
+        # 레벨 필터링 (옵션)
+        if level:
+            level_upper = level.upper()
+            tail_lines = [
+                line for line in tail_lines
+                if level_upper in line.upper()
+            ]
+
+        # 각 라인에서 레벨 추출
+        parsed_logs = []
+        for line in tail_lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            log_level = "INFO"
+            line_upper = line.upper()
+            if "ERROR" in line_upper:
+                log_level = "ERROR"
+            elif "WARNING" in line_upper or "WARN" in line_upper:
+                log_level = "WARNING"
+            elif "DEBUG" in line_upper:
+                log_level = "DEBUG"
+            elif "CRITICAL" in line_upper:
+                log_level = "CRITICAL"
+
+            parsed_logs.append({
+                "text": line,
+                "level": log_level,
+            })
+
+        return {
+            "logs": parsed_logs,
+            "total_lines": len(all_lines),
+            "file": str(log_file),
+        }
+    except Exception as e:
+        return {"logs": [], "total_lines": 0, "error": str(e)}

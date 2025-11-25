@@ -28,7 +28,7 @@ from app.core.symbols import (
 )
 from app.services.journal import JournalService
 from app.agents import TradingState
-from app.config import load_runtime_config
+from app.config import load_runtime_config, RISK_CONFIG
 from app.graph import TradingGraph, build_trading_graph
 from app.opro import PerformanceScorer
 
@@ -566,6 +566,51 @@ def _summarize_positions(
     return lines, primary_side
 
 
+def _get_btc_analysis_context(store: TradeStore, current_symbol: str) -> str:
+    """BTC 분석 결과를 가져와 컨텍스트 문자열로 반환합니다."""
+    # BTC 심볼인 경우 자기 자신의 분석을 가져올 필요 없음
+    if current_symbol.upper().startswith("BTC"):
+        return ""
+    
+    try:
+        btc_analysis = store.get_btc_analysis(max_age_minutes=60)
+        if btc_analysis:
+            content = btc_analysis.get("content", "")
+            created_at = btc_analysis.get("created_at", "")
+            return f"""
+=== 비트코인(BTC) 분석 결과 (참고용) ===
+분석 시간: {created_at}
+{content}
+=== BTC 분석 끝 ===
+"""
+    except Exception as exc:
+        LOGGER.warning("BTC 분석 결과 로드 실패: %s", exc)
+    return ""
+
+
+def _save_btc_analysis(store: TradeStore, symbol: str, decision: Dict[str, Any]) -> None:
+    """BTC 분석 결과를 저장합니다."""
+    if not symbol.upper().startswith("BTC"):
+        return
+    
+    try:
+        # 분석 결과를 문자열로 변환
+        explain = decision.get("explain", "")
+        status = decision.get("status") or decision.get("Status", "")
+        tp = decision.get("tp", "N/A")
+        sl = decision.get("sl", "N/A")
+        
+        content = f"""상태: {status}
+설명: {explain}
+TP: {tp}
+SL: {sl}
+"""
+        store.save_shared_analysis(symbol, "decision", content)
+        LOGGER.info("BTC 분석 결과 저장 완료: %s", symbol)
+    except Exception as exc:
+        LOGGER.warning("BTC 분석 결과 저장 실패: %s", exc)
+
+
 def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     """Collect market snapshots, journal excerpts, and position context."""
 
@@ -648,6 +693,11 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     reviews_text = deps.journal_service.format_trade_reviews_for_prompt(
         deps.contract_symbol
     )
+
+    # BTC 분석 결과 컨텍스트 추가
+    btc_context = _get_btc_analysis_context(deps.store, deps.contract_symbol)
+    if btc_context:
+        reviews_text = btc_context + "\n" + reviews_text
 
     since_open_text = ""
     try:
@@ -778,35 +828,40 @@ def _normalize_position_side(value: Any) -> Optional[str]:
     return None
 
 
+def _get_risk_config() -> Dict[str, Any]:
+    """런타임 리스크 설정을 로드합니다."""
+    runtime = load_runtime_config()
+    return runtime.get("risk", RISK_CONFIG)
+
+
 def _compute_max_loss_percent(leverage: float) -> float:
     """Derive maximum tolerated loss percentage based on leverage settings."""
 
     leverage_factor = max(1.0, float(leverage or 1.0))
+    
+    # 런타임 설정에서 최대 손실 % 가져오기
+    risk_config = _get_risk_config()
+    max_loss_from_config = risk_config.get("max_loss_percent", 40)
+    
     max_loss_env = os.getenv("MAX_LOSS_PERCENT")
     if max_loss_env is not None:
         try:
             max_loss_pct = float(max_loss_env)
         except Exception:
-            max_loss_pct = 80.0
+            max_loss_pct = float(max_loss_from_config)
     else:
-        base_max_loss_pct = 4.0
-        max_loss_pct = base_max_loss_pct * leverage_factor
-        cap_env = os.getenv("MAX_LOSS_PERCENT_CAP")
-        if cap_env is not None:
-            try:
-                cap_value = float(cap_env)
-            except Exception:
-                cap_value = None
-        else:
-            cap_value = 95.0
-        if cap_value is not None:
-            max_loss_pct = min(max_loss_pct, cap_value)
+        # 런타임 설정의 max_loss_percent를 사용 (레버리지 후 기준)
+        max_loss_pct = float(max_loss_from_config)
 
-    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "85")
-    try:
-        leveraged_cap = float(leveraged_cap_env)
-    except Exception:
-        leveraged_cap = 85.0
+    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT")
+    if leveraged_cap_env:
+        try:
+            leveraged_cap = float(leveraged_cap_env)
+        except Exception:
+            leveraged_cap = max_loss_pct
+    else:
+        leveraged_cap = max_loss_pct
+        
     if leveraged_cap > 0:
         leveraged_raw_cap = (
             leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
@@ -1377,9 +1432,14 @@ def _execute_trade(
     balance_total = balance_info.get("total") or 0
     balance_free = balance_info.get("free") or 0
 
-    risk_percent = 20.0
-    max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(deps.per_symbol_alloc_pct)))
-    leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", "5"))
+    # 런타임 리스크 설정 로드
+    risk_config = _get_risk_config()
+    default_leverage = risk_config.get("default_leverage", 5)
+    position_allocation = risk_config.get("position_allocation_percent", 20)
+    
+    risk_percent = float(position_allocation)
+    max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(position_allocation)))
+    leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", str(default_leverage)))
 
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
@@ -1942,6 +2002,10 @@ def automation_for_symbol(
                     "Multi-agent workflow returned no decision (single-agent path disabled)"
                 )
             decision_payload = ma_result["decision"]
+            
+            # BTC 분석 결과 저장 (다른 심볼에서 참조할 수 있도록)
+            _save_btc_analysis(deps.store, deps.contract_symbol, decision_payload)
+            
             if _handle_close_now(deps, ctx, decision_payload):
                 return
             _execute_trade(deps, ctx, decision_payload)

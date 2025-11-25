@@ -16,7 +16,7 @@
   - FastAPI + APScheduler 백엔드
   - Bybit 거래 (CCXT 기반)
   - Vision LLM (패턴/추세 에이전트)
-- **Python 버전**: 3.10 이상
+- **Python 버전**: 3.12 이상
 
 ---
 
@@ -125,10 +125,17 @@ class TradeDecision(BaseModel):
   - `admin`: 에이전트 LLM 설정, 스케줄러 주기, 사용자 관리, 심볼 관리, 포지션 일괄 청산
   - `user`: 대시보드/저널 조회, 자동매매 상태 확인
 - **저장소**: 기본 SQLite (SQLAlchemy) → 필요 시 MySQL로 확장
+- **IP 차단 시스템**
+  - 로그인 실패 횟수 초과 시 자동 IP 차단 (`MAX_LOGIN_ATTEMPTS`, `LOGIN_ATTEMPT_WINDOW_MINUTES` 환경변수)
+  - `LoginAttempt`: 로그인 시도 기록
+  - `BlockedIP`: 차단된 IP 관리
+  - 관리자 UI에서 차단 해제 가능
 - **라우트**
-  - `POST /auth/login`
-  - `POST /auth/logout`
-  - `GET /auth/me`
+  - `POST /auth/login`: 로그인 (IP 차단 확인 포함)
+  - `POST /auth/logout`: 로그아웃
+  - `GET /auth/me`: 현재 사용자 정보
+  - `GET /auth/blocked-ips`: 차단된 IP 목록 (관리자 전용)
+  - `POST /auth/unblock-ip`: IP 차단 해제 (관리자 전용)
 
 ---
 
@@ -138,6 +145,10 @@ class TradeDecision(BaseModel):
   - 에이전트별 모델/파라미터 변경
   - APScheduler 주기(분 단위) 설정
   - Adaptive-OPRO 상태, 최근 프롬프트 히스토리 조회
+  - **로그 뷰어**: `trading.log` 실시간 조회 (레벨별 필터링)
+  - **스케줄러 제어**: 일시 중단/재개 버튼
+  - **리스크 설정**: 레버리지, 최대 손실 %, 포지션 할당 % 조정
+  - **다크/라이트 모드 토글**: `theme.js`로 테마 전환
 - **사용자 페이지**
   - 잔고, 포지션, 최근 거래, 저널
   - 현재 전략/시장 레짐 설명
@@ -149,6 +160,11 @@ class TradeDecision(BaseModel):
 - `POST /api/agent-config`
 - `POST /api/schedule`
 - `POST /api/analyze` (매매 실행 없이 분석만 수행)
+- `GET /admin/logs`: 로그 파일 조회 (lines, level 파라미터)
+- `POST /admin/scheduler/pause`: 스케줄러 일시 중단
+- `POST /admin/scheduler/resume`: 스케줄러 재개
+- `GET /admin/risk-config`: 리스크 설정 조회
+- `POST /admin/risk-config`: 리스크 설정 업데이트
 
 ---
 
@@ -165,6 +181,8 @@ class TradeDecision(BaseModel):
 ### 7.2 Trading Workflow (`app/workflows/trading.py`)
 
 - `_gather_prompt_context` → `TradingGraph.run(symbol)`로 대체
+- **BTC 우선 분석**: BTCUSDT를 항상 첫 번째로 분석하고 결과를 저장
+- **분석 결과 공유**: BTC 분석 결과는 다른 심볼 분석 시 컨텍스트로 제공
 - 결과 구조
 
 ```python
@@ -175,6 +193,14 @@ class TradeDecision(BaseModel):
     "prompt_trace": [...],  # OPRO 기록
 }
 ```
+
+### 7.3 리스크 설정 (`RISK_CONFIG`)
+
+| 항목 | 기본값 | 설명 |
+| --- | --- | --- |
+| `default_leverage` | 5 | 디폴트 레버리지 |
+| `max_loss_percent` | 40 | 최대 손실 허용 % (레버리지 후 기준) |
+| `position_allocation_percent` | 20 | 포지션당 최대 할당 % (초기 잔고 기준) |
 
 ---
 

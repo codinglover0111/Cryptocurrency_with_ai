@@ -114,9 +114,7 @@ function updateAuthUI() {
     if (userInfo) {
       userInfo.innerHTML = `
         <span class="user-avatar">👤</span>
-        <span class="user-name">${escapeHtml(
-          adminState.user.username
-        )} (관리자)</span>
+        <span class="user-name">관리자</span>
       `;
     }
     loadAdminData();
@@ -142,14 +140,26 @@ async function handleLogin(e) {
 
   try {
     if (statusEl) statusEl.textContent = "로그인 중...";
-    await postJSON("/auth/login", { username, password });
+    const res = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || "로그인 실패");
+    }
+
     el("admin-password").value = "";
     await checkAuth();
     if (statusEl) statusEl.textContent = "";
   } catch (err) {
     console.error(err);
-    if (statusEl)
-      statusEl.textContent = "로그인 실패: 아이디 또는 비밀번호를 확인하세요";
+    if (statusEl) {
+      statusEl.textContent =
+        err.message || "로그인 실패: 아이디 또는 비밀번호를 확인하세요";
+    }
   }
 }
 
@@ -214,6 +224,14 @@ function showSection(sectionId) {
       title: "시스템",
       subtitle: "시스템 정보와 긴급 조치를 관리하세요",
     },
+    logs: {
+      title: "시스템 로그",
+      subtitle: "실시간 로그를 확인하세요",
+    },
+    risk: {
+      title: "리스크 설정",
+      subtitle: "레버리지, 손실 한도, 포지션 할당을 설정하세요",
+    },
   };
 
   const info = titles[sectionId] || { title: sectionId, subtitle: "" };
@@ -221,6 +239,21 @@ function showSection(sectionId) {
   const subtitleEl = el("page-subtitle");
   if (titleEl) titleEl.textContent = info.title;
   if (subtitleEl) subtitleEl.textContent = info.subtitle;
+
+  // Load blocked IPs when system section is shown
+  if (sectionId === "system") {
+    loadBlockedIPs();
+  }
+
+  // Load logs when logs section is shown
+  if (sectionId === "logs") {
+    loadLogs();
+  }
+
+  // Load risk config when risk section is shown
+  if (sectionId === "risk") {
+    loadRiskConfig();
+  }
 }
 
 // Load Admin Data
@@ -491,6 +524,56 @@ function populateSchedulerForm() {
   if (autoInput) autoInput.value = scheduler.automation_minutes ?? 15;
   if (lossInput) lossInput.value = scheduler.loss_review_minutes ?? 60;
   if (coldFlag) coldFlag.checked = !!scheduler.cold_start;
+
+  // 스케줄 상태 업데이트
+  updateSchedulerStatus(scheduler);
+}
+
+function updateSchedulerStatus(scheduler) {
+  const statusBadge = el("automation-status");
+  const nextRunEl = el("next-run");
+  const lastRunEl = el("last-run");
+
+  // 실행 상태
+  if (statusBadge) {
+    const isRunning = scheduler.is_running;
+    statusBadge.textContent = isRunning ? "활성" : "비활성";
+    statusBadge.className = isRunning
+      ? "status-badge status-badge--active"
+      : "status-badge status-badge--inactive";
+  }
+
+  // 마지막 실행 시간
+  if (lastRunEl) {
+    lastRunEl.textContent = formatTime(scheduler.last_automation_run) || "-";
+  }
+
+  // 다음 실행 시간
+  if (nextRunEl) {
+    const nextRun = scheduler.next_automation_run;
+    if (nextRun) {
+      const nextDate = new Date(nextRun);
+      const now = new Date();
+      if (nextDate > now) {
+        // 남은 시간 계산
+        const diffMs = nextDate - now;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffSecs = Math.floor((diffMs % 60000) / 1000);
+        if (diffMins > 0) {
+          nextRunEl.textContent = `${diffMins}분 ${diffSecs}초 후`;
+        } else {
+          nextRunEl.textContent = `${diffSecs}초 후`;
+        }
+      } else {
+        nextRunEl.textContent = "곧 실행";
+      }
+    } else if (scheduler.is_running) {
+      // 실행 중이지만 아직 첫 실행 전
+      nextRunEl.textContent = "대기 중...";
+    } else {
+      nextRunEl.textContent = "-";
+    }
+  }
 }
 
 async function saveScheduler() {
@@ -578,6 +661,75 @@ async function syncStats() {
     loadDashboardData();
   } catch (err) {
     alert("동기화 실패: " + err.message);
+  }
+}
+
+// Blocked IPs Management
+async function loadBlockedIPs() {
+  const container = el("blocked-ips-table");
+  if (!container) return;
+
+  try {
+    const data = await fetchJSON("/auth/blocked-ips");
+    const items = data.items || [];
+
+    if (!items.length) {
+      container.innerHTML = '<p class="muted">차단된 IP가 없습니다</p>';
+      return;
+    }
+
+    const rows = items
+      .map((ip) => {
+        const blockedAt = ip.blocked_at
+          ? new Date(ip.blocked_at).toLocaleString("ko-KR")
+          : "-";
+        return `
+          <tr>
+            <td><code>${escapeHtml(ip.ip_address)}</code></td>
+            <td>${escapeHtml(ip.reason || "-")}</td>
+            <td>${blockedAt}</td>
+            <td>
+              <button class="btn btn--ghost btn--sm" onclick="unblockIP('${escapeHtml(
+                ip.ip_address
+              )}')">
+                차단 해제
+              </button>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    container.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>IP 주소</th>
+            <th>사유</th>
+            <th>차단 시각</th>
+            <th>조치</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (err) {
+    console.error("Blocked IPs load error:", err);
+    container.innerHTML = '<p class="muted">차단 목록을 불러올 수 없습니다</p>';
+  }
+}
+
+async function unblockIP(ipAddress) {
+  if (!confirm(`${ipAddress} 의 차단을 해제하시겠습니까?`)) {
+    return;
+  }
+
+  try {
+    await postJSON("/auth/unblock-ip", { ip_address: ipAddress });
+    alert(`${ipAddress} 차단이 해제되었습니다.`);
+    loadBlockedIPs();
+  } catch (err) {
+    alert("차단 해제 실패: " + err.message);
   }
 }
 
@@ -784,12 +936,36 @@ function setupEventListeners() {
     refreshPosBtn.addEventListener("click", loadDashboardData);
   }
 
+  // Blocked IPs
+  const refreshBlockedBtn = el("refresh-blocked-ips");
+  if (refreshBlockedBtn) {
+    refreshBlockedBtn.addEventListener("click", loadBlockedIPs);
+  }
+
   // API Keys
   const saveApiKeysBtn = el("save-apikeys");
   const refreshApiKeysBtn = el("refresh-apikeys");
   if (saveApiKeysBtn) saveApiKeysBtn.addEventListener("click", saveApiKeys);
   if (refreshApiKeysBtn)
     refreshApiKeysBtn.addEventListener("click", refreshApiKeys);
+
+  // Scheduler Pause/Resume
+  const pauseSchedulerBtn = el("pause-scheduler");
+  const resumeSchedulerBtn = el("resume-scheduler");
+  if (pauseSchedulerBtn) pauseSchedulerBtn.addEventListener("click", pauseScheduler);
+  if (resumeSchedulerBtn) resumeSchedulerBtn.addEventListener("click", resumeScheduler);
+
+  // Logs
+  const refreshLogsBtn = el("refresh-logs");
+  const logLevelFilter = el("log-level-filter");
+  if (refreshLogsBtn) refreshLogsBtn.addEventListener("click", loadLogs);
+  if (logLevelFilter) logLevelFilter.addEventListener("change", loadLogs);
+
+  // Risk Config
+  const saveRiskBtn = el("save-risk-config");
+  const resetRiskBtn = el("reset-risk-config");
+  if (saveRiskBtn) saveRiskBtn.addEventListener("click", saveRiskConfig);
+  if (resetRiskBtn) resetRiskBtn.addEventListener("click", resetRiskConfig);
 }
 
 // Initialize
@@ -806,4 +982,220 @@ window.addEventListener("DOMContentLoaded", () => {
       loadDashboardData();
     }
   }, 30000);
+
+  // Auto refresh scheduler status every 10 seconds
+  setInterval(() => {
+    if (adminState.authenticated && adminState.currentSection === "scheduler") {
+      refreshSchedulerStatus();
+    }
+  }, 10000);
+
+  // Start log auto refresh
+  startLogAutoRefresh();
+});
+
+async function refreshSchedulerStatus() {
+  try {
+    const scheduler = await fetchJSON("/admin/scheduler");
+    adminState.scheduler = scheduler || {};
+    updateSchedulerStatus(adminState.scheduler);
+    updateSchedulerPausedUI(adminState.scheduler.paused);
+  } catch (err) {
+    console.warn("스케줄러 상태 새로고침 실패", err);
+  }
+}
+
+// ===== Scheduler Pause/Resume =====
+function updateSchedulerPausedUI(paused) {
+  const pausedBadge = el("scheduler-paused-status");
+  const pauseBtn = el("pause-scheduler");
+  const resumeBtn = el("resume-scheduler");
+
+  if (pausedBadge) {
+    pausedBadge.textContent = paused ? "예" : "아니오";
+    pausedBadge.className = paused
+      ? "status-badge status-badge--warning"
+      : "status-badge status-badge--inactive";
+  }
+
+  if (pauseBtn && resumeBtn) {
+    pauseBtn.style.display = paused ? "none" : "inline-flex";
+    resumeBtn.style.display = paused ? "inline-flex" : "none";
+  }
+}
+
+async function pauseScheduler() {
+  try {
+    await postJSON("/admin/scheduler/pause", {});
+    adminState.scheduler.paused = true;
+    updateSchedulerPausedUI(true);
+    alert("스케줄러가 일시 중단되었습니다.");
+  } catch (err) {
+    alert("스케줄러 중단 실패: " + err.message);
+  }
+}
+
+async function resumeScheduler() {
+  try {
+    await postJSON("/admin/scheduler/resume", {});
+    adminState.scheduler.paused = false;
+    updateSchedulerPausedUI(false);
+    alert("스케줄러가 재개되었습니다.");
+  } catch (err) {
+    alert("스케줄러 재개 실패: " + err.message);
+  }
+}
+
+// ===== Logs Viewer =====
+let logAutoRefreshInterval = null;
+
+async function loadLogs() {
+  const container = el("log-viewer");
+  if (!container) return;
+
+  const levelFilter = el("log-level-filter")?.value || "";
+  const autoScroll = el("log-auto-scroll")?.checked ?? true;
+
+  try {
+    const url = levelFilter
+      ? `/admin/logs?lines=500&level=${levelFilter}`
+      : "/admin/logs?lines=500";
+    const data = await fetchJSON(url);
+    const logs = data.logs || [];
+
+    if (!logs.length) {
+      container.innerHTML = '<p class="muted">로그가 없습니다</p>';
+      return;
+    }
+
+    const html = logs
+      .map((log) => {
+        const levelClass = `log-line--${(log.level || "info").toLowerCase()}`;
+        return `<div class="log-line ${levelClass}">${escapeHtml(log.text)}</div>`;
+      })
+      .join("");
+
+    container.innerHTML = html;
+
+    if (autoScroll) {
+      container.scrollTop = container.scrollHeight;
+    }
+  } catch (err) {
+    console.error("로그 로드 실패:", err);
+    container.innerHTML = '<p class="muted">로그를 불러올 수 없습니다</p>';
+  }
+}
+
+function startLogAutoRefresh() {
+  if (logAutoRefreshInterval) {
+    clearInterval(logAutoRefreshInterval);
+  }
+  logAutoRefreshInterval = setInterval(() => {
+    if (adminState.authenticated && adminState.currentSection === "logs") {
+      loadLogs();
+    }
+  }, 10000); // 10초마다 새로고침
+}
+
+// ===== Risk Config =====
+async function loadRiskConfig() {
+  try {
+    const data = await fetchJSON("/admin/risk-config");
+    const config = data || {};
+
+    const leverageInput = el("default-leverage");
+    const maxLossInput = el("max-loss-percent");
+    const allocationInput = el("position-allocation-percent");
+
+    if (leverageInput) leverageInput.value = config.default_leverage ?? 5;
+    if (maxLossInput) maxLossInput.value = config.max_loss_percent ?? 40;
+    if (allocationInput) allocationInput.value = config.position_allocation_percent ?? 20;
+  } catch (err) {
+    console.warn("리스크 설정 로드 실패:", err);
+  }
+}
+
+async function saveRiskConfig() {
+  const hint = el("risk-config-hint");
+  const leverageInput = el("default-leverage");
+  const maxLossInput = el("max-loss-percent");
+  const allocationInput = el("position-allocation-percent");
+
+  const payload = {
+    default_leverage: Number(leverageInput?.value || 5),
+    max_loss_percent: Number(maxLossInput?.value || 40),
+    position_allocation_percent: Number(allocationInput?.value || 20),
+  };
+
+  try {
+    if (hint) hint.textContent = "저장 중...";
+    await postJSON("/admin/risk-config", payload);
+    if (hint) hint.textContent = "✓ 저장 완료";
+    setTimeout(() => {
+      if (hint && hint.textContent === "✓ 저장 완료") hint.textContent = "";
+    }, 3000);
+  } catch (err) {
+    console.error(err);
+    if (hint) hint.textContent = "✗ 저장 실패";
+  }
+}
+
+function resetRiskConfig() {
+  const leverageInput = el("default-leverage");
+  const maxLossInput = el("max-loss-percent");
+  const allocationInput = el("position-allocation-percent");
+
+  if (leverageInput) leverageInput.value = 5;
+  if (maxLossInput) maxLossInput.value = 40;
+  if (allocationInput) allocationInput.value = 20;
+
+  const hint = el("risk-config-hint");
+  if (hint) hint.textContent = "기본값으로 초기화됨";
+  setTimeout(() => {
+    if (hint && hint.textContent === "기본값으로 초기화됨") hint.textContent = "";
+  }, 2000);
+}
+
+// ===== Theme Toggle =====
+function handleThemeToggle() {
+  // theme.js의 toggleTheme 호출
+  if (typeof window.toggleTheme === "function") {
+    window.toggleTheme();
+  } else if (typeof window.theme?.toggle === "function") {
+    window.theme.toggle();
+  } else {
+    // 폴백: 직접 테마 전환
+    const html = document.documentElement;
+    const currentTheme = html.getAttribute("data-theme") || "dark";
+    const newTheme = currentTheme === "dark" ? "light" : "dark";
+    html.setAttribute("data-theme", newTheme);
+    localStorage.setItem("theme", newTheme);
+  }
+  // 아이콘 업데이트
+  updateThemeIcon();
+}
+
+function updateThemeIcon() {
+  const html = document.documentElement;
+  const currentTheme = html.getAttribute("data-theme") || "dark";
+  const moonIcon = document.querySelector(".moon-icon");
+  const sunIcon = document.querySelector(".sun-icon");
+  
+  if (moonIcon && sunIcon) {
+    if (currentTheme === "dark") {
+      // 다크모드: 달 아이콘 표시 (클릭하면 라이트로)
+      moonIcon.style.display = "block";
+      sunIcon.style.display = "none";
+    } else {
+      // 라이트모드: 해 아이콘 표시 (클릭하면 다크로)
+      moonIcon.style.display = "none";
+      sunIcon.style.display = "block";
+    }
+  }
+}
+
+// 페이지 로드 시 테마 아이콘 초기화
+window.addEventListener("DOMContentLoaded", () => {
+  // 테마 아이콘 초기화
+  setTimeout(updateThemeIcon, 100);
 });

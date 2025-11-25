@@ -34,5 +34,10 @@ const theme = {
 // Initialize theme immediately to prevent flash of wrong theme
 theme.init();
 
-// Expose to window for UI interaction
-window.toggleTheme = theme.toggle;
+// Expose to window for UI interaction (bind to preserve context)
+window.toggleTheme = function() {
+  return theme.toggle();
+};
+
+// Also expose theme object for direct access
+window.theme = theme;

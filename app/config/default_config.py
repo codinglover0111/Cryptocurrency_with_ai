@@ -41,6 +41,12 @@ SCHEDULER_CONFIG: Dict[str, Any] = {
     "cold_start": False,
 }
 
+RISK_CONFIG: Dict[str, Any] = {
+    "default_leverage": 5,
+    "max_loss_percent": 40,  # 레버리지 적용 후 기준
+    "position_allocation_percent": 20,  # 포지션당 최대 할당 % (초기 잔고 기준)
+}
+
 ADAPTIVE_OPRO_CONFIG: Dict[str, Any] = {
     "performance_window": 20,
     "min_trades_for_update": 5,
@@ -55,6 +61,7 @@ def _runtime_defaults() -> Dict[str, Any]:
         "agents": deepcopy(AGENT_CONFIG),
         "scheduler": deepcopy(SCHEDULER_CONFIG),
         "adaptive_opro": deepcopy(ADAPTIVE_OPRO_CONFIG),
+        "risk": deepcopy(RISK_CONFIG),
     }
 
 

@@ -50,11 +50,19 @@
             <span class="nav-icon">🔧</span>
             <span class="nav-label">시스템</span>
           </a>
+          <a href="#logs" class="nav-item" data-section="logs">
+            <span class="nav-icon">📋</span>
+            <span class="nav-label">로그</span>
+          </a>
+          <a href="#risk" class="nav-item" data-section="risk">
+            <span class="nav-icon">⚙️</span>
+            <span class="nav-label">리스크 설정</span>
+          </a>
         </nav>
         <div class="sidebar-footer">
           <a href="/" class="nav-item nav-item--back">
             <span class="nav-icon">←</span>
-            <span class="nav-label">대시보드로 돌아가기</span>
+            <span class="nav-label">공개 대시보드</span>
           </a>
           <button class="nav-item" id="admin-logout-btn">
             <span class="nav-icon">🚪</span>
@@ -74,11 +82,14 @@
           <div class="header-right">
             <button
               class="theme-toggle"
-              onclick="toggleTheme()"
+              id="theme-toggle-btn"
+              onclick="handleThemeToggle()"
               aria-label="테마 변경"
               style="margin-right: 16px"
             >
+              <!-- 달 아이콘 (다크모드에서 표시 - 클릭하면 라이트로) -->
               <svg
+                class="theme-icon moon-icon"
                 width="20"
                 height="20"
                 viewBox="0 0 24 24"
@@ -89,6 +100,26 @@
                 <path
                   d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
                 ></path>
+              </svg>
+              <!-- 해 아이콘 (라이트모드에서 표시 - 클릭하면 다크로) -->
+              <svg
+                class="theme-icon sun-icon"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
               </svg>
             </button>
             <div class="user-info" id="admin-user-info">
@@ -415,6 +446,14 @@
                     >
                   </div>
                   <div class="status-item">
+                    <span class="status-label">일시 중단</span>
+                    <span
+                      class="status-badge status-badge--inactive"
+                      id="scheduler-paused-status"
+                      >아니오</span
+                    >
+                  </div>
+                  <div class="status-item">
                     <span class="status-label">다음 실행</span>
                     <span class="status-value" id="next-run">-</span>
                   </div>
@@ -422,6 +461,14 @@
                     <span class="status-label">마지막 실행</span>
                     <span class="status-value" id="last-run">-</span>
                   </div>
+                </div>
+                <div class="scheduler-controls" style="margin-top: 20px;">
+                  <button class="btn btn--warning" id="pause-scheduler">
+                    <span>⏸️</span> 스케줄러 일시 중단
+                  </button>
+                  <button class="btn btn--success" id="resume-scheduler" style="display: none;">
+                    <span>▶️</span> 스케줄러 재개
+                  </button>
                 </div>
               </div>
             </article>
@@ -706,6 +753,142 @@
                 </p>
               </div>
             </article>
+
+            <article class="admin-panel panel--full">
+              <header class="panel-header">
+                <h3 class="panel-title">🚫 차단된 IP 관리</h3>
+                <button class="btn btn--ghost btn--sm" id="refresh-blocked-ips">
+                  새로고침
+                </button>
+              </header>
+              <div class="panel-body">
+                <p class="form-hint" style="margin-bottom: 16px">
+                  로그인 10회 실패 시 해당 IP가 자동으로 차단됩니다.
+                </p>
+                <div class="table-wrapper" id="blocked-ips-table">
+                  <p class="muted">로딩 중...</p>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Logs Section -->
+        <section class="admin-section" id="section-logs" hidden>
+          <article class="admin-panel panel--full">
+            <header class="panel-header">
+              <h3 class="panel-title">시스템 로그</h3>
+              <div class="log-controls">
+                <select id="log-level-filter" class="log-filter-select">
+                  <option value="">전체</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="INFO">INFO</option>
+                  <option value="DEBUG">DEBUG</option>
+                </select>
+                <label class="toggle-label" style="margin-left: 16px;">
+                  <input type="checkbox" id="log-auto-scroll" checked />
+                  <span class="toggle-switch"></span>
+                  <span class="toggle-text">자동 스크롤</span>
+                </label>
+                <button class="btn btn--ghost btn--sm" id="refresh-logs" style="margin-left: 16px;">
+                  새로고침
+                </button>
+              </div>
+            </header>
+            <div class="panel-body">
+              <div class="log-viewer" id="log-viewer">
+                <p class="muted">로딩 중...</p>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <!-- Risk Settings Section -->
+        <section class="admin-section" id="section-risk" hidden>
+          <div class="risk-settings-grid">
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">리스크 관리 설정</h3>
+              </header>
+              <div class="panel-body">
+                <div class="form-group">
+                  <label for="default-leverage">기본 레버리지</label>
+                  <div class="input-with-unit">
+                    <input
+                      type="number"
+                      id="default-leverage"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value="5"
+                    />
+                    <span class="input-unit">x</span>
+                  </div>
+                  <p class="form-hint">새 포지션 진입 시 기본 적용되는 레버리지</p>
+                </div>
+                <div class="form-group">
+                  <label for="max-loss-percent">최대 손실 허용 % (레버리지 후)</label>
+                  <div class="input-with-unit">
+                    <input
+                      type="number"
+                      id="max-loss-percent"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value="40"
+                    />
+                    <span class="input-unit">%</span>
+                  </div>
+                  <p class="form-hint">레버리지 적용 후 기준, 이 값을 초과하는 손실이 발생하면 SL이 강제 조정됩니다</p>
+                </div>
+                <div class="form-group">
+                  <label for="position-allocation-percent">포지션당 최대 할당 %</label>
+                  <div class="input-with-unit">
+                    <input
+                      type="number"
+                      id="position-allocation-percent"
+                      min="1"
+                      max="100"
+                      step="1"
+                      value="20"
+                    />
+                    <span class="input-unit">%</span>
+                  </div>
+                  <p class="form-hint">총 잔고 대비 하나의 포지션에 할당 가능한 최대 비율 (초기 잔고 기준)</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">설정 설명</h3>
+              </header>
+              <div class="panel-body">
+                <div class="risk-info">
+                  <h4>포지션 할당 로직</h4>
+                  <ul>
+                    <li>초기 잔고가 100 USDT이고 할당 %가 20%면, 각 포지션은 최대 20 USDT까지 사용</li>
+                    <li>거래 후 잔고가 80 USDT가 되어도, 포지션 최대값은 여전히 20 USDT (초기 기준)</li>
+                    <li>이는 급격한 손실 후 무리한 복구 시도를 방지합니다</li>
+                  </ul>
+                  <h4>최대 손실 허용 %</h4>
+                  <ul>
+                    <li>레버리지 적용 후 손실률 기준입니다</li>
+                    <li>예: 40% 설정 시, 레버리지 10x로 4% 가격 하락하면 한도 도달</li>
+                    <li>청산 방지를 위해 적절한 값을 설정하세요</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn--ghost" id="reset-risk-config">초기화</button>
+            <button class="btn btn--primary" id="save-risk-config">
+              설정 저장
+            </button>
+            <span class="config-hint" id="risk-config-hint"></span>
           </div>
         </section>
       </main>
