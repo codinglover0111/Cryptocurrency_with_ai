@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Tuple, Any, Dict, Set, cast
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,9 +23,26 @@ from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
 from utils.ai_provider import AIProvider
 from app.services.journal import JournalService
+from app.auth.routes import router as auth_router
+from app.web import admin_router, user_router
 
 
 app = FastAPI(title="Crypto Bot UI")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("WEB_SESSION_SECRET", "change-me"),
+    max_age=60 * 60 * 24 * 7,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(auth_router)
+app.include_router(admin_router)
+app.include_router(user_router)
 
 
 CLOSED_BY_TARGET_PROFIT = "목표수익달성"

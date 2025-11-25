@@ -8,6 +8,221 @@ function el(id) {
   return document.getElementById(id);
 }
 
+const dashboardState = {
+  session: { authenticated: false, user: null },
+  models: {},
+  agentConfig: {},
+  scheduler: {},
+};
+
+async function postJSON(path, payload) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`${path} ${res.status}`);
+  return await res.json();
+}
+
+function updateAuthUI() {
+  const loginForm = document.getElementById("login-form");
+  const logoutBtn = document.getElementById("logout-btn");
+  const statusEl = document.getElementById("auth-status");
+  const adminPanel = document.getElementById("admin-settings");
+  const { authenticated, user } = dashboardState.session;
+
+  if (loginForm) loginForm.hidden = !!authenticated;
+  if (logoutBtn) logoutBtn.hidden = !authenticated;
+  if (statusEl) {
+    if (authenticated && user) {
+      statusEl.textContent = `${user.username} (${user.role})`;
+    } else {
+      statusEl.textContent = "로그인 필요";
+    }
+  }
+  if (adminPanel) {
+    adminPanel.hidden = !(authenticated && user && user.role === "admin");
+  }
+}
+
+async function refreshSession() {
+  try {
+    const data = await fetchJSON("/auth/me");
+    dashboardState.session = {
+      authenticated: !!data.authenticated,
+      user: data.user || null,
+    };
+  } catch (err) {
+    dashboardState.session = { authenticated: false, user: null };
+  }
+  updateAuthUI();
+  if (
+    dashboardState.session.authenticated &&
+    dashboardState.session.user?.role === "admin"
+  ) {
+    await loadAdminConfig();
+  }
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const username = document.getElementById("login-username")?.value?.trim();
+  const password = document.getElementById("login-password")?.value;
+  const statusEl = document.getElementById("auth-status");
+  if (!username || !password) return;
+  try {
+    statusEl.textContent = "로그인 중...";
+    await postJSON("/auth/login", { username, password });
+    document.getElementById("login-password").value = "";
+    await refreshSession();
+    statusEl.textContent = "로그인 완료";
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "로그인 실패";
+  }
+}
+
+async function handleLogout() {
+  try {
+    await postJSON("/auth/logout", {});
+  } catch (err) {
+    console.warn("logout failed", err);
+  } finally {
+    dashboardState.session = { authenticated: false, user: null };
+    updateAuthUI();
+  }
+}
+
+async function loadAdminConfig() {
+  try {
+    const [models, agents, scheduler] = await Promise.all([
+      fetchJSON("/admin/models"),
+      fetchJSON("/admin/agent-config"),
+      fetchJSON("/admin/scheduler"),
+    ]);
+    dashboardState.models = models.providers || {};
+    dashboardState.agentConfig = agents || {};
+    dashboardState.scheduler = scheduler || {};
+    renderAgentConfigForm();
+    populateSchedulerForm();
+  } catch (err) {
+    console.warn("관리자 설정 로드 실패", err);
+    const hint = document.getElementById("agent-config-hint");
+    if (hint) hint.textContent = "설정 로드 실패";
+  }
+}
+
+function renderAgentConfigForm() {
+  const container = document.getElementById("agent-config");
+  if (!container) return;
+  const agents = [
+    ["indicator_agent", "Indicator"],
+    ["pattern_agent", "Pattern"],
+    ["trend_agent", "Trend"],
+    ["decision_agent", "Decision"],
+  ];
+  const providers = Object.keys(dashboardState.models);
+  if (!providers.length) {
+    providers.push("openai");
+  }
+  container.innerHTML = agents
+    .map(([key, label]) => {
+      const cfg = dashboardState.agentConfig[key] || {};
+      const providerOptions = providers
+        .map((provider) => {
+          const selected = provider === cfg.provider ? "selected" : "";
+          return `<option value="${provider}" ${selected}>${provider}</option>`;
+        })
+        .join("");
+      const modelValue = escapeHtml(String(cfg.model || ""));
+      return `
+        <div class="agent-row" data-agent-row="${key}">
+          <h4>${label} Agent</h4>
+          <label>
+            Provider
+            <select data-field="provider">
+              ${providerOptions}
+            </select>
+          </label>
+          <label>
+            Model
+            <input data-field="model" value="${modelValue}" placeholder="모델 ID" />
+          </label>
+          <label>
+            Temp
+            <input data-field="temperature" type="number" step="0.05" min="0" max="1" value="${cfg.temperature ?? 0.1}" />
+          </label>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function gatherAgentConfigFromForm() {
+  const rows = document.querySelectorAll("[data-agent-row]");
+  const payload = {};
+  rows.forEach((row) => {
+    const agentKey = row.getAttribute("data-agent-row");
+    if (!agentKey) return;
+    const provider = row.querySelector('[data-field="provider"]')?.value || "";
+    const model = row.querySelector('[data-field="model"]')?.value || "";
+    const temperature = parseFloat(
+      row.querySelector('[data-field="temperature"]')?.value || "0.1"
+    );
+    payload[agentKey] = {
+      provider,
+      model,
+      temperature: Number.isFinite(temperature) ? temperature : 0.1,
+    };
+  });
+  return payload;
+}
+
+function populateSchedulerForm() {
+  const scheduler = dashboardState.scheduler || {};
+  const autoInput = document.getElementById("automation-minutes");
+  const lossInput = document.getElementById("loss-review-minutes");
+  const coldFlag = document.getElementById("cold-start-flag");
+  if (autoInput) autoInput.value = scheduler.automation_minutes ?? 15;
+  if (lossInput) lossInput.value = scheduler.loss_review_minutes ?? 60;
+  if (coldFlag) coldFlag.checked = !!scheduler.cold_start;
+}
+
+async function saveAgentConfig() {
+  const hint = document.getElementById("agent-config-hint");
+  try {
+    if (hint) hint.textContent = "저장 중...";
+    const payload = gatherAgentConfigFromForm();
+    await postJSON("/admin/agent-config", payload);
+    if (hint) hint.textContent = "저장 완료";
+    await loadAdminConfig();
+  } catch (err) {
+    console.error(err);
+    if (hint) hint.textContent = "저장 실패";
+  }
+}
+
+async function saveScheduler() {
+  const hint = document.getElementById("scheduler-hint");
+  const autoInput = document.getElementById("automation-minutes");
+  const lossInput = document.getElementById("loss-review-minutes");
+  const coldFlag = document.getElementById("cold-start-flag");
+  try {
+    if (hint) hint.textContent = "저장 중...";
+    await postJSON("/admin/scheduler", {
+      automation_minutes: Number(autoInput.value),
+      loss_review_minutes: Number(lossInput.value),
+      cold_start: !!coldFlag.checked,
+    });
+    if (hint) hint.textContent = "저장 완료";
+    await loadAdminConfig();
+  } catch (err) {
+    console.error(err);
+    if (hint) hint.textContent = "저장 실패";
+  }
+}
+
 function renderBalance(data) {
   const b = data.balance || {};
   el("balance").innerHTML = `
@@ -972,6 +1187,27 @@ async function closeAll() {
 window.addEventListener("DOMContentLoaded", () => {
   ensureJournalModalDOM();
   setupJournalDetailHandler();
+  const loginForm = document.getElementById("login-form");
+  if (loginForm) {
+    loginForm.addEventListener("submit", handleLoginSubmit);
+  }
+  const logoutBtn = document.getElementById("logout-btn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      handleLogout();
+    });
+  }
+  const agentSaveBtn = document.getElementById("save-agent-config");
+  if (agentSaveBtn) {
+    agentSaveBtn.addEventListener("click", saveAgentConfig);
+  }
+  const schedulerSaveBtn = document.getElementById("save-scheduler");
+  if (schedulerSaveBtn) {
+    schedulerSaveBtn.addEventListener("click", saveScheduler);
+  }
+  updateAuthUI();
+  refreshSession();
   const balanceRefreshBtn = document.getElementById("balance-refresh");
   if (balanceRefreshBtn)
     balanceRefreshBtn.addEventListener("click", () => {

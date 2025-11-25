@@ -32,6 +32,74 @@
       </header>
 
       <main class="page-main layout-grid layout-grid--single">
+        <section class="card panel" id="auth-card">
+          <header class="panel-header">
+            <div>
+              <h2 class="panel-title">접속 상태</h2>
+              <p class="panel-subtitle">
+                로그인하면 관리자/사용자 전용 설정을 조정할 수 있습니다.
+              </p>
+            </div>
+            <div class="panel-actions">
+              <button class="btn btn--ghost" id="logout-btn" hidden>
+                로그아웃
+              </button>
+            </div>
+          </header>
+          <div class="panel-body auth-panel">
+            <form id="login-form">
+              <div class="input-field">
+                <label for="login-username">아이디</label>
+                <input id="login-username" required />
+              </div>
+              <div class="input-field">
+                <label for="login-password">비밀번호</label>
+                <input id="login-password" type="password" required />
+              </div>
+              <button class="btn" type="submit">로그인</button>
+              <span class="panel-actions__hint" id="auth-status"></span>
+            </form>
+          </div>
+        </section>
+
+        <section class="card panel" id="admin-settings" hidden>
+          <header class="panel-header">
+            <div>
+              <h2 class="panel-title">관리자 설정</h2>
+              <p class="panel-subtitle">
+                에이전트별 LLM 모델과 자동화 주기를 웹에서 바로 변경하세요.
+              </p>
+            </div>
+          </header>
+          <div class="panel-body">
+            <div class="admin-grid">
+              <div>
+                <h3 class="subtle-heading">LLM 에이전트 구성</h3>
+                <div id="agent-config"></div>
+                <button class="btn" id="save-agent-config">저장</button>
+                <span class="panel-actions__hint" id="agent-config-hint"></span>
+              </div>
+              <div>
+                <h3 class="subtle-heading">스케줄러</h3>
+                <div class="input-field">
+                  <label for="automation-minutes">자동매매 주기 (분)</label>
+                  <input id="automation-minutes" type="number" min="1" max="180" />
+                </div>
+                <div class="input-field">
+                  <label for="loss-review-minutes">손실 리뷰 주기 (분)</label>
+                  <input id="loss-review-minutes" type="number" min="1" max="720" />
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="cold-start-flag" />
+                  <span>앱 시작 시 즉시 실행(COLD_START)</span>
+                </label>
+                <button class="btn" id="save-scheduler">저장</button>
+                <span class="panel-actions__hint" id="scheduler-hint"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <div class="layout-column layout-column--primary">
           <section class="panel-grid panel-grid--balanced">
             <article class="card panel panel--stack" id="card-balance">

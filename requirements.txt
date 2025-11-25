@@ -68,3 +68,10 @@ pymysql==1.1.1
 Jinja2==3.1.4
 openpyxl==3.1.5
 mysqlclient
+langchain==1.0.0
+langchain-core==1.0.0
+langgraph==1.0.0
+langchain-openai==0.3.0
+langchain-google-genai==2.0.0
+langchain-anthropic==0.3.0
+passlib[bcrypt]==1.7.4

@@ -10,8 +10,11 @@ import math
 import os
 import time
 from dataclasses import dataclass, field
+from io import StringIO
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
+
+import pandas as pd
 
 from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
 from utils.price_utils import dataframe_to_candlestick_base64
@@ -25,9 +28,18 @@ from app.core.symbols import (
     to_ccxt_symbols,
 )
 from app.services.journal import JournalService
+from app.agents import TradingState
+from app.config import load_runtime_config
+from app.graph import TradingGraph, build_trading_graph
+from app.opro import PerformanceScorer
 
 
 LOGGER = logging.getLogger(__name__)
+
+USE_MULTI_AGENT = os.getenv("USE_MULTI_AGENT", "1").lower() not in {"0", "false", "no"}
+TRADING_GRAPH: Optional[TradingGraph] = None
+TRADING_GRAPH_CONFIG_HASH: Optional[str] = None
+PERFORMANCE_SCORER = PerformanceScorer()
 
 
 @dataclass(slots=True)
@@ -192,6 +204,116 @@ def _format_journal_dataframe(
         lines.append(line.strip())
 
     return "\n".join(lines)
+
+
+def _multi_agent_enabled() -> bool:
+    return USE_MULTI_AGENT
+
+
+def _ensure_trading_graph() -> TradingGraph:
+    global TRADING_GRAPH, TRADING_GRAPH_CONFIG_HASH
+    runtime = load_runtime_config()
+    agent_cfg = runtime.get("agents")
+    adaptive_cfg = runtime.get("adaptive_opro")
+    config_signature = json.dumps(
+        {"agents": agent_cfg, "adaptive": adaptive_cfg}, sort_keys=True, default=str
+    )
+    if TRADING_GRAPH is None or TRADING_GRAPH_CONFIG_HASH != config_signature:
+        TRADING_GRAPH = build_trading_graph(agent_cfg, adaptive_cfg)
+        TRADING_GRAPH_CONFIG_HASH = config_signature
+    return TRADING_GRAPH
+
+
+def _csv_to_df(csv_text: str) -> pd.DataFrame:
+    if not csv_text:
+        return pd.DataFrame(
+            columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+    try:
+        return pd.read_csv(
+            StringIO(csv_text), index_col=0, parse_dates=True, infer_datetime_format=True
+        )
+    except Exception:
+        return pd.DataFrame(
+            columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+
+
+def _performance_snapshot(store: TradeStore, symbol: str, window: int = 20) -> Dict[str, float]:
+    try:
+        trades = store.load_trades()
+    except Exception:
+        return {}
+    if trades is None or getattr(trades, "empty", True):
+        return {}
+
+    df = trades[trades["symbol"] == symbol]
+    df = df[df["pnl"].notna()].tail(window)
+    if df.empty:
+        return {}
+
+    summary = PERFORMANCE_SCORER.summarize({"pnl": float(v)} for v in df["pnl"].tolist())
+    return {
+        "roi": summary.roi,
+        "sharpe": summary.sharpe,
+        "max_drawdown": summary.max_drawdown,
+    }
+
+
+def _build_multi_agent_state(
+    deps: AutomationDependencies, ctx: PromptContext
+) -> TradingState:
+    timeframe_data = {
+        "4h": _csv_to_df(ctx.csv_4h),
+        "1h": _csv_to_df(ctx.csv_1h),
+        "15m": _csv_to_df(ctx.csv_15m),
+    }
+    context_blocks = {
+        "journal_today": ctx.journal_today_text,
+        "recent_reports": ctx.recent_reports_text,
+        "reviews": ctx.reviews_text,
+        "since_open": ctx.since_open_text,
+    }
+    return cast(
+        TradingState,
+        {
+            "symbol": deps.contract_symbol,
+            "spot_symbol": deps.spot_symbol,
+            "timeframe_data": timeframe_data,
+            "chart_images": ctx.chart_images,
+            "positions": ctx.current_positions,
+            "context_blocks": context_blocks,
+            "prompt_trace": [],
+            "performance_snapshot": _performance_snapshot(
+                deps.store, deps.contract_symbol
+            ),
+        },
+    )
+
+
+def _run_multi_agent_cycle(
+    deps: AutomationDependencies, ctx: PromptContext
+) -> Optional[Dict[str, Any]]:
+    try:
+        graph = _ensure_trading_graph()
+        state = _build_multi_agent_state(deps, ctx)
+        result_state = graph.run(state)
+    except Exception as exc:
+        LOGGER.warning("Multi-agent 워크플로우 실패: %s", exc)
+        return None
+
+    decision = result_state.get("decision")
+    if decision is None:
+        return None
+
+    decision_payload = (
+        decision.model_dump() if hasattr(decision, "model_dump") else dict(decision)
+    )
+    decision_payload.setdefault("Status", decision_payload.get("status"))
+    return {
+        "decision": decision_payload,
+        "state": result_state,
+    }
 
 
 def _compute_tp_sl_percentages(
@@ -2026,6 +2148,14 @@ def automation_for_symbol(
         try:
             deps = _init_dependencies(symbol_usdt, symbols)
             ctx = _gather_prompt_context(deps)
+            if _multi_agent_enabled():
+                ma_result = _run_multi_agent_cycle(deps, ctx)
+                if ma_result and ma_result.get("decision"):
+                    decision_payload = ma_result["decision"]
+                    if _handle_close_now(deps, ctx, decision_payload):
+                        return
+                    _execute_trade(deps, ctx, decision_payload)
+                    return
             prompt = _build_prompt(deps, ctx)
             decision = _request_trade_decision(deps, prompt, ctx)
             if _handle_close_now(deps, ctx, decision):

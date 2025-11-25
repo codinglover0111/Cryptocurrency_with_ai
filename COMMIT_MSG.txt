@@ -1,0 +1,27 @@
+feat: 멀티 에이전트 기반 거래 시스템 및 LangGraph 워크플로우 구현
+
+주요 변경사항:
+- 멀티 에이전트 아키텍처 구현 (Indicator, Pattern, Trend, Decision)
+- LangGraph 1.0 기반 거래 워크플로우 추가
+- Adaptive-OPRO 시스템 구현 (횡보장 대응 프롬프트 최적화)
+- 세션 기반 인증 시스템 추가 (admin/user 역할 분리)
+- 웹 UI 개선 (관리자 대시보드, 사용자 대시보드)
+- Bybit 거래 유틸리티 확장 (레버리지, 마진 모드, TP/SL 설정)
+- LLM 설정 관리 시스템 추가
+- 에이전트 아키텍처 문서 추가
+
+새로 추가된 모듈:
+- app/agents/: 멀티 에이전트 구현 (indicator, pattern, trend, decision)
+- app/graph/: LangGraph 워크플로우 (TradingGraph)
+- app/opro/: Adaptive-OPRO 시스템 (regime_detector, optimizer, scorer)
+- app/auth/: 세션 기반 인증 (middleware, service, routes)
+- app/web/: 웹 라우트 (admin, user)
+- app/config/: 기본 설정 관리
+
+수정된 파일:
+- app/workflows/trading.py: LangGraph 통합
+- utils/bybit_utils.py: 거래 기능 확장
+- webapp.py: API 엔드포인트 추가
+- static/, templates/: 웹 UI 개선
+- requirements.txt: 의존성 추가
+

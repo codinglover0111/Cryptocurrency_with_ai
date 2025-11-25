@@ -559,6 +559,31 @@ select:focus {
   margin-top: 12px;
 }
 
+.auth-panel form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.auth-panel .input-field {
+  flex: 1 1 200px;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+  color: var(--text-muted);
+}
+
 .pager-btn {
   padding: 4px 10px;
   border-radius: 6px;

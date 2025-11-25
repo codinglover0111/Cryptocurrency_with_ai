@@ -532,6 +532,12 @@ class BybitUtils:
     def set_leverage(
         self, symbol: str, leverage: float, margin_mode: str = "cross"
     ) -> Optional[Any]:
+        """레버리지 설정.
+
+        CCXT Bybit 문서 참조: https://docs.ccxt.com/#/exchanges/bybit
+        - margin_mode: "cross" 또는 "isolated"
+        - 이미 포지션이 있으면 레버리지 변경이 무시될 수 있음(110043)
+        """
         try:
             # ccxt 통합 API 우선 사용
             if hasattr(self.exchange, "set_leverage"):
@@ -549,6 +555,54 @@ class BybitUtils:
             print(f"Error setting leverage: {e}")
             return None
 
+    def set_margin_mode(
+        self, symbol: str, margin_mode: str = "cross"
+    ) -> Optional[Any]:
+        """마진 모드 설정 (cross/isolated).
+
+        CCXT Bybit 문서 참조: https://docs.ccxt.com/#/exchanges/bybit
+        - 포지션이 없을 때만 변경 가능
+        """
+        try:
+            if hasattr(self.exchange, "set_margin_mode"):
+                return self.exchange.set_margin_mode(
+                    margin_mode, symbol, self._default_params()
+                )
+            print("set_margin_mode not supported on this ccxt version")
+            return None
+        except Exception as e:
+            msg = str(e)
+            # 이미 설정된 경우 무시
+            if "110026" in msg or "margin mode is not modified" in msg.lower():
+                print(f"Margin mode unchanged for {symbol}; continuing")
+                return None
+            print(f"Error setting margin mode: {e}")
+            return None
+
+    def set_position_mode(self, hedged: bool = False) -> Optional[Any]:
+        """포지션 모드 설정 (One-way/Hedge).
+
+        CCXT Bybit 문서 참조: https://docs.ccxt.com/#/exchanges/bybit
+        - hedged=True: Hedge mode (Long/Short 별도 관리, positionIdx 필요)
+        - hedged=False: One-way mode (단일 포지션)
+        - 모든 포지션이 청산된 상태에서만 변경 가능
+        """
+        try:
+            if hasattr(self.exchange, "set_position_mode"):
+                return self.exchange.set_position_mode(
+                    hedged, symbol=None, params=self._default_params()
+                )
+            print("set_position_mode not supported on this ccxt version")
+            return None
+        except Exception as e:
+            msg = str(e)
+            # 이미 설정된 경우 무시
+            if "110025" in msg or "position mode is not modified" in msg.lower():
+                print("Position mode unchanged; continuing")
+                return None
+            print(f"Error setting position mode: {e}")
+            return None
+
     def update_symbol_tpsl(
         self,
         symbol: str,
@@ -557,7 +611,20 @@ class BybitUtils:
         stop_loss: Optional[float] = None,
         side: Optional[str] = None,
         position_idx: Optional[int] = None,
+        tpsl_mode: str = "Full",
     ) -> Dict[str, Any]:
+        """기존 포지션의 TP/SL 업데이트.
+
+        CCXT Bybit 문서 참조: https://docs.ccxt.com/#/exchanges/bybit
+
+        Args:
+            symbol: 거래 심볼 (예: "BTC/USDT:USDT")
+            take_profit: 익절 가격
+            stop_loss: 손절 가격
+            side: 포지션 방향 ("long"/"short"), Hedge mode에서 positionIdx 결정에 사용
+            position_idx: Hedge mode용 포지션 인덱스 (1=Long, 2=Short)
+            tpsl_mode: "Full" (전체 포지션) 또는 "Partial" (일부 포지션)
+        """
         if take_profit is None and stop_loss is None:
             return {"status": "noop"}
 
@@ -575,6 +642,9 @@ class BybitUtils:
         params: Dict[str, Any] = {}
         if idx is not None:
             params["positionIdx"] = idx
+        # tpslMode: "Full" = 전체 포지션에 적용, "Partial" = 일부에만 적용
+        if tpsl_mode in {"Full", "Partial"}:
+            params["tpslMode"] = tpsl_mode
 
         category = self._detect_category(symbol)
         params.setdefault("category", category)
