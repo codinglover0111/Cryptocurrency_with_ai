@@ -1,98 +1,120 @@
-## 안내
+# QuantAgent - 멀티 에이전트 암호화폐 트레이딩 시스템
 
-- **이 프로젝트는 절대적인 수익을 보장하지 않습니다.** 모든 투자 의사결정은 본인의 책임입니다.
-- 자동매매를 실행하기 전에 백테스트와 종합적인 리스크 검토를 반드시 수행하세요.
+> **경고**: 본 프로젝트는 교육/연구용 레퍼런스입니다. 실거래 손익은 보장되지 않습니다. 자동 매매를 실행하기 전에 백테스트와 리스크 검토를 반드시 수행하세요.
 
-## 프로젝트 구조
+## 핵심 기술
 
-```
-app/
-  core/          # 공용 유틸리티(심볼 파싱 등)
-  services/      # 데이터 수집·저널 등 도메인 서비스
-  workflows/     # 트레이딩 자동화 파이프라인
-main.py          # 스케줄러 진입점
-webapp.py        # FastAPI 기반 웹 UI
-utils/           # 거래소/AI/저장소 등 기존 래퍼 모듈
-```
+- LangChain 1.0 + LangGraph 1.0: 멀티 에이전트 그래프 오케스트레이션
+- Adaptive-OPRO: 실적 기반 프롬프트 최적화 루프
+- FastAPI + APScheduler: API 및 스케줄러
+- CCXT (Bybit): 선물/스팟 데이터와 주문 처리
+- Vision LLM 지원: 패턴/추세 에이전트에서 캔들 이미지 분석
 
-- `app/workflows/trading.py`는 한 사이클의 자동매매 흐름을 담당합니다.
-  - 시장 컨텍스트 수집 → 프롬프트 구성 → AI 결정 파싱 → 주문 실행 → 결과 기록까지 단계별 함수로 나뉘어 있습니다.
-  - 확인(Confirm) 단계가 별도 함수로 분리되어 있어, LLM이 제시한 TP/SL/가격을 재검증하고 필요 시 스킵하도록 했습니다.
-- `app/services/journal.py`는 거래 리뷰와 저널 포맷팅 등을 담당합니다.
-- `main.py`는 로깅 설정과 작업 스케줄링만을 책임지며, 나머지 로직은 `app` 패키지로 이동했습니다.
-
-## 실행 방법
-
-1. `.env`에 필요한 API 키와 환경변수를 설정합니다. (예시는 `env.example` 또는 아래 환경변수 설명 참고)
-2. Docker 환경에서 실행할 경우:
-
-   ```bash
-   touch trading.log
-   docker run -d \
-     --name trading-bot \
-     --restart unless-stopped \
-     -v "$(pwd)/.env:/app/.env" \
-     -v "$(pwd)/trading.log:/app/trading.log" \
-     trading-bot
-   ```
-
-3. 로컬에서 직접 실행할 경우:
-
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   python3 main.py
-   ```
-
-4. Docker Compose로 앱 + MySQL + 웹 UI를 묶어 실행할 수 있습니다.
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-## 주요 환경변수
+## 프로젝트 구조 (요약)
 
 ```text
-TESTNET=1
-TRADING_SYMBOLS=XRPUSDT,WLDUSDT,ETHUSDT,BTCUSDT,SOLUSDT,DOGEUSDT
+app/
+├─ agents/        # Indicator, Pattern, Trend, Decision 에이전트
+├─ auth/          # 세션 기반 인증/권한
+├─ config/        # LLM/스케줄러/OPRO 기본 설정
+├─ core/          # 공통 심볼/포맷 유틸
+├─ graph/         # LangGraph 워크플로 정의
+├─ opro/          # Adaptive-OPRO 모듈
+├─ services/      # 마켓/저널 서비스
+├─ web/           # FastAPI 라우터 (admin/user)
+└─ workflows/     # 트레이딩 자동화 워크플로
+docs/            # 설계 문서
+static/          # JS/CSS 에셋
+templates/       # Jinja2 템플릿
+utils/           # 거래/AI 헬퍼 모듈
+```
+
+- 각 폴더에 `agents.md`를 두어 책임과 유지보수 포인트를 기록했습니다.
+
+## 빠른 시작
+
+### 1) 환경 변수
+
+- 루트에 `.env`를 생성하고 필요한 키를 채웁니다 (`.env.sample` 참고).
+
+```bash
+BYBIT_API_KEY=...
+BYBIT_API_SECRET=...
+BYBIT_ENV=demo               # demo | testnet | mainnet
+
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...
+OPENROUTER_API_KEY=...
+
+TRADING_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT
 MAX_ALLOC_PERCENT=20
 DEFAULT_LEVERAGE=5
 MAX_LOSS_PERCENT=80
-AVAILABLE_NOTIONAL_SAFETY=0.95
 
-# AI (Gemini 기본 / OpenAI 호환 선택)
-AI_PROVIDER=gemini
-GEMINI_API_KEY=...
-OPENAI_BASE_URL=...
-OPENAI_API_KEY=...
-OPENAI_MODEL=...
-
-# 데이터 저장소 (MySQL 또는 SQLite 폴백)
-MYSQL_URL=mysql+pymysql://bot:botpass@db:3306/cryptobot
 SQLITE_PATH=data/trading.sqlite
+# MYSQL_URL=mysql+pymysql://user:pass@host:3306/db
+
+WEB_SESSION_SECRET=change-me
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123
 ```
 
-## 스케줄러 동작
+- 단일 LLM 워크플로우는 더 이상 제공하지 않으며 멀티 에이전트 그래프만 실행됩니다.
 
-- `main.py`는 `schedule` 패키지를 사용하여 5분 주기로 다음 작업을 수행합니다.
-  1. `automation_for_symbol`을 심볼 리스트 순회 호출
-  2. `run_loss_review`로 최근 손실 포지션 리뷰 생성
-- 각 사이클의 디버그 정보와 예외는 `trading.log`에 기록되며, FastAPI UI에서도 실시간 모니터링이 가능합니다.
+### 2) 로컬 실행
 
-## 웹 UI (FastAPI)
+```bash
+python -m venv .venv
+.venv\Scripts\activate      # Windows
+pip install -r requirements.txt
+python main.py
+```
 
-- 루트(`GET /`)와 각종 JSON API(`/health`, `/status`, `/leverage`, `/stats`, `/stats_range`, `/close_all`, `/symbols`)를 제공합니다.
-- 정적 파일은 `static/`, 템플릿은 `templates/`에 위치합니다.
-- `parse_trading_symbols()`를 사용해 서버와 자동매매가 동일한 심볼 구성을 공유합니다.
-- UI에서는 심볼 정보·계정 개요·통계·저널 기록을 확인할 수 있습니다.
+### 3) Docker
 
-## 참고 문서
+```bash
+docker compose up -d --build
+```
 
-- `docs/architecture.md`: 최신 모듈 구조와 데이터 흐름을 정리한 문서입니다.
-- `utils/` 디렉터리의 모듈은 기존 레거시 기능을 보존하기 위해 유지되며, 새로운 서비스 계층에서 랩핑하여 사용합니다.
+## 멀티 에이전트 파이프라인
 
-## 다음 단계 제안
+```text
+Indicator Agent -> Pattern Agent -> Trend Agent -> Decision Agent
+                     |                |
+                     +-----+----------+
+                           v
+                    Adaptive-OPRO Loop
+```
 
-1. 스테이징 환경에서 `.env`를 구성한 뒤, `python3 main.py`로 한 사이클 이상 실행해 로그와 DB 기록을 확인하세요.
-2. `docs/architecture.md`를 참고하여 추가 모듈 분리 또는 테스트 코드 도입 계획을 수립하세요.
+- **Indicator**: RSI, MACD, Bollinger 등 기술 지표 요약 (LLM: 텍스트)
+- **Pattern**: 캔들 차트 패턴/강도 분석, 비전 모델 필요
+- **Trend**: 추세/지지·저항 추정, 비전 모델 필요
+- **Decision**: LONG/SHORT/HOLD/STOP 판단, 포지션 크기·TP/SL 산출
+
+## 웹 UI / API
+
+- 기본 주소: `http://localhost:8000`
+- 관리자: 에이전트 모델/파라미터, 스케줄러 주기 설정, OPRO 상태 확인
+- 사용자: 계정/세션, 현재 전략 상태 조회
+- 주요 엔드포인트
+  - `POST /auth/login`, `GET /auth/me`
+  - `GET|POST /admin/agent-config`, `GET|POST /admin/scheduler`
+  - `GET /user/settings`
+
+## 문서
+
+- `docs/agents.md`: 멀티 에이전트 아키텍처 상세
+- `docs/architecture.md`: 전체 시스템 구조
+- 각 폴더의 `agents.md`: 폴더별 책임/파일 가이드
+
+## 개발 규칙
+
+1. 기능 추가 시 `docs/agents.md`와 관련 `agents.md`를 먼저 업데이트합니다.
+2. LLM/스케줄러 변경 시 `app/config/default_config.py`와 관리자 UI가 같은 값을 읽도록 맞춥니다.
+3. LangChain 1.0의 구조화 출력(`with_structured_output`)을 사용해 파싱 로직을 단순화합니다.
+4. FastAPI 라우터는 역할 기반 접근 제어를 유지합니다.
+5. Bybit 호출은 CCXT 래퍼를 우선 사용하고, 직접 호출 시 응답 코드를 체크합니다.
+
+## 면책
+
+이 저장소는 교육/연구용 레퍼런스입니다. 자동 매매나 실거래 적용 전 백테스트와 리스크 검토를 반드시 수행하고, 모든 손익 책임은 사용자에게 있습니다.

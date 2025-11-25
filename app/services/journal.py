@@ -6,15 +6,17 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from typing import Optional
 
 import pandas as pd
+from langchain_core.language_models import BaseChatModel
 
-from utils.ai_provider import AIProvider
 from utils.storage import TradeStore
 
 from app.core.symbols import contract_to_spot_symbol
+from app.graph.llm_factory import create_llm, LLMConfigurationError
 from app.services.market_data import ohlcv_csv_between
 
 
@@ -30,14 +32,16 @@ class JournalService:
     """Encapsulates journal and review operations on top of TradeStore."""
 
     store: TradeStore
-    ai_provider: Optional[AIProvider] = None
+    _llm: Optional[BaseChatModel] = field(default=None, repr=False)
 
-    def _ensure_ai_provider(self) -> AIProvider:
-        """Return a cached AI provider instance, creating one if needed."""
+    def _ensure_llm(self) -> BaseChatModel:
+        """Return a cached LLM instance, creating one if needed."""
 
-        if self.ai_provider is None:
-            self.ai_provider = AIProvider()
-        return self.ai_provider
+        if self._llm is None:
+            provider = os.getenv("AI_PROVIDER", "gemini").lower()
+            model = os.getenv("AI_MODEL", "gemini-2.0-flash")
+            self._llm = create_llm(provider=provider, model=model, temperature=0.1)
+        return self._llm
 
     def _collect_entry_notes(
         self,
@@ -436,7 +440,11 @@ class JournalService:
 
             recent_reviews = self._load_recent_review_keys()
 
-            ai_provider = self._ensure_ai_provider()
+            try:
+                llm = self._ensure_llm()
+            except LLMConfigurationError as exc:
+                LOGGER.warning("LLM 설정 오류로 리뷰 생략: %s", exc)
+                return
 
             for _, row in closed_recent.sort_values("ts").iterrows():
                 try:
@@ -507,7 +515,12 @@ class JournalService:
                     )
 
                     try:
-                        review_text = ai_provider.decide(prompt)
+                        response = llm.invoke(prompt)
+                        review_text = (
+                            response.content
+                            if hasattr(response, "content")
+                            else str(response)
+                        )
                     except Exception as exc:
                         LOGGER.error("Trade review LLM failed: %s", exc)
                         review_text = None

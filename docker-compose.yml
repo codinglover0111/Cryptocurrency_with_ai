@@ -1,6 +1,8 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
     user: "1000:1000"
     container_name: crypto_bot
     env_file:
@@ -17,7 +19,9 @@ services:
     command: ["python", "main.py"]
 
   web:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.web
     user: "1000:1000"
     container_name: crypto_web
     depends_on:

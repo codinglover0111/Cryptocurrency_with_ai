@@ -6,6 +6,7 @@
     <title>Crypto Bot Dashboard</title>
     <link rel="stylesheet" href="/static/dashboard.css" />
     <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/theme.js"></script>
     <script defer src="/static/app.js"></script>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -27,6 +28,11 @@
           </p>
         </div>
         <div class="page-meta">
+          <button class="theme-toggle" onclick="toggleTheme()" aria-label="테마 변경">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+          </button>
           <span class="chip chip--accent">조회 전용</span>
         </div>
       </header>

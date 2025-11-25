@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Panel - Crypto Bot</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/admin.css" />
+    <script src="/static/theme.js"></script>
+    <script defer src="/static/admin.js"></script>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; connect-src 'self'"
+    />
+  </head>
+  <body class="admin-body">
+    <div class="admin-shell">
+      <aside class="admin-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-logo">
+            <span class="logo-icon">⚡</span>
+            <span class="logo-text">CryptoBot</span>
+          </div>
+          <span class="sidebar-badge">Admin</span>
+        </div>
+        <nav class="sidebar-nav">
+          <a href="#dashboard" class="nav-item active" data-section="dashboard">
+            <span class="nav-icon">📊</span>
+            <span class="nav-label">대시보드</span>
+          </a>
+          <a href="#agents" class="nav-item" data-section="agents">
+            <span class="nav-icon">🤖</span>
+            <span class="nav-label">에이전트 설정</span>
+          </a>
+          <a href="#scheduler" class="nav-item" data-section="scheduler">
+            <span class="nav-icon">⏰</span>
+            <span class="nav-label">스케줄러</span>
+          </a>
+          <a href="#apikeys" class="nav-item" data-section="apikeys">
+            <span class="nav-icon">🔑</span>
+            <span class="nav-label">API 키</span>
+          </a>
+          <a href="#system" class="nav-item" data-section="system">
+            <span class="nav-icon">🔧</span>
+            <span class="nav-label">시스템</span>
+          </a>
+        </nav>
+        <div class="sidebar-footer">
+          <a href="/" class="nav-item nav-item--back">
+            <span class="nav-icon">←</span>
+            <span class="nav-label">대시보드로 돌아가기</span>
+          </a>
+          <button class="nav-item" id="admin-logout-btn">
+            <span class="nav-icon">🚪</span>
+            <span class="nav-label">로그아웃</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="admin-main">
+        <header class="admin-header">
+          <div class="header-left">
+            <h1 class="header-title" id="page-title">대시보드</h1>
+            <p class="header-subtitle" id="page-subtitle">
+              시스템 상태를 한눈에 확인하세요
+            </p>
+          </div>
+          <div class="header-right">
+            <button
+              class="theme-toggle"
+              onclick="toggleTheme()"
+              aria-label="테마 변경"
+              style="margin-right: 16px"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                ></path>
+              </svg>
+            </button>
+            <div class="user-info" id="admin-user-info">
+              <span class="user-avatar">👤</span>
+              <span class="user-name">로그인 필요</span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Auth Section (shown when not logged in) -->
+        <section class="admin-section" id="auth-section">
+          <div class="auth-card">
+            <div class="auth-header">
+              <h2>관리자 로그인</h2>
+              <p>관리자 계정으로 로그인하여 설정을 변경하세요</p>
+            </div>
+            <form id="admin-login-form" class="auth-form">
+              <div class="form-group">
+                <label for="admin-username">아이디</label>
+                <input
+                  type="text"
+                  id="admin-username"
+                  required
+                  placeholder="관리자 아이디"
+                />
+              </div>
+              <div class="form-group">
+                <label for="admin-password">비밀번호</label>
+                <input
+                  type="password"
+                  id="admin-password"
+                  required
+                  placeholder="비밀번호"
+                />
+              </div>
+              <button type="submit" class="btn btn--primary btn--full">
+                로그인
+              </button>
+              <p class="auth-status" id="admin-auth-status"></p>
+            </form>
+          </div>
+        </section>
+
+        <!-- Dashboard Section -->
+        <section class="admin-section" id="section-dashboard" hidden>
+          <div class="dashboard-grid">
+            <article class="stat-card stat-card--primary">
+              <div class="stat-icon">💰</div>
+              <div class="stat-content">
+                <span class="stat-label">총 잔고</span>
+                <span class="stat-value" id="stat-balance">-</span>
+              </div>
+            </article>
+            <article class="stat-card stat-card--success">
+              <div class="stat-icon">📈</div>
+              <div class="stat-content">
+                <span class="stat-label">오늘 수익</span>
+                <span class="stat-value" id="stat-profit">-</span>
+              </div>
+            </article>
+            <article class="stat-card stat-card--warning">
+              <div class="stat-icon">🔄</div>
+              <div class="stat-content">
+                <span class="stat-label">오늘 거래</span>
+                <span class="stat-value" id="stat-trades">-</span>
+              </div>
+            </article>
+            <article class="stat-card stat-card--info">
+              <div class="stat-icon">📊</div>
+              <div class="stat-content">
+                <span class="stat-label">승률</span>
+                <span class="stat-value" id="stat-winrate">-</span>
+              </div>
+            </article>
+          </div>
+
+          <div class="panel-row">
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">활성 포지션</h3>
+                <button class="btn btn--ghost btn--sm" id="refresh-positions">
+                  새로고침
+                </button>
+              </header>
+              <div class="panel-body">
+                <div class="table-wrapper" id="admin-positions">
+                  <p class="muted">로딩 중...</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">최근 활동</h3>
+              </header>
+              <div class="panel-body">
+                <div class="activity-list" id="recent-activity">
+                  <p class="muted">로딩 중...</p>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Agents Section -->
+        <section class="admin-section" id="section-agents" hidden>
+          <div class="config-grid">
+            <article class="config-card" data-agent="indicator_agent">
+              <div class="config-header">
+                <div class="config-icon">📉</div>
+                <div class="config-title">
+                  <h3>Indicator Agent</h3>
+                  <p>기술적 지표 분석</p>
+                </div>
+              </div>
+              <div class="config-body">
+                <div class="form-group">
+                  <label>Provider</label>
+                  <select data-field="provider" class="agent-provider">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Model</label>
+                  <input type="text" data-field="model" placeholder="모델 ID" />
+                </div>
+                <div class="form-group">
+                  <label>Temperature</label>
+                  <input
+                    type="number"
+                    data-field="temperature"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value="0.1"
+                  />
+                </div>
+              </div>
+            </article>
+
+            <article class="config-card" data-agent="pattern_agent">
+              <div class="config-header">
+                <div class="config-icon">🔍</div>
+                <div class="config-title">
+                  <h3>Pattern Agent</h3>
+                  <p>차트 패턴 인식</p>
+                </div>
+              </div>
+              <div class="config-body">
+                <div class="form-group">
+                  <label>Provider</label>
+                  <select data-field="provider" class="agent-provider">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Model</label>
+                  <input type="text" data-field="model" placeholder="모델 ID" />
+                </div>
+                <div class="form-group">
+                  <label>Temperature</label>
+                  <input
+                    type="number"
+                    data-field="temperature"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value="0.1"
+                  />
+                </div>
+              </div>
+            </article>
+
+            <article class="config-card" data-agent="trend_agent">
+              <div class="config-header">
+                <div class="config-icon">📈</div>
+                <div class="config-title">
+                  <h3>Trend Agent</h3>
+                  <p>추세 분석 및 예측</p>
+                </div>
+              </div>
+              <div class="config-body">
+                <div class="form-group">
+                  <label>Provider</label>
+                  <select data-field="provider" class="agent-provider">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Model</label>
+                  <input type="text" data-field="model" placeholder="모델 ID" />
+                </div>
+                <div class="form-group">
+                  <label>Temperature</label>
+                  <input
+                    type="number"
+                    data-field="temperature"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value="0.1"
+                  />
+                </div>
+              </div>
+            </article>
+
+            <article class="config-card" data-agent="decision_agent">
+              <div class="config-header">
+                <div class="config-icon">🎯</div>
+                <div class="config-title">
+                  <h3>Decision Agent</h3>
+                  <p>최종 매매 결정</p>
+                </div>
+              </div>
+              <div class="config-body">
+                <div class="form-group">
+                  <label>Provider</label>
+                  <select data-field="provider" class="agent-provider">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Model</label>
+                  <input type="text" data-field="model" placeholder="모델 ID" />
+                </div>
+                <div class="form-group">
+                  <label>Temperature</label>
+                  <input
+                    type="number"
+                    data-field="temperature"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value="0.1"
+                  />
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn--ghost" id="reset-agent-config">
+              초기화
+            </button>
+            <button class="btn btn--primary" id="save-agent-config">
+              설정 저장
+            </button>
+            <span class="config-hint" id="agent-config-hint"></span>
+          </div>
+        </section>
+
+        <!-- Scheduler Section -->
+        <section class="admin-section" id="section-scheduler" hidden>
+          <div class="scheduler-grid">
+            <article class="admin-panel scheduler-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">자동매매 스케줄</h3>
+              </header>
+              <div class="panel-body">
+                <div class="form-group">
+                  <label for="automation-minutes">자동매매 주기 (분)</label>
+                  <div class="input-with-unit">
+                    <input
+                      type="number"
+                      id="automation-minutes"
+                      min="1"
+                      max="180"
+                      value="15"
+                    />
+                    <span class="input-unit">분</span>
+                  </div>
+                  <p class="form-hint">1분 ~ 180분 사이로 설정하세요</p>
+                </div>
+                <div class="form-group">
+                  <label for="loss-review-minutes">손실 리뷰 주기 (분)</label>
+                  <div class="input-with-unit">
+                    <input
+                      type="number"
+                      id="loss-review-minutes"
+                      min="1"
+                      max="720"
+                      value="60"
+                    />
+                    <span class="input-unit">분</span>
+                  </div>
+                  <p class="form-hint">손실 발생 시 AI 리뷰 생성 주기</p>
+                </div>
+                <div class="form-group">
+                  <label class="toggle-label">
+                    <input type="checkbox" id="cold-start-flag" />
+                    <span class="toggle-switch"></span>
+                    <span class="toggle-text"
+                      >앱 시작 시 즉시 실행 (COLD_START)</span
+                    >
+                  </label>
+                </div>
+              </div>
+            </article>
+
+            <article class="admin-panel scheduler-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">스케줄 상태</h3>
+              </header>
+              <div class="panel-body">
+                <div class="schedule-status">
+                  <div class="status-item">
+                    <span class="status-label">자동매매</span>
+                    <span
+                      class="status-badge status-badge--active"
+                      id="automation-status"
+                      >활성</span
+                    >
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">다음 실행</span>
+                    <span class="status-value" id="next-run">-</span>
+                  </div>
+                  <div class="status-item">
+                    <span class="status-label">마지막 실행</span>
+                    <span class="status-value" id="last-run">-</span>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn--ghost" id="reset-scheduler">초기화</button>
+            <button class="btn btn--primary" id="save-scheduler">
+              설정 저장
+            </button>
+            <span class="config-hint" id="scheduler-hint"></span>
+          </div>
+        </section>
+
+        <!-- API Keys Section -->
+        <section class="admin-section" id="section-apikeys" hidden>
+          <div class="apikeys-grid">
+            <!-- Bybit API Keys -->
+            <article class="admin-panel apikey-panel">
+              <header class="panel-header">
+                <div class="panel-title-group">
+                  <span class="provider-icon">📊</span>
+                  <h3 class="panel-title">Bybit</h3>
+                </div>
+                <span class="status-badge" id="bybit-status">미설정</span>
+              </header>
+              <div class="panel-body">
+                <div class="env-tabs">
+                  <button class="env-tab active" data-env="demo">Demo</button>
+                  <button class="env-tab" data-env="testnet">Testnet</button>
+                  <button class="env-tab" data-env="mainnet">Mainnet</button>
+                </div>
+                <div class="api-key-forms" data-provider="bybit">
+                  <div class="form-group">
+                    <label>API Key</label>
+                    <div class="input-with-action">
+                      <input
+                        type="password"
+                        data-field="api_key"
+                        placeholder="Bybit API Key"
+                        autocomplete="off"
+                      />
+                      <button
+                        class="btn btn--ghost btn--sm toggle-visibility"
+                        type="button"
+                      >
+                        👁
+                      </button>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>API Secret</label>
+                    <div class="input-with-action">
+                      <input
+                        type="password"
+                        data-field="api_secret"
+                        placeholder="Bybit API Secret"
+                        autocomplete="off"
+                      />
+                      <button
+                        class="btn btn--ghost btn--sm toggle-visibility"
+                        type="button"
+                      >
+                        👁
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <!-- LLM API Keys -->
+            <article class="admin-panel apikey-panel">
+              <header class="panel-header">
+                <div class="panel-title-group">
+                  <span class="provider-icon">🤖</span>
+                  <h3 class="panel-title">LLM Providers</h3>
+                </div>
+              </header>
+              <div class="panel-body">
+                <div class="llm-providers">
+                  <!-- OpenAI -->
+                  <div class="llm-provider-row" data-provider="openai">
+                    <div class="provider-header">
+                      <span class="provider-name">OpenAI</span>
+                      <span
+                        class="status-badge status-badge--inactive"
+                        id="openai-status"
+                        >미설정</span
+                      >
+                    </div>
+                    <div class="form-group">
+                      <div class="input-with-action">
+                        <input
+                          type="password"
+                          data-field="api_key"
+                          placeholder="sk-..."
+                          autocomplete="off"
+                        />
+                        <button
+                          class="btn btn--ghost btn--sm toggle-visibility"
+                          type="button"
+                        >
+                          👁
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Gemini -->
+                  <div class="llm-provider-row" data-provider="gemini">
+                    <div class="provider-header">
+                      <span class="provider-name">Gemini</span>
+                      <span
+                        class="status-badge status-badge--inactive"
+                        id="gemini-status"
+                        >미설정</span
+                      >
+                    </div>
+                    <div class="form-group">
+                      <div class="input-with-action">
+                        <input
+                          type="password"
+                          data-field="api_key"
+                          placeholder="AI..."
+                          autocomplete="off"
+                        />
+                        <button
+                          class="btn btn--ghost btn--sm toggle-visibility"
+                          type="button"
+                        >
+                          👁
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- OpenRouter -->
+                  <div class="llm-provider-row" data-provider="openrouter">
+                    <div class="provider-header">
+                      <span class="provider-name">OpenRouter</span>
+                      <span
+                        class="status-badge status-badge--inactive"
+                        id="openrouter-status"
+                        >미설정</span
+                      >
+                    </div>
+                    <div class="form-group">
+                      <div class="input-with-action">
+                        <input
+                          type="password"
+                          data-field="api_key"
+                          placeholder="sk-or-..."
+                          autocomplete="off"
+                        />
+                        <button
+                          class="btn btn--ghost btn--sm toggle-visibility"
+                          type="button"
+                        >
+                          👁
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Anthropic -->
+                  <div class="llm-provider-row" data-provider="anthropic">
+                    <div class="provider-header">
+                      <span class="provider-name">Anthropic</span>
+                      <span
+                        class="status-badge status-badge--inactive"
+                        id="anthropic-status"
+                        >미설정</span
+                      >
+                    </div>
+                    <div class="form-group">
+                      <div class="input-with-action">
+                        <input
+                          type="password"
+                          data-field="api_key"
+                          placeholder="sk-ant-..."
+                          autocomplete="off"
+                        />
+                        <button
+                          class="btn btn--ghost btn--sm toggle-visibility"
+                          type="button"
+                        >
+                          👁
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn--ghost" id="refresh-apikeys">
+              새로고침
+            </button>
+            <button class="btn btn--primary" id="save-apikeys">
+              API 키 저장
+            </button>
+            <span class="config-hint" id="apikeys-hint"></span>
+          </div>
+
+          <div class="apikeys-info">
+            <h4>🔒 보안 안내</h4>
+            <ul>
+              <li>API 키는 암호화되어 데이터베이스에 저장됩니다.</li>
+              <li>
+                저장된 키는 마스킹되어 표시되며, 전체 값은 확인할 수 없습니다.
+              </li>
+              <li>
+                환경변수에 설정된 키가 있으면 DB에 저장된 키가 우선합니다.
+              </li>
+              <li>Mainnet API 키는 실제 자금과 연결되므로 주의하세요.</li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- System Section -->
+        <section class="admin-section" id="section-system" hidden>
+          <div class="system-grid">
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">시스템 정보</h3>
+              </header>
+              <div class="panel-body">
+                <div class="info-list">
+                  <div class="info-item">
+                    <span class="info-label">서버 상태</span>
+                    <span
+                      class="status-badge status-badge--active"
+                      id="server-status"
+                      >정상</span
+                    >
+                  </div>
+                  <div class="info-item">
+                    <span class="info-label">테스트넷</span>
+                    <span class="info-value" id="testnet-status">-</span>
+                  </div>
+                  <div class="info-item">
+                    <span class="info-label">API 연결</span>
+                    <span
+                      class="status-badge status-badge--active"
+                      id="api-status"
+                      >연결됨</span
+                    >
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">사용 가능한 모델</h3>
+              </header>
+              <div class="panel-body">
+                <div class="model-list" id="available-models">
+                  <p class="muted">로딩 중...</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="admin-panel panel--full">
+              <header class="panel-header">
+                <h3 class="panel-title">긴급 조치</h3>
+              </header>
+              <div class="panel-body">
+                <div class="action-buttons">
+                  <button class="btn btn--danger" id="close-all-positions">
+                    <span>🚨</span> 전체 포지션 청산
+                  </button>
+                  <button class="btn btn--warning" id="sync-stats">
+                    <span>🔄</span> 통계 동기화
+                  </button>
+                </div>
+                <p class="action-warning">
+                  ⚠️ 긴급 조치는 되돌릴 수 없습니다. 신중하게 사용하세요.
+                </p>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

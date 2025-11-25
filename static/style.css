@@ -1,9 +1,10 @@
-/* 추가 스타일 필요 시 확장 */
+/* Shared Components & Utilities */
 
 [hidden] {
   display: none !important;
 }
 
+/* Checkbox Customization */
 input[type="checkbox"] {
   appearance: none;
   width: 18px;
@@ -14,8 +15,7 @@ input[type="checkbox"] {
   display: inline-grid;
   place-content: center;
   cursor: pointer;
-  transition: border-color 0.18s ease, background-color 0.18s ease,
-    box-shadow 0.18s ease;
+  transition: all 0.2s ease;
 }
 
 input[type="checkbox"]::after {
@@ -41,30 +41,46 @@ input[type="checkbox"]:checked::after {
 }
 
 input[type="checkbox"]:focus-visible {
-  outline: 2px solid rgba(56, 189, 248, 0.45);
+  outline: 2px solid var(--accent, #38bdf8);
   outline-offset: 2px;
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* Modal Styles */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
   z-index: 1000;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+}
+
+.modal-backdrop.active {
+  opacity: 1;
+  visibility: visible;
 }
 
 .modal {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 12px;
+  background: var(--bg-alt, #111827);
+  border: 1px solid var(--border, #1f2937);
+  border-radius: var(--radius-lg, 16px);
   width: min(720px, 92vw);
-  max-height: 80vh;
+  max-height: 85vh;
   overflow: auto;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg, 0 20px 50px rgba(0, 0, 0, 0.5));
+  transform: scale(0.95);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-backdrop.active .modal {
+  transform: scale(1);
 }
 
 .modal-header {
@@ -72,32 +88,40 @@ input[type="checkbox"]:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #1f2937;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border, #1f2937);
   font-weight: 700;
+  background: var(--surface, rgba(17, 24, 39, 0.95));
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .modal-body {
-  padding: 16px;
-  color: #e5e7eb;
+  padding: 24px;
+  color: var(--text, #e5e7eb);
 }
 
 .modal-body pre {
-  margin: 8px 0 0;
-  padding: 12px;
-  background: #0b1220;
-  border: 1px solid #1f2937;
-  border-radius: 8px;
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--bg, #050a18);
+  border: 1px solid var(--border, #1f2937);
+  border-radius: var(--radius-md, 8px);
   white-space: pre-wrap;
   overflow-x: auto;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
+/* Markdown Content in Modals */
 .markdown-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  line-height: 1.6;
-  font-size: 14px;
+  gap: 12px;
+  line-height: 1.7;
+  font-size: 15px;
   word-break: break-word;
 }
 
@@ -107,10 +131,10 @@ input[type="checkbox"]:focus-visible {
 
 .modal-body .markdown-body ul {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 24px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .modal-body .markdown-body li {
@@ -119,47 +143,22 @@ input[type="checkbox"]:focus-visible {
 
 .modal-body .markdown-body blockquote {
   margin: 0;
-  padding-left: 12px;
-  border-left: 3px solid rgba(148, 163, 184, 0.35);
-  color: rgba(226, 232, 240, 0.92);
+  padding-left: 16px;
+  border-left: 4px solid var(--border-strong, rgba(148, 163, 184, 0.35));
+  color: var(--text-muted, rgba(226, 232, 240, 0.7));
+  font-style: italic;
 }
 
 .modal-body .markdown-body code {
-  background: rgba(148, 163, 184, 0.12);
-  padding: 0 4px;
+  background: var(--surface-emphasis, rgba(148, 163, 184, 0.1));
+  padding: 2px 6px;
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, SFMono-Regular, "Menlo", Consolas,
     "Liberation Mono", "Courier New", monospace;
-  font-size: 0.95em;
+  font-size: 0.9em;
+  color: var(--accent, #38bdf8);
 }
 
-@media (prefers-color-scheme: light) {
-  .modal {
-    background: #ffffff;
-    border-color: #e2e8f0;
-    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
-  }
-
-  .modal-header {
-    border-bottom-color: #e2e8f0;
-  }
-
-  .modal-body {
-    color: #1e293b;
-  }
-
-  .modal-body pre {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-  }
-
-  .modal-body .markdown-body blockquote {
-    border-left-color: rgba(100, 116, 139, 0.35);
-    color: #475569;
-  }
-
-  .modal-body .markdown-body code {
-    background: rgba(148, 163, 184, 0.2);
-    color: #1e293b;
-  }
-}
+/* Theme Specific Overrides for Modals handled via variables */
+/* The variables --bg-alt, --border, --text etc. are defined in dashboard.css 
+   and will update automatically when data-theme changes */

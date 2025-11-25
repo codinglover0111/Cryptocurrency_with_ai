@@ -1,18 +1,18 @@
 # Architecture Overview
 
-`Cryptocurrency_with_ai`는 5분 주기로 데이터를 수집하고 LLM에게 의사결정을 맡기는 자동매매 파이프라인입니다. 이 문서는 핵심 컴포넌트, 스케줄링 흐름, 프롬프트 구조, 손실 피드백, 차트 데이터 입력 경로를 간단히 정리합니다.
+`Cryptocurrency_with_ai`는 관리자 페이지에서 지정한 분 단위 주기로 데이터를 수집하고 LLM에게 의사결정을 맡기는 자동매매 파이프라인입니다. 이 문서는 핵심 컴포넌트, 스케줄링 흐름, 프롬프트 구조, 손실 피드백, 차트 데이터 입력 경로를 간단히 정리합니다.
 
 ## Runtime Flow
 
 1. `main.py` loads environment variables, configures logging, 그리고 스케줄러를 시작합니다.
-2. 5분 주기로 `automation_for_symbol`이 호출되어 다음 단계를 처리합니다.
+2. 설정된 `automation_minutes` 주기로 `automation_for_symbol`이 호출되어 다음 단계를 처리합니다.
    - **Context 수집**: `app/workflows/trading._gather_prompt_context`
      - 시장 데이터(`utils.bybit_utils.bybit_utils`)를 통해 4h/1h/15m OHLCV CSV 확보
      - 현재 포지션, 금일 저널, 최근 의사결정, 리뷰 텍스트를 정리
    - **프롬프트 구성**: `_build_prompt`
      - LLM이 참고할 CSV/저널 정보를 블록별로 포함
-   - **LLM 결정**: `_request_trade_decision`
-     - `AIProvider.decide_json()` → 실패 시 `decide()` + `make_to_object()` fallback
+   - **LLM 결정**: `_run_multi_agent_cycle`
+     - LangGraph 기반 멀티 에이전트 파이프라인을 통한 의사결정
    - **즉시 청산 여부**: `_handle_close_now`
      - `close_now` 신호가 있으면 reduceOnly 주문으로 포지션 정리 후, 트레이드/저널 기록
    - **주문 계획 수립**: `_run_confirm_step` + `_execute_trade`
@@ -20,12 +20,12 @@
      - 리스크 기반 포지션 사이즈 산출 + 심볼별 노출 상한 적용
      - `BybitUtils.open_position`으로 주문 실행
      - 체결 결과를 `TradeStore`에 기록, 저널(`decision`, `action`) 남김
-3. 별도 5분 주기 작업 `run_loss_review`
+3. 별도 `loss_review_minutes` 주기 작업 `run_loss_review`
    - `JournalService.review_losing_trades`가 최근 손실 포지션을 AI에게 분석시켜 리뷰 저널을 추가합니다.
 
-## Five-Minute Job Cycle
+## Scheduler Cycle
 
-- **주기 관리**: `scheduler.py`에서 APScheduler가 심볼별 `automation_for_symbol`과 `run_loss_review`를 5분 간격으로 스케줄링합니다.
+- **주기 관리**: `main.py`의 `run_scheduler`가 런타임 설정(`admin > scheduler`)을 주기적으로 로드하면서 `schedule` 라이브러리로 `automation_for_symbol`과 `run_loss_review`를 등록합니다. 관리자는 UI에서 분 단위 주기를 언제든지 조정할 수 있고, 워커는 30초 간격으로 변경을 감지해 재등록합니다.
 - **거래 자동화 루틴**: 각 심볼은 독립적으로 프롬프트를 구성하고 주문 결정을 수행하여 병렬 실행이 가능합니다.
 - **손실 리뷰 루틴**: 동일한 주기로 미체크 손실 거래를 조회해 리뷰를 생성하므로, 시장 변동이 심할 때도 피드백이 늦지 않습니다.
 - **장애 복구**: 스케줄러는 애플리케이션 재기동 시 작업을 다시 등록하며, 각 작업은 내부적으로 예외를 캡처해 다음 주기를 유지합니다.
@@ -50,7 +50,9 @@ Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제�
 | `app/services/market_data.py` | OHLCV 수집 래퍼                | `ohlcv_csv_between`                                                                                       |
 | `app/services/journal.py`     | 저널/리뷰 도메인 서비스        | `JournalService.format_trade_reviews_for_prompt`, `JournalService.review_losing_trades`                   |
 | `app/workflows/trading.py`    | 자동매매 파이프라인            | `_gather_prompt_context`, `_build_prompt`, `_run_confirm_step`, `_execute_trade`, `automation_for_symbol` |
-| `utils/`                      | 거래소/AI/스토리지 레거시 모듈 | `BybitUtils`, `AIProvider`, `TradeStore`, etc.                                                            |
+| `utils/`                      | 거래소/스토리지 유틸리티 모듈 | `BybitUtils`, `TradeStore`, etc.                                                                          |
+| `app/graph/llm_factory.py`    | LLM 팩토리                     | `create_llm` (Gemini/OpenAI/Anthropic 지원)                                                               |
+| `app/agents/review_agent.py`  | 거래 리뷰 에이전트             | `ReviewAgent.review_trade` (손실/수익 거래 분석)                                                          |
 
 ## Data Persistence
 
@@ -63,7 +65,7 @@ Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제�
 - **리스크 정책 변경**: `utils/risk.py`의 `calculate_position_size` 또는 `_execute_trade` 내부 로직을 수정합니다.
 - **프롬프트 커스터마이징**: `app/workflows/trading._build_prompt`에서 섹션별 텍스트를 조정할 수 있습니다.
 - **확장된 리뷰 전략**: `JournalService`를 상속하거나 구성(extending composition)하여 다른 프롬프트/분석 기법을 도입할 수 있습니다.
-- **테스트 도입**: `_init_dependencies` 함수로 외부 의존성을 주입하기 쉬워졌기 때문에, 단위 테스트 시 Mock `BybitUtils`/`AIProvider`를 주입할 수 있습니다.
+- **테스트 도입**: `_init_dependencies` 함수로 외부 의존성을 주입하기 쉬워졌기 때문에, 단위 테스트 시 Mock `BybitUtils`를 주입할 수 있습니다. LLM은 `app/graph/llm_factory.py`를 통해 생성되므로 환경변수 조작으로 테스트 가능합니다.
 
 ## Logging & Monitoring
 

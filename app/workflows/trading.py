@@ -16,9 +16,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 
 import pandas as pd
 
-from utils import BybitUtils, Open_Position, bybit_utils, make_to_object
+from utils import BybitUtils, Open_Position, bybit_utils
 from utils.price_utils import dataframe_to_candlestick_base64
-from utils.ai_provider import AIProvider
 from utils.risk import calculate_position_size, enforce_max_loss_sl
 from utils.storage import StorageConfig, TradeStore
 
@@ -36,7 +35,6 @@ from app.opro import PerformanceScorer
 
 LOGGER = logging.getLogger(__name__)
 
-USE_MULTI_AGENT = os.getenv("USE_MULTI_AGENT", "1").lower() not in {"0", "false", "no"}
 TRADING_GRAPH: Optional[TradingGraph] = None
 TRADING_GRAPH_CONFIG_HASH: Optional[str] = None
 PERFORMANCE_SCORER = PerformanceScorer()
@@ -53,12 +51,10 @@ class AutomationDependencies:
     per_symbol_alloc_pct: float
     bybit: BybitUtils
     store: TradeStore
-    ai_provider: AIProvider
-    parser: Any
     journal_service: JournalService = field(init=False)
 
     def __post_init__(self) -> None:
-        self.journal_service = JournalService(self.store, self.ai_provider)
+        self.journal_service = JournalService(self.store)
 
 
 @dataclass(slots=True)
@@ -204,10 +200,6 @@ def _format_journal_dataframe(
         lines.append(line.strip())
 
     return "\n".join(lines)
-
-
-def _multi_agent_enabled() -> bool:
-    return USE_MULTI_AGENT
 
 
 def _ensure_trading_graph() -> TradingGraph:
@@ -394,8 +386,6 @@ def _init_dependencies(
             sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
-    ai_provider = AIProvider()
-    parser = make_to_object()
 
     deps = AutomationDependencies(
         symbol_usdt=symbol_usdt,
@@ -405,8 +395,6 @@ def _init_dependencies(
         per_symbol_alloc_pct=per_symbol_pct,
         bybit=bybit,
         store=store,
-        ai_provider=ai_provider,
-        parser=parser,
     )
 
     return deps
@@ -593,7 +581,8 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     current_price = df_15m["close"].iloc[-1]
 
     chart_images: Dict[str, str] = {}
-    if deps.ai_provider.provider == "gemini":
+    ai_provider_type = os.getenv("AI_PROVIDER", "gemini").lower()
+    if ai_provider_type == "gemini":
         for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
             try:
                 image_b64 = dataframe_to_candlestick_base64(
@@ -699,95 +688,6 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     )
 
 
-def _build_prompt(deps: AutomationDependencies, ctx: PromptContext) -> str:
-    """Compose the LLM prompt while preserving the established block order."""
-
-    now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    prompt = (
-        f"당신은 세계 최고의 암호화폐 트레이더입니다. 한국어로 답변하세요.\n"
-        f"이미 진입한 포지션의 레버리지는 조절할 수 없습니다.\n"
-        f"당신은 최소 5배에서 최대 75배까지 레버리지를 사용할 수 있습니다.\n"
-        """[Explain 출력 양식]
-- 차트 분석
-- 1차,2차,3차 저항선 분석
-- 1차,2차,3차 지지선 분석
-- 차트의 패턴은 어떤가?
-- 고점은 낮아지고 있는가
-- 고점은 높아지고 있는가
-- 저점은 낮아지고 있는가
-- 저점은 높아지고 있는가
-- 거래량은 증가하고 있는가
-- 거래량은 감소하고 있는가
-- 차트의 패턴은 어떤가
-- 매수를 할때의 권장 시나리오
-    - 어디까지 올라갈 것인가?
-    - 어떤 경우 임의로 익절을 해야하는가?
-    - 어떤 경우 임의로 손절을 해야하는가?
-    - 어디까지가 마지노선(SL)인가?
-    - 어디까지가 베스트 익절(TP)인가?
-- 매도를 할때의 권장 시나리오
-    - 어디까지 내려갈 것인가?
-    - 어떤 경우 임의로 익절을 해야하는가?
-    - 어떤 경우 임의로 손절을 해야하는가?
-    - 어디까지가 마지노선(SL)인가?
-    - 어디까지가 베스트 익절(TP)인가?
-- 최종 결론
-    - 롱, 숏, 보유 중 선택
-    - 차트의 패턴은 어떤가?
-    - 차트가 어떤 모양으로 흘러갈 것인가?
-    - 어느 저항선, 지시선을 건들거나 돌파할 것인가?
-    - 어떤 경우 임의로 손절 할건가?
-    - 어떤 경우 임의로 익절 할건가?
-[/Explain 출력 양식]\n"""
-        "기존 포지션의 TP/SL만 조정하려면 update_existing=true 로 표시하고 tp/sl 값만 제시하세요. 이때 leverage는 비워 두세요.\n"
-        f"현재 UTC 시간: {now_utc}\n"
-        f"심볼: {deps.contract_symbol} (spot={deps.spot_symbol})\n"
-        f"현재가: {ctx.current_price}\n"
-        f"심볼당 기본 배분 비율: {deps.per_symbol_alloc_pct:.2f}%\n"
-        "[CSV_4H]\n"
-        f"{ctx.csv_4h}\n"
-        "[/CSV_4H]\n"
-        "[CSV_1H]\n"
-        f"{ctx.csv_1h}\n"
-        "[/CSV_1H]\n"
-        "[CSV_15M]\n"
-        f"{ctx.csv_15m}\n"
-        "[/CSV_15M]\n"
-        "[CURRENT_POSITIONS]\n"
-        + (
-            "\n".join(ctx.current_positions_lines)
-            if ctx.current_positions_lines
-            else "(none)"
-        )
-        + "\n[/CURRENT_POSITIONS]\n"
-    )
-
-    if ctx.reviews_text:
-        prompt += "[RECENT_REVIEWS]\n" + ctx.reviews_text + "\n[/RECENT_REVIEWS]\n"
-    if ctx.recent_reports_text:
-        prompt += (
-            "[RECENT_REPORTS]\n" + ctx.recent_reports_text + "\n[/RECENT_REPORTS]\n"
-        )
-    if ctx.journal_today_text:
-        prompt += (
-            "[JOURNALS_TODAY]\n" + ctx.journal_today_text + "\n[/JOURNALS_TODAY]\n"
-        )
-    if ctx.pos_side is not None and ctx.since_open_text:
-        prompt += "[SINCE_LAST_OPEN]\n" + ctx.since_open_text + "\n[/SINCE_LAST_OPEN]\n"
-
-    prompt += (
-        "Choose one of: watch/hold, short, long, or stop.\n"
-        "Return your decision as JSON with the following fields: order type (market), "
-        "price, stop loss (sl), take profit (tp), buy_now (boolean), leverage (number), update_existing (boolean).\n"
-        "If you want to immediately take profit or cut loss on an existing position, set close_now=true "
-        "and optionally close_percent (1~100).\n"
-        "When close_now is true, we will reduceOnly market-close the current position(s) without opening a new one in this cycle.\n"
-        f"Per-symbol max allocation is {deps.per_symbol_alloc_pct:.2f}% of account equity (for your reference).\n"
-        "Include your reasoning for the decision in the 'explain' field. Output JSON, Korean only."
-    )
-    return prompt
-
-
 def _normalize_decision_payload(payload: Any) -> Dict[str, Any]:
     """
     Flatten tool-call formatted AI responses into a uniform decision dict.
@@ -837,118 +737,6 @@ def _decision_is_actionable(decision: Dict[str, Any]) -> bool:
 
     status = _normalize_status_value(decision.get("Status") or decision.get("status"))
     return bool(status)
-
-
-def _request_trade_decision(
-    deps: AutomationDependencies,
-    prompt: str,
-    ctx: PromptContext,
-) -> Dict[str, Any]:
-    """Obtain a structured decision from the AI provider with logging fallbacks."""
-
-    images_payload: Optional[List[Dict[str, Any]]] = None
-    if deps.ai_provider.provider == "gemini" and ctx.chart_images:
-        images_payload = []
-        for timeframe in ("4h", "1h", "15m"):
-            chart_b64 = ctx.chart_images.get(timeframe)
-            if not chart_b64:
-                continue
-            images_payload.append(
-                {
-                    "b64": chart_b64,
-                    "mime": "image/png",
-                    "metadata": {
-                        "symbol": deps.spot_symbol,
-                        "contract_symbol": deps.contract_symbol,
-                        "timeframe": timeframe,
-                        "type": "candlestick",
-                    },
-                }
-            )
-        if not images_payload:
-            images_payload = None
-
-    try:
-        max_attempts = max(1, int(os.getenv("AI_DECISION_MAX_RETRIES", "3")))
-    except Exception:
-        max_attempts = 3
-
-    try:
-        retry_delay = float(os.getenv("AI_DECISION_RETRY_DELAY_SECONDS", "2"))
-    except Exception:
-        retry_delay = 2.0
-    retry_delay = max(0.0, retry_delay)
-
-    last_decision: Dict[str, Any] = {}
-
-    for attempt in range(1, max_attempts + 1):
-        try:
-            parsed = deps.ai_provider.decide_json(prompt, images=images_payload)
-            normalized = _normalize_decision_payload(parsed)
-            LOGGER.info(
-                json.dumps(
-                    {
-                        "event": "llm_response_parsed",
-                        "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                        "attempt": attempt,
-                        "parsed": parsed,
-                        "normalized": normalized,
-                    },
-                    ensure_ascii=False,
-                )
-            )
-        except Exception:
-            response = deps.ai_provider.decide(prompt, images=images_payload)
-            try:
-                LOGGER.info(
-                    json.dumps(
-                        {
-                            "event": "llm_response_raw",
-                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                            "attempt": attempt,
-                            "response": response,
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            except Exception as exc:
-                LOGGER.error("LLM raw logging failed: %s", exc)
-
-            parser = deps.parser
-            value = parser.make_it_object(response)
-            normalized = _normalize_decision_payload(value)
-            try:
-                LOGGER.info(
-                    json.dumps(
-                        {
-                            "event": "llm_response_parsed",
-                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
-                            "attempt": attempt,
-                            "parsed": value,
-                            "normalized": normalized,
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            except Exception as exc:
-                LOGGER.error("LLM parsed logging failed: %s", exc)
-
-        last_decision = normalized if isinstance(normalized, dict) else {}
-
-        if _decision_is_actionable(last_decision):
-            return last_decision
-
-        status_display = last_decision.get("Status") or last_decision.get("status")
-        LOGGER.warning(
-            "AI decision attempt %s/%s missing actionable status: %s",
-            attempt,
-            max_attempts,
-            status_display,
-        )
-        if attempt < max_attempts and retry_delay > 0:
-            time.sleep(retry_delay)
-
-    return last_decision
 
 
 def _normalize_bool(val: Any) -> bool:
@@ -2148,19 +1936,15 @@ def automation_for_symbol(
         try:
             deps = _init_dependencies(symbol_usdt, symbols)
             ctx = _gather_prompt_context(deps)
-            if _multi_agent_enabled():
-                ma_result = _run_multi_agent_cycle(deps, ctx)
-                if ma_result and ma_result.get("decision"):
-                    decision_payload = ma_result["decision"]
-                    if _handle_close_now(deps, ctx, decision_payload):
-                        return
-                    _execute_trade(deps, ctx, decision_payload)
-                    return
-            prompt = _build_prompt(deps, ctx)
-            decision = _request_trade_decision(deps, prompt, ctx)
-            if _handle_close_now(deps, ctx, decision):
+            ma_result = _run_multi_agent_cycle(deps, ctx)
+            if not ma_result or not ma_result.get("decision"):
+                raise RuntimeError(
+                    "Multi-agent workflow returned no decision (single-agent path disabled)"
+                )
+            decision_payload = ma_result["decision"]
+            if _handle_close_now(deps, ctx, decision_payload):
                 return
-            _execute_trade(deps, ctx, decision)
+            _execute_trade(deps, ctx, decision_payload)
             return
         except Exception as exc:
             LOGGER.error(
@@ -2195,5 +1979,5 @@ def run_loss_review(
             sqlite_path=os.getenv("SQLITE_PATH"),
         )
     )
-    journal_service = JournalService(store, AIProvider())
+    journal_service = JournalService(store)
     journal_service.review_losing_trades(since_minutes=since_minutes)

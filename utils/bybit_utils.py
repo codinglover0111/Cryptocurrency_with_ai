@@ -25,6 +25,52 @@ dotenv_path = os.path.join(os.path.dirname(__file__), "..", ".env")
 load_dotenv(dotenv_path)
 
 
+def _get_bybit_api_keys(mode: str) -> tuple[Optional[str], Optional[str]]:
+    """DB에서 Bybit API 키를 가져오고, 없으면 환경변수에서 폴백합니다."""
+    try:
+        from app.auth.api_keys import ApiKeyService
+        
+        # DB에서 키 가져오기
+        api_key = ApiKeyService.get_key("bybit", "api_key", mode)
+        api_secret = ApiKeyService.get_key("bybit", "api_secret", mode)
+        
+        if api_key and api_secret:
+            return api_key, api_secret
+    except Exception:
+        pass
+    
+    # 환경변수 폴백 (기존 로직)
+    if mode == "demo":
+        api_key = (
+            os.getenv("BYBIT_DEMO_API_KEY")
+            or os.getenv("DEMO_BYBIT_API_KEY")
+            or os.environ.get("BYBIT_API_KEY")
+        )
+        api_secret = (
+            os.getenv("BYBIT_DEMO_API_SECRET")
+            or os.getenv("DEMO_BYBIT_API_SECRET")
+            or os.environ.get("BYBIT_API_SECRET")
+        )
+    elif mode == "testnet":
+        api_key = (
+            os.getenv("BYBIT_TESTNET_API_KEY")
+            or os.getenv("TESTNET_BYBIT_API_KEY")
+            or os.getenv("DEMO_BYBIT_API_KEY")
+            or os.environ.get("BYBIT_API_KEY")
+        )
+        api_secret = (
+            os.getenv("BYBIT_TESTNET_API_SECRET")
+            or os.getenv("TESTNET_BYBIT_API_SECRET")
+            or os.getenv("DEMO_BYBIT_API_SECRET")
+            or os.environ.get("BYBIT_API_SECRET")
+        )
+    else:  # mainnet
+        api_key = os.environ.get("BYBIT_API_KEY")
+        api_secret = os.environ.get("BYBIT_API_SECRET")
+    
+    return api_key, api_secret
+
+
 class BybitUtils:
     def __init__(self, is_testnet=True):
         try:
@@ -36,34 +82,8 @@ class BybitUtils:
                 else ("testnet" if is_testnet else "mainnet")
             )
 
-            # API 키와 시크릿 설정
-            if mode == "demo":
-                api_key = (
-                    os.getenv("BYBIT_DEMO_API_KEY")
-                    or os.getenv("DEMO_BYBIT_API_KEY")
-                    or os.environ.get("BYBIT_API_KEY")
-                )
-                api_secret = (
-                    os.getenv("BYBIT_DEMO_API_SECRET")
-                    or os.getenv("DEMO_BYBIT_API_SECRET")
-                    or os.environ.get("BYBIT_API_SECRET")
-                )
-            elif mode == "testnet":
-                api_key = (
-                    os.getenv("BYBIT_TESTNET_API_KEY")
-                    or os.getenv("TESTNET_BYBIT_API_KEY")
-                    or os.getenv("DEMO_BYBIT_API_KEY")
-                    or os.environ.get("BYBIT_API_KEY")
-                )
-                api_secret = (
-                    os.getenv("BYBIT_TESTNET_API_SECRET")
-                    or os.getenv("TESTNET_BYBIT_API_SECRET")
-                    or os.getenv("DEMO_BYBIT_API_SECRET")
-                    or os.environ.get("BYBIT_API_SECRET")
-                )
-            else:
-                api_key = os.environ["BYBIT_API_KEY"]
-                api_secret = os.environ["BYBIT_API_SECRET"]
+            # API 키와 시크릿 설정 (DB 우선, 환경변수 폴백)
+            api_key, api_secret = _get_bybit_api_keys(mode)
             # Bybit 객체 생성
             self.exchange = ccxt.bybit(
                 {

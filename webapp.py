@@ -21,8 +21,8 @@ from fastapi.templating import Jinja2Templates
 from app.core.symbols import parse_trading_symbols, to_ccxt_symbols
 from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
-from utils.ai_provider import AIProvider
 from app.services.journal import JournalService
+from app.graph.llm_factory import create_llm, LLMConfigurationError
 from app.auth.routes import router as auth_router
 from app.web import admin_router, user_router
 
@@ -148,6 +148,12 @@ templates = Jinja2Templates(directory="templates")
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, tz: Optional[str] = None):
     return templates.TemplateResponse("index.html", {"request": request, "tz": tz})
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(request: Request):
+    """관리자 페이지 렌더링."""
+    return templates.TemplateResponse("admin.html", {"request": request})
 
 
 class LeverageBody(BaseModel):
@@ -1567,11 +1573,12 @@ def _try_ai_review(
     """간단한 AI 리뷰 텍스트 생성. 설정이 없으면 None."""
     try:
         provider = os.getenv("AI_PROVIDER", "gemini").lower()
-        if provider == "gemini" and not os.environ.get("GEMINI_API_KEY"):
+        model = os.getenv("AI_MODEL", "gemini-2.0-flash")
+        try:
+            llm = create_llm(provider=provider, model=model, temperature=0.1)
+        except LLMConfigurationError:
             return None
-        if provider != "gemini" and not os.environ.get("OPENAI_API_KEY"):
-            return None
-        ai = AIProvider()
+
         direction = "LONG" if side == "buy" else "SHORT"
         if tp is not None and (
             (side == "buy" and close_price >= tp)
@@ -1589,7 +1596,8 @@ def _try_ai_review(
             "다음 자동 청산 결과를 간단히 리뷰하고 개선점을 bullet로 3개 이내로 제안해줘.\n"
             f"심볼: {symbol}\n사이드: {direction}\n진입가: {entry_price}\n청산가: {close_price}\nTP: {tp}\nSL: {sl}\n실현손익: {pnl}\n사유: {reason}\n"
         )
-        text = ai.decide(prompt)
+        response = llm.invoke(prompt)
+        text = response.content if hasattr(response, "content") else str(response)
         return (text or "").strip()[:2000]
     except Exception:
         return None
