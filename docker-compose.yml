@@ -1,42 +1,94 @@
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: crypto_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-crypto_trading}
+      MYSQL_USER: ${MYSQL_USER:-crypto}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-cryptopass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD:-rootpass}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   app:
     build:
       context: .
       dockerfile: Dockerfile.bot
-    user: "1000:1000"
     container_name: crypto_bot
+    depends_on:
+      mysql:
+        condition: service_healthy
     env_file:
       - .env
     environment:
-      SQLITE_PATH: /app/data/trading.sqlite
+      TZ: Asia/Seoul
+      MYSQL_URL: mysql+pymysql://${MYSQL_USER:-crypto}:${MYSQL_PASSWORD:-cryptopass}@mysql:3306/${MYSQL_DATABASE:-crypto_trading}
       APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
     volumes:
-      - ./.env:/app/.env
-      - ./trading.log:/app/trading.log
-      - ./data:/app/data
+      - app_data:/app/data
+      - app_logs:/app/logs
     restart: unless-stopped
-    command: ["python", "main.py"]
+    command: ["uv", "run", "python", "main.py"]
 
   web:
     build:
       context: .
       dockerfile: Dockerfile.web
-    user: "1000:1000"
     container_name: crypto_web
     depends_on:
-      - app
+      mysql:
+        condition: service_healthy
+      app:
+        condition: service_started
     env_file:
       - .env
     environment:
+      TZ: Asia/Seoul
       TESTNET: ${TESTNET:-1}
-      SQLITE_PATH: /app/data/trading.sqlite
+      MYSQL_URL: mysql+pymysql://${MYSQL_USER:-crypto}:${MYSQL_PASSWORD:-cryptopass}@mysql:3306/${MYSQL_DATABASE:-crypto_trading}
       APP_BASE_DIR: /app
-      FORCE_SQLITE: "1"
     ports:
       - "8000:8000"
-    command: ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
+    command:
+      [
+        "uv",
+        "run",
+        "uvicorn",
+        "webapp:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--proxy-headers",
+        "--forwarded-allow-ips=*",
+      ]
     restart: unless-stopped
     volumes:
-      - ./.env:/app/.env
-      - ./data:/app/data
+      - app_data:/app/data
+
+volumes:
+  mysql_data:
+    driver: local
+  app_data:
+    driver: local
+  app_logs:
+    driver: local

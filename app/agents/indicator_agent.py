@@ -88,11 +88,20 @@ class IndicatorAgent:
 
     def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_template(INDICATOR_TEMPLATE)
-        self.chain = prompt | llm.with_structured_output(IndicatorResult, strict=True)
+        self.chain = prompt | llm.with_structured_output(
+            IndicatorResult, method="function_calling"
+        )
 
     def __call__(self, state: TradingState) -> Dict[str, IndicatorResult]:
         timeframe_data = state.get("timeframe_data") or {}
-        df = timeframe_data.get("1h") or timeframe_data.get("4h")
+        df_1h = timeframe_data.get("1h")
+        df_4h = timeframe_data.get("4h")
+        if df_1h is not None and not df_1h.empty:
+            df = df_1h
+        elif df_4h is not None and not df_4h.empty:
+            df = df_4h
+        else:
+            df = None
         metrics = _compute_indicator_block(df)
 
         positions = state.get("positions") or []

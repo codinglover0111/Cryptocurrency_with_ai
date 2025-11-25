@@ -8,13 +8,33 @@
 
 - `trading.py`
   - `automation_for_symbol`: 심볼별 자동 매매 실행(멀티 에이전트 그래프 호출, 주문/저널 기록)
+  - `run_automation_for_all_symbols`: 전체 거래 심볼에 대해 자동매매 분석 실행 (관리자 UI 즉시 실행용)
   - `run_loss_review`: 손실 트레이드 리뷰 루틴
   - `build_trading_graph`: 캐시된 `TradingGraph` 재구성/검증
   - `PromptContext`, `AutomationDependencies`: LLM 입력 및 공용 상태 관리
+  - `_run_multi_agent_cycle`: 멀티 에이전트 그래프 실행 및 결과 수집 (indicator/pattern/trend/decision)
   - `_get_btc_analysis_context`: BTC 분석 결과를 다른 심볼 컨텍스트에 추가
   - `_save_btc_analysis`: BTC 분석 결과를 공유 테이블에 저장
   - `_get_risk_config`: 런타임 리스크 설정 로드
   - `__init__.py`: 패키지 부트스트랩
+
+## 에이전트 분석 결과 저장
+
+멀티 에이전트 사이클 실행 후 모든 에이전트의 분석 결과를 저널 `meta.agents` 필드에 저장합니다:
+
+```python
+{
+  "decision": { ... },
+  "agents": {
+    "indicator": { "rsi": 45.2, "macd_signal": "bullish", "summary": "..." },
+    "pattern": { "patterns_found": [...], "analysis": "..." },
+    "trend": { "trend_direction": "uptrend", "analysis": "..." },
+    "decision": { "status": "long", "explain": "..." }
+  }
+}
+```
+
+이 데이터는 대시보드의 에이전트 분석 모달에서 사용됩니다.
 
 ## BTC 우선 분석
 

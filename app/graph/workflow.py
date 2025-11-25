@@ -40,7 +40,14 @@ class TradingGraph:
 
         working_state: TradingState = dict(state)
         timeframe_data = working_state.get("timeframe_data") or {}
-        primary_df = timeframe_data.get("4h") or timeframe_data.get("1h")
+        df_4h = timeframe_data.get("4h")
+        df_1h = timeframe_data.get("1h")
+        if df_4h is not None and not df_4h.empty:
+            primary_df = df_4h
+        elif df_1h is not None and not df_1h.empty:
+            primary_df = df_1h
+        else:
+            primary_df = None
         regime = self._regime_detector.detect_regime(primary_df)
         working_state["regime"] = regime
         working_state.setdefault("prompt_trace", [])

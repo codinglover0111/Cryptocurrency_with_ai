@@ -17,7 +17,9 @@ class DecisionAgent:
 
     def __init__(self, llm: BaseChatModel) -> None:
         prompt = ChatPromptTemplate.from_template(DECISION_TEMPLATE)
-        self.chain = prompt | llm.with_structured_output(TradeDecision, strict=True)
+        self.chain = prompt | llm.with_structured_output(
+            TradeDecision, method="function_calling"
+        )
 
     def __call__(self, state: TradingState) -> Dict[str, TradeDecision]:
         indicator = state.get("indicator")

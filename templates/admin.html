@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="/static/dashboard.css" />
     <link rel="stylesheet" href="/static/style.css" />
     <link rel="stylesheet" href="/static/admin.css" />
+    <script
+      src="https://code.jquery.com/jquery-3.7.1.min.js"
+      integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+      crossorigin="anonymous"
+    ></script>
     <script src="/static/theme.js"></script>
     <script defer src="/static/admin.js"></script>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,7 +21,7 @@
     />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; connect-src 'self'"
+      content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self' https://code.jquery.com; img-src 'self' data:; connect-src 'self'"
     />
   </head>
   <body class="admin-body">
@@ -87,7 +92,6 @@
             <button
               class="theme-toggle"
               id="theme-toggle-btn"
-              onclick="handleThemeToggle()"
               aria-label="테마 변경"
               style="margin-right: 16px"
             >
@@ -467,6 +471,14 @@
                   </div>
                 </div>
                 <div class="scheduler-controls" style="margin-top: 20px">
+                  <button class="btn btn--primary" id="run-all-now">
+                    <span>▶️</span> 전체 심볼 즉시 실행
+                  </button>
+                  <button class="btn btn--accent" id="run-symbol-now">
+                    <span>🎯</span> 특정 심볼 실행
+                  </button>
+                </div>
+                <div class="scheduler-controls" style="margin-top: 12px">
                   <button class="btn btn--warning" id="pause-scheduler">
                     <span>⏸️</span> 스케줄러 일시 중단
                   </button>
@@ -1004,6 +1016,31 @@
           </div>
         </section>
       </main>
+    </div>
+
+    <!-- Symbol Run Modal -->
+    <div class="modal-backdrop" id="symbol-run-modal" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <h3>🎯 실행할 심볼 선택</h3>
+          <button class="btn btn--ghost btn--sm" id="close-symbol-run-modal">
+            닫기
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="run-symbol-select">심볼 선택</label>
+            <select id="run-symbol-select" class="symbol-select">
+              <option value="">심볼을 선택하세요</option>
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn--primary" id="confirm-run-symbol">
+              <span>▶️</span> 분석 실행
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </body>
 </html>

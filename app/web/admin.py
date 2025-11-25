@@ -71,6 +71,12 @@ class TradingSymbolsPayload(BaseModel):
     symbols: List[str] = Field(default_factory=list, min_length=1)
 
 
+class RunSymbolPayload(BaseModel):
+    """특정 심볼 즉시 실행 요청."""
+
+    symbol: str
+
+
 class ApiKeyBulkPayload(BaseModel):
     """여러 API 키 일괄 설정."""
 
@@ -435,4 +441,72 @@ def update_trading_symbols(
             if unknown_symbols
             else None
         ),
+    }
+
+
+# ===== Immediate Execution =====
+
+
+@router.post("/run-now")
+def run_automation_now(_: str = Depends(require_admin)):
+    """전체 심볼 즉시 분석 실행 (백그라운드 스레드, 일시 중단과 무관)."""
+    import logging
+    import threading
+    from app.workflows.trading import run_automation_for_all_symbols
+    from app.core.symbols import parse_trading_symbols
+
+    logger = logging.getLogger(__name__)
+    symbols = parse_trading_symbols()
+    symbol_count = len(symbols)
+    
+    logger.info(f"[즉시실행] 전체 심볼 분석 요청 - {symbol_count}개 심볼: {symbols}")
+
+    def run_in_background():
+        try:
+            logger.info("[즉시실행] 백그라운드 스레드 시작")
+            run_automation_for_all_symbols()
+            logger.info("[즉시실행] 백그라운드 스레드 완료")
+        except Exception as e:
+            logger.exception(f"[즉시실행] 오류 발생: {e}")
+
+    thread = threading.Thread(target=run_in_background, daemon=True)
+    thread.start()
+
+    return {
+        "ok": True,
+        "message": f"전체 {symbol_count}개 심볼 분석이 백그라운드에서 시작되었습니다.",
+        "symbols": symbols,
+    }
+
+
+@router.post("/run-symbol")
+def run_symbol_now(payload: RunSymbolPayload, _: str = Depends(require_admin)):
+    """특정 심볼 즉시 분석 실행 (백그라운드 스레드, 일시 중단과 무관)."""
+    import logging
+    import threading
+    from app.workflows.trading import automation_for_symbol
+
+    logger = logging.getLogger(__name__)
+    symbol = payload.symbol.strip().upper()
+    
+    if not symbol:
+        raise HTTPException(status_code=400, detail="심볼이 비어있습니다.")
+
+    logger.info(f"[즉시실행] 특정 심볼 분석 요청: {symbol}")
+
+    def run_in_background():
+        try:
+            logger.info(f"[즉시실행] {symbol} 백그라운드 분석 시작")
+            automation_for_symbol(symbol)
+            logger.info(f"[즉시실행] {symbol} 백그라운드 분석 완료")
+        except Exception as e:
+            logger.exception(f"[즉시실행] {symbol} 오류 발생: {e}")
+
+    thread = threading.Thread(target=run_in_background, daemon=True)
+    thread.start()
+
+    return {
+        "ok": True,
+        "message": f"{symbol} 분석이 백그라운드에서 시작되었습니다.",
+        "symbol": symbol,
     }

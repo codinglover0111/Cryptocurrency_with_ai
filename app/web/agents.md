@@ -12,6 +12,8 @@
   - `GET/POST /admin/scheduler`: 스케줄러 설정 조회/갱신 (실행 상태 포함)
   - `POST /admin/scheduler/pause`: 스케줄러 일시 중단
   - `POST /admin/scheduler/resume`: 스케줄러 재개
+  - `POST /admin/run-now`: 전체 심볼 즉시 분석 실행 (백그라운드)
+  - `POST /admin/run-symbol`: 특정 심볼 즉시 분석 실행 (백그라운드)
   - `GET/POST /admin/risk-config`: 리스크 설정 조회/갱신
   - `GET /admin/trading-symbols/available`: 거래 가능한 심볼 목록 조회
   - `GET/POST /admin/trading-symbols`: 현재 거래 심볼 조회/갱신
@@ -42,6 +44,36 @@
 - `last_automation_run`: 마지막 자동매매 실행 시간
 - `last_review_run`: 마지막 손실 리뷰 실행 시간
 - `next_automation_run`: 다음 자동매매 예상 시간 (계산값)
+
+## 즉시 실행 API
+
+스케줄러 주기를 기다리지 않고 즉시 분석을 실행할 수 있습니다.
+
+**중요**: 즉시 실행은 스케줄러 일시 중단 상태와 **무관하게** 동작합니다.
+
+### `POST /admin/run-now`
+
+전체 심볼에 대해 분석을 즉시 실행합니다. 백그라운드 스레드에서 실행되며, 요청 즉시 응답이 반환됩니다.
+
+응답:
+
+- `ok`: 성공 여부
+- `message`: 결과 메시지 (심볼 개수 포함)
+- `symbols`: 분석 대상 심볼 목록
+
+### `POST /admin/run-symbol`
+
+특정 심볼에 대해 분석을 즉시 실행합니다. 프론트엔드에서는 select 드롭다운으로 심볼을 선택합니다.
+
+요청:
+
+- `symbol`: 분석할 심볼 (예: `BTCUSDT`)
+
+응답:
+
+- `ok`: 성공 여부
+- `message`: 결과 메시지
+- `symbol`: 분석 대상 심볼
 
 ## DB 연결 최적화
 

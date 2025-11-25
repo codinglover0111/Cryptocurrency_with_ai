@@ -32,7 +32,9 @@ class TrendAgent:
     """추세/지지저항 분석 에이전트."""
 
     def __init__(self, llm: BaseChatModel) -> None:
-        self.llm = llm.with_structured_output(TrendResult, strict=True)
+        self.llm = llm.with_structured_output(
+            TrendResult, method="function_calling"
+        )
 
     def __call__(self, state: TradingState):
         chart_images = state.get("chart_images") or {}

@@ -13,7 +13,7 @@
     />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+      content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self' https://code.jquery.com; img-src 'self' data:; connect-src 'self'"
     />
     <style>
       :root {
@@ -432,7 +432,252 @@
         color: var(--accent);
         text-decoration: none;
       }
+
+      /* Agent Analysis Modal */
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.8);
+        backdrop-filter: blur(4px);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .modal {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        max-width: 900px;
+        width: 100%;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .modal-header h3 {
+        font-size: 18px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .modal-body {
+        padding: 24px;
+        overflow-y: auto;
+        flex: 1;
+      }
+
+      .agent-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 20px;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 12px;
+      }
+
+      .agent-tab {
+        padding: 10px 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text-muted);
+        font-family: var(--font-display);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .agent-tab:hover {
+        background: var(--bg-card-hover);
+        color: var(--text);
+      }
+
+      .agent-tab.active {
+        background: var(--accent);
+        color: var(--bg-dark);
+        border-color: var(--accent);
+      }
+
+      .agent-content {
+        display: none;
+      }
+
+      .agent-content.active {
+        display: block;
+      }
+
+      .agent-card {
+        background: var(--bg-dark);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 20px;
+      }
+
+      .agent-card-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .agent-card-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+      }
+
+      .agent-card-icon.indicator {
+        background: rgba(34, 211, 238, 0.15);
+      }
+      .agent-card-icon.pattern {
+        background: rgba(168, 85, 247, 0.15);
+      }
+      .agent-card-icon.trend {
+        background: rgba(245, 158, 11, 0.15);
+      }
+      .agent-card-icon.decision {
+        background: rgba(16, 185, 129, 0.15);
+      }
+
+      .agent-card-title {
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .agent-field {
+        margin-bottom: 12px;
+      }
+
+      .agent-field-label {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+
+      .agent-field-value {
+        font-family: var(--font-mono);
+        font-size: 14px;
+        color: var(--text);
+      }
+
+      .agent-field-value.bullish {
+        color: var(--success);
+      }
+      .agent-field-value.bearish {
+        color: var(--danger);
+      }
+      .agent-field-value.neutral {
+        color: var(--warning);
+      }
+
+      .agent-analysis {
+        background: var(--bg-card);
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 12px;
+        line-height: 1.7;
+      }
+
+      .agent-analysis h1,
+      .agent-analysis h2,
+      .agent-analysis h3 {
+        margin: 16px 0 8px;
+        font-weight: 600;
+      }
+
+      .agent-analysis h1 {
+        font-size: 18px;
+      }
+      .agent-analysis h2 {
+        font-size: 16px;
+      }
+      .agent-analysis h3 {
+        font-size: 14px;
+      }
+
+      .agent-analysis p {
+        margin-bottom: 8px;
+      }
+
+      .agent-analysis ul,
+      .agent-analysis ol {
+        margin: 8px 0;
+        padding-left: 24px;
+      }
+
+      .agent-analysis li {
+        margin-bottom: 4px;
+      }
+
+      .agent-analysis code {
+        background: var(--bg-dark);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+      }
+
+      .agent-analysis pre {
+        background: var(--bg-dark);
+        padding: 12px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 12px 0;
+      }
+
+      .agent-analysis pre code {
+        background: transparent;
+        padding: 0;
+      }
+
+      .agent-analysis blockquote {
+        border-left: 3px solid var(--accent);
+        padding-left: 12px;
+        margin: 12px 0;
+        color: var(--text-muted);
+      }
+
+      .no-data {
+        text-align: center;
+        color: var(--text-muted);
+        padding: 32px;
+      }
+
+      .activity-item {
+        cursor: pointer;
+      }
     </style>
+    <script
+      src="https://code.jquery.com/jquery-3.7.1.min.js"
+      integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+      crossorigin="anonymous"
+    ></script>
   </head>
   <body>
     <div class="container">
@@ -447,7 +692,7 @@
             <span class="status-dot"></span>
             <span>실시간</span>
           </div>
-          <button class="btn btn-ghost" onclick="refreshAll()">
+          <button class="btn btn-ghost" data-action="refresh-all">
             🔄 새로고침
           </button>
           <a href="/admin" class="btn btn-primary"> 🔐 관리자 </a>
@@ -480,7 +725,7 @@
         <div class="panel">
           <div class="panel-header">
             <h2 class="panel-title">📊 활성 포지션</h2>
-            <button class="btn btn-ghost" onclick="loadPositions()">
+            <button class="btn btn-ghost" data-action="refresh-positions">
               새로고침
             </button>
           </div>
@@ -519,226 +764,29 @@
       </footer>
     </div>
 
-    <script>
-      // Format numbers
-      function formatNumber(num, decimals = 2) {
-        if (num === null || num === undefined || isNaN(num)) return "-";
-        return new Intl.NumberFormat("en-US", {
-          minimumFractionDigits: decimals,
-          maximumFractionDigits: decimals,
-        }).format(num);
-      }
+    <!-- Agent Analysis Modal -->
+    <div class="modal-backdrop" id="agent-modal" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <h3>🤖 에이전트 분석 보고서</h3>
+          <button class="btn btn-ghost" data-action="close-modal">닫기</button>
+        </div>
+        <div class="modal-body">
+          <div class="agent-tabs" id="agent-tabs">
+            <button class="agent-tab active" data-tab="indicator">
+              📊 Indicator
+            </button>
+            <button class="agent-tab" data-tab="pattern">🔮 Pattern</button>
+            <button class="agent-tab" data-tab="trend">📈 Trend</button>
+            <button class="agent-tab" data-tab="decision">🎯 Decision</button>
+          </div>
+          <div id="agent-contents">
+            <!-- Agent contents will be rendered here -->
+          </div>
+        </div>
+      </div>
+    </div>
 
-      function formatUSD(num) {
-        if (num === null || num === undefined || isNaN(num)) return "-";
-        return "$" + formatNumber(num);
-      }
-
-      function formatPercent(num) {
-        if (num === null || num === undefined || isNaN(num)) return "-";
-        const sign = num >= 0 ? "+" : "";
-        return sign + formatNumber(num) + "%";
-      }
-
-      // Load status and balance
-      async function loadStatus() {
-        try {
-          const res = await fetch("/status");
-          const data = await res.json();
-
-          if (data.balance) {
-            const equity = parseFloat(
-              data.balance.equity || data.balance.total || 0
-            );
-            document.getElementById("stat-balance").textContent =
-              formatUSD(equity);
-
-            const unrealized = parseFloat(data.balance.unrealized_pnl || 0);
-            const unrealizedEl = document.getElementById("stat-unrealized");
-            unrealizedEl.textContent = formatUSD(unrealized);
-            unrealizedEl.className =
-              "stat-value " + (unrealized >= 0 ? "positive" : "negative");
-          }
-        } catch (e) {
-          console.error("Status load error:", e);
-        }
-      }
-
-      // Load stats
-      async function loadStats() {
-        try {
-          const res = await fetch("/stats");
-          const data = await res.json();
-
-          document.getElementById("stat-trades").textContent =
-            data.total_trades || 0;
-
-          const winrate = data.win_rate;
-          if (winrate !== null && winrate !== undefined) {
-            document.getElementById("stat-winrate").textContent =
-              formatNumber(winrate) + "%";
-          }
-        } catch (e) {
-          console.error("Stats load error:", e);
-        }
-      }
-
-      // Load positions
-      async function loadPositions() {
-        const container = document.getElementById("positions-container");
-
-        try {
-          const res = await fetch("/api/positions_summary");
-          const data = await res.json();
-          const items = data.items || [];
-
-          if (items.length === 0) {
-            container.innerHTML = `
-              <div class="empty-state">
-                <div class="empty-state-icon">📭</div>
-                <p>활성 포지션이 없습니다</p>
-              </div>
-            `;
-            return;
-          }
-
-          let html = `
-            <table class="positions-table">
-              <thead>
-                <tr>
-                  <th>심볼</th>
-                  <th>방향</th>
-                  <th>진입가</th>
-                  <th>현재가</th>
-                  <th>손익</th>
-                  <th>레버리지</th>
-                </tr>
-              </thead>
-              <tbody>
-          `;
-
-          items.forEach((p) => {
-            const side = (p.side || "").toLowerCase();
-            const sideClass =
-              side.includes("long") || side.includes("buy") ? "long" : "short";
-            const sideLabel = sideClass === "long" ? "LONG" : "SHORT";
-
-            const pnlClass = (p.pnl || 0) >= 0 ? "positive" : "negative";
-
-            html += `
-              <tr>
-                <td>${p.symbol || "-"}</td>
-                <td><span class="side-badge ${sideClass}">${sideLabel}</span></td>
-                <td>${formatNumber(p.entryPrice, 4)}</td>
-                <td>${formatNumber(p.lastPrice, 4)}</td>
-                <td class="${pnlClass}">${formatUSD(p.pnl)} (${formatPercent(
-              p.pnlPct
-            )})</td>
-                <td>${p.leverage || "-"}x</td>
-              </tr>
-            `;
-          });
-
-          html += "</tbody></table>";
-          container.innerHTML = html;
-        } catch (e) {
-          console.error("Positions load error:", e);
-          container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">⚠️</div>
-              <p>포지션을 불러올 수 없습니다</p>
-            </div>
-          `;
-        }
-      }
-
-      // Load recent activity
-      async function loadActivity() {
-        const container = document.getElementById("activity-list");
-
-        try {
-          const res = await fetch(
-            "/api/journals_filtered?types=decision,action,review,error&limit=20&today_only=1"
-          );
-          const data = await res.json();
-          const items = data.items || [];
-
-          if (items.length === 0) {
-            container.innerHTML = `
-              <div class="empty-state">
-                <div class="empty-state-icon">📝</div>
-                <p>오늘의 활동이 없습니다</p>
-              </div>
-            `;
-            return;
-          }
-
-          const icons = {
-            decision: { icon: "🎯", class: "decision" },
-            action: { icon: "⚡", class: "action" },
-            review: { icon: "📋", class: "review" },
-            error: { icon: "❌", class: "error" },
-          };
-
-          let html = "";
-          items.slice(0, 15).forEach((item) => {
-            const type = item.entry_type || "decision";
-            const config = icons[type] || icons.decision;
-
-            // Parse timestamp
-            let timeStr = "-";
-            if (item.ts) {
-              const date = new Date(item.ts);
-              timeStr = date.toLocaleTimeString("ko-KR", {
-                hour: "2-digit",
-                minute: "2-digit",
-              });
-            }
-
-            // Truncate content
-            let content = item.content || "";
-            if (content.length > 60) content = content.substring(0, 60) + "...";
-
-            html += `
-              <div class="activity-item">
-                <div class="activity-icon ${config.class}">${config.icon}</div>
-                <div class="activity-content">
-                  <div class="activity-title">${
-                    item.symbol || "System"
-                  } — ${content}</div>
-                  <div class="activity-meta">${timeStr} · ${type}</div>
-                </div>
-              </div>
-            `;
-          });
-
-          container.innerHTML = html;
-        } catch (e) {
-          console.error("Activity load error:", e);
-          container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">⚠️</div>
-              <p>활동을 불러올 수 없습니다</p>
-            </div>
-          `;
-        }
-      }
-
-      // Refresh all data
-      function refreshAll() {
-        loadStatus();
-        loadStats();
-        loadPositions();
-        loadActivity();
-      }
-
-      // Initial load
-      document.addEventListener("DOMContentLoaded", () => {
-        refreshAll();
-
-        // Auto refresh every 30 seconds
-        setInterval(refreshAll, 30000);
-      });
-    </script>
+    <script src="/static/index.js"></script>
   </body>
 </html>

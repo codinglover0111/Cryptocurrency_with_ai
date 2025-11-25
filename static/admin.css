@@ -1067,6 +1067,107 @@
   opacity: 0.9;
 }
 
+.btn--accent {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  border: none;
+}
+
+.btn--accent:hover {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  opacity: 0.95;
+}
+
+/* Base Modal Styles */
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* Modal Backdrop & Base Styles */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 2000; /* 높은 z-index */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-backdrop[hidden] {
+  display: none !important;
+}
+
+/* Symbol Run Modal (Special ID but same style) */
+#symbol-run-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+#symbol-run-modal[hidden] {
+  display: none !important;
+}
+
+#symbol-run-modal .modal {
+  max-width: 400px;
+  width: 90%;
+}
+
+#symbol-run-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+#symbol-run-modal .modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#symbol-run-modal .modal-body {
+  padding: 24px;
+}
+
+.symbol-select {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.symbol-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
 /* Trading Symbols Styles */
 .symbols-grid {
   display: grid;
@@ -1157,17 +1258,29 @@
 
 .symbol-chip--btc,
 .symbol-chip--btc-available {
-  background: linear-gradient(135deg, rgba(247, 147, 26, 0.15), rgba(247, 147, 26, 0.05));
+  background: linear-gradient(
+    135deg,
+    rgba(247, 147, 26, 0.15),
+    rgba(247, 147, 26, 0.05)
+  );
   border-color: #f7931a;
   color: #f7931a;
 }
 
 .symbol-chip--btc:hover {
-  background: linear-gradient(135deg, rgba(247, 147, 26, 0.25), rgba(247, 147, 26, 0.15));
+  background: linear-gradient(
+    135deg,
+    rgba(247, 147, 26, 0.25),
+    rgba(247, 147, 26, 0.15)
+  );
 }
 
 .symbol-chip--btc-available:hover {
-  background: linear-gradient(135deg, rgba(247, 147, 26, 0.3), rgba(247, 147, 26, 0.2));
+  background: linear-gradient(
+    135deg,
+    rgba(247, 147, 26, 0.3),
+    rgba(247, 147, 26, 0.2)
+  );
   border-color: #f7931a;
 }
 
@@ -1227,4 +1340,295 @@
 
 #symbol-search::placeholder {
   color: var(--text-muted);
+}
+
+/* ===== Agent Analysis Modal ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.agent-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 900px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-xl);
+}
+
+.agent-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+.agent-modal .modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-modal .modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Agent Tabs */
+.agent-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-tab {
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-base);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.agent-tab:hover {
+  background: var(--bg-alt);
+  color: var(--text);
+}
+
+.agent-tab.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* Agent Content */
+.agent-content {
+  display: none;
+}
+
+.agent-content.active {
+  display: block;
+}
+
+.agent-card {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+}
+
+.agent-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.agent-card-icon--indicator {
+  background: rgba(34, 211, 238, 0.15);
+}
+
+.agent-card-icon--pattern {
+  background: rgba(168, 85, 247, 0.15);
+}
+
+.agent-card-icon--trend {
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.agent-card-icon--decision {
+  background: rgba(16, 185, 129, 0.15);
+}
+
+.agent-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Agent Fields */
+.agent-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.agent-fields--levels {
+  margin-top: 16px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.agent-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agent-field--full {
+  grid-column: span 1;
+}
+
+.agent-field-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+.agent-field-value {
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.agent-field-value--bullish {
+  color: var(--success);
+}
+
+.agent-field-value--bearish {
+  color: var(--danger);
+}
+
+.agent-field-value--neutral {
+  color: var(--warning);
+}
+
+.agent-field-value--status {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Agent Analysis Section */
+.agent-analysis-section {
+  margin-top: 16px;
+}
+
+.agent-analysis {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin-top: 8px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.agent-analysis h1,
+.agent-analysis h2,
+.agent-analysis h3 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-analysis h1 {
+  font-size: 18px;
+}
+
+.agent-analysis h2 {
+  font-size: 16px;
+}
+
+.agent-analysis h3 {
+  font-size: 14px;
+}
+
+.agent-analysis p {
+  margin-bottom: 8px;
+}
+
+.agent-analysis ul,
+.agent-analysis ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.agent-analysis li {
+  margin-bottom: 4px;
+}
+
+.agent-analysis code {
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 13px;
+}
+
+.agent-analysis pre {
+  background: var(--bg);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.agent-analysis pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.agent-analysis blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 12px 0;
+  color: var(--text-muted);
+}
+
+.no-data {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 32px;
+  font-size: 14px;
+}
+
+/* Make activity items clickable */
+.activity-item {
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.activity-item:hover {
+  background: var(--surface);
+  transform: translateX(4px);
 }

@@ -32,7 +32,9 @@ class PatternAgent:
     """캔들 패턴 분석 에이전트."""
 
     def __init__(self, llm: BaseChatModel) -> None:
-        self.llm = llm.with_structured_output(PatternResult, strict=True)
+        self.llm = llm.with_structured_output(
+            PatternResult, method="function_calling"
+        )
 
     def __call__(self, state: TradingState):
         chart_images = state.get("chart_images") or {}

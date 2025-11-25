@@ -78,18 +78,24 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 
 ## 주요 환경변수
 
-| 변수                               | 설명                                                      |
-| ---------------------------------- | --------------------------------------------------------- |
-| `BYBIT_ENV`                        | demo / testnet / mainnet                                  |
-| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증                                            |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키                                                |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정                                          |
-| `WEB_SESSION_SECRET`               | 세션 암호화 키                                            |
-| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10)                                  |
-| `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)               |
-| `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                        |
-| `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app` |
-| `PRODUCTION`                       | `1` 또는 `true` 설정 시 HTTPS 전용 세션 쿠키 활성화       |
+| 변수                               | 설명                                                         |
+| ---------------------------------- | ------------------------------------------------------------ |
+| `BYBIT_ENV`                        | demo / testnet / mainnet                                     |
+| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증                                               |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키                                                   |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정                                             |
+| `WEB_SESSION_SECRET`               | 세션 암호화 키                                               |
+| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10)                                     |
+| `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)                  |
+| `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                           |
+| `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app`    |
+| `PRODUCTION`                       | `1` 또는 `true` 설정 시 HTTPS 전용 세션 쿠키 활성화          |
+| `MYSQL_URL`                        | MySQL 연결 URL (예: `mysql+pymysql://user:pwd@host:3306/db`) |
+| `MYSQL_ROOT_PASSWORD`              | docker-compose MySQL root 비밀번호 (기본: `rootpass`)        |
+| `MYSQL_DATABASE`                   | docker-compose MySQL 데이터베이스명 (기본: `crypto_trading`) |
+| `MYSQL_USER`                       | docker-compose MySQL 사용자 (기본: `crypto`)                 |
+| `MYSQL_PASSWORD`                   | docker-compose MySQL 비밀번호 (기본: `cryptopass`)           |
+| `FORCE_SQLITE`                     | `1` 설정 시 MySQL 대신 SQLite 강제 사용                      |
 
 ## 리스크 설정 기본값
 
@@ -109,6 +115,33 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 - **웹 서버(webapp.py)** 실행 시 Uvicorn에 `--proxy-headers --forwarded-allow-ips=*` 옵션을 추가하여 Railway 등 리버스 프록시 환경에서 HTTPS를 올바르게 감지하도록 한다.
 - 자세한 권장 패턴은 uv 공식 가이드([docs.astral.sh](https://docs.astral.sh/uv/guides/integration/docker/#installing-a-project))를 따른다.
 
+## 로컬 개발 환경 (docker-compose)
+
+로컬에서 MySQL과 함께 전체 시스템을 테스트하려면:
+
+```bash
+# 전체 서비스 시작 (MySQL + Bot + Web)
+docker-compose up -d
+
+# 로그 확인
+docker-compose logs -f
+
+# 서비스 중지
+docker-compose down
+
+# 볼륨 포함 완전 삭제 (MySQL 데이터 포함)
+docker-compose down -v
+```
+
+**기본 접속 정보:**
+
+- 웹 UI: http://localhost:8000
+- MySQL: `localhost:3306` (user: `crypto`, password: `cryptopass`, database: `crypto_trading`)
+
+**MySQL 대신 SQLite 사용:**
+
+`.env` 파일에 `FORCE_SQLITE=1`을 추가하면 MySQL 대신 SQLite를 사용합니다.
+
 ## 세션 및 쿠키 설정
 
 - 프로덕션 환경(Railway 등)에서는 세션 쿠키가 **HTTPS 전용**(`https_only=True`)으로 설정됩니다.
@@ -119,6 +152,59 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 ## 의존성 주의사항
 
 - `passlib[bcrypt]==1.7.4`는 최신 `bcrypt` 4.2.x에서 제거된 `__about__` 메타데이터에 의존한다. 런타임 오류를 방지하기 위해 `bcrypt==4.1.2`로 고정한다.
+
+## 즉시 실행 기능
+
+관리자 대시보드의 스케줄러 섹션에서 스케줄러 주기를 기다리지 않고 즉시 분석을 실행할 수 있습니다.
+
+### 기능
+
+- **전체 심볼 즉시 실행**: 설정된 모든 거래 심볼에 대해 분석 실행
+- **특정 심볼 실행**: 선택한 심볼에 대해서만 분석 실행
+
+### API 엔드포인트
+
+- `POST /admin/run-now`: 전체 심볼 즉시 실행 (백그라운드 스레드)
+- `POST /admin/run-symbol`: 특정 심볼 즉시 실행 (백그라운드 스레드)
+
+### 관련 파일
+
+- `app/web/admin.py` - 즉시 실행 API 엔드포인트
+- `templates/admin.html` - 즉시 실행 버튼 및 심볼 선택 모달
+- `static/admin.js` - 즉시 실행 함수 및 이벤트 핸들러
+
+## 에이전트 분석 모달
+
+공개/관리자 대시보드의 "최근 활동" 섹션에서 항목을 클릭하면 4개 에이전트(Indicator, Pattern, Trend, Decision)의 분석 보고서를 모달로 확인할 수 있습니다.
+
+### 기능
+
+- **탭 UI**: Indicator / Pattern / Trend / Decision 4개 탭으로 구분
+- **마크다운 렌더링**: 에이전트 분석 텍스트가 마크다운으로 렌더링됨
+- **전문 저장**: 모든 에이전트 분석 결과가 저널 `meta.agents` 필드에 저장됨
+- **표시/숨김 규칙**: `static/style.css`의 `.modal-backdrop`은 `hidden` 속성 토글만으로 제어하므로 JS에서는 `.active` 클래스를 다루지 않습니다.
+
+### 저널 메타 데이터 구조
+
+```json
+{
+  "decision": { ... },
+  "agents": {
+    "indicator": { "rsi": 45.2, "macd_signal": "bullish", "summary": "..." },
+    "pattern": { "patterns_found": ["hammer"], "analysis": "..." },
+    "trend": { "trend_direction": "uptrend", "analysis": "..." },
+    "decision": { "status": "long", "explain": "..." }
+  }
+}
+```
+
+### 관련 파일
+
+- `app/workflows/trading.py` - 에이전트 결과 수집 및 저널 저장
+- `templates/index.html` - 공개 대시보드 모달 UI
+- `static/admin.js` - 관리자 대시보드 모달 로직
+- `static/admin.css` - 모달 스타일
+- `static/app.js` - 마크다운 렌더링 함수
 
 ## 폴더별 상세 가이드
 

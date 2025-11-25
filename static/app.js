@@ -1720,7 +1720,7 @@ function renderMarkdownToHtml(raw) {
     }
 
     if (/^[-*+]\s+/.test(trimmed)) {
-      flushParagraph();
+      flushPendingInOrder();
       const itemText = trimmed.replace(/^[-*+]\s+/, "");
       listBuffer.push(`<li>${applyInlineMarkdown(itemText)}</li>`);
       if (listBufferSince === null) {

@@ -82,4 +82,3 @@ DECISION_TEMPLATE = dedent(
     4. Reasoning(explain)은 bullet로 간결히 작성
     """
 ).strip()
-

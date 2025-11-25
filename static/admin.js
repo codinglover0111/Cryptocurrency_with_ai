@@ -15,6 +15,7 @@ const adminState = {
   availableSymbols: [],
   selectedSymbols: [],
   defaultSymbols: [],
+  recentActivityItems: [],
 };
 
 // Utilities
@@ -120,6 +121,146 @@ function formatTime(isoString) {
   } catch {
     return isoString;
   }
+}
+
+// Markdown to HTML renderer
+function renderMarkdownToHtml(raw) {
+  if (raw === null || raw === undefined) {
+    return '<p class="muted">내용 없음</p>';
+  }
+
+  let text = String(raw);
+  if (!text.trim()) {
+    return '<p class="muted">내용 없음</p>';
+  }
+
+  text = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\t/g, "    ")
+    .replace(/\\n/g, "\n");
+
+  const codeBlocks = [];
+  text = text.replace(/```([\s\S]*?)```/g, (_, code) => {
+    const index = codeBlocks.length;
+    const cleaned = code.replace(/^\s*[\r\n]?/, "").replace(/[\r\n\s]*$/, "");
+    codeBlocks.push(`<pre><code>${escapeHtml(cleaned)}</code></pre>`);
+    return `@@CODE_BLOCK_${index}@@`;
+  });
+
+  const lines = text.split("\n");
+  const blocks = [];
+  let listBuffer = [];
+  let paragraphBuffer = [];
+  let lineIndex = 0;
+  let listBufferSince = null;
+  let paragraphBufferSince = null;
+
+  const applyInlineMarkdown = (line) => {
+    let result = escapeHtml(line);
+    result = result.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    result = result.replace(/\*(.+?)\*/g, "<em>$1</em>");
+    result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
+    return result;
+  };
+
+  const flushParagraph = () => {
+    if (!paragraphBuffer.length) return;
+    const paragraph = paragraphBuffer.join("<br />");
+    blocks.push(`<p>${paragraph}</p>`);
+    paragraphBuffer = [];
+    paragraphBufferSince = null;
+  };
+
+  const flushList = () => {
+    if (!listBuffer.length) return;
+    blocks.push(`<ul>${listBuffer.join("")}</ul>`);
+    listBuffer = [];
+    listBufferSince = null;
+  };
+
+  const flushPendingInOrder = () => {
+    if (!listBuffer.length && !paragraphBuffer.length) return;
+    const pending = [];
+    if (listBuffer.length) {
+      pending.push({ type: "list", since: listBufferSince ?? lineIndex });
+    }
+    if (paragraphBuffer.length) {
+      pending.push({
+        type: "paragraph",
+        since: paragraphBufferSince ?? lineIndex,
+      });
+    }
+    pending
+      .sort((a, b) => a.since - b.since)
+      .forEach((entry) => {
+        if (entry.type === "list") {
+          flushList();
+        } else {
+          flushParagraph();
+        }
+      });
+  };
+
+  lines.forEach((line) => {
+    lineIndex += 1;
+    const trimmed = line.trim();
+
+    if (trimmed && /^@@CODE_BLOCK_\d+@@$/.test(trimmed)) {
+      flushPendingInOrder();
+      blocks.push(trimmed);
+      return;
+    }
+
+    if (!trimmed) {
+      flushPendingInOrder();
+      return;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      flushPendingInOrder();
+      const level = headingMatch[1].length;
+      const content = headingMatch[2];
+      blocks.push(`<h${level}>${applyInlineMarkdown(content)}</h${level}>`);
+      return;
+    }
+
+    if (/^[-*+]\s+/.test(trimmed)) {
+      flushPendingInOrder();
+      const itemText = trimmed.replace(/^[-*+]\s+/, "");
+      listBuffer.push(`<li>${applyInlineMarkdown(itemText)}</li>`);
+      if (listBufferSince === null) {
+        listBufferSince = lineIndex;
+      }
+      return;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      flushPendingInOrder();
+      const quoteText = trimmed.replace(/^>\s?/, "");
+      blocks.push(`<blockquote>${applyInlineMarkdown(quoteText)}</blockquote>`);
+      return;
+    }
+
+    paragraphBuffer.push(applyInlineMarkdown(line));
+    if (paragraphBufferSince === null) {
+      paragraphBufferSince = lineIndex;
+    }
+  });
+
+  flushPendingInOrder();
+
+  if (!blocks.length) {
+    return '<p class="muted">내용 없음</p>';
+  }
+
+  let html = blocks.join("");
+  codeBlocks.forEach((blockHtml, index) => {
+    const placeholder = `@@CODE_BLOCK_${index}@@`;
+    html = html.replace(placeholder, blockHtml);
+  });
+
+  return html;
 }
 
 // Auth
@@ -424,6 +565,7 @@ async function loadRecentActivity() {
       "/api/journals_filtered?limit=10&types=decision,action,error&today_only=0"
     );
     const items = data.items || [];
+    adminState.recentActivityItems = items;
 
     if (!items.length) {
       container.innerHTML = '<p class="muted">최근 활동 없음</p>';
@@ -431,7 +573,7 @@ async function loadRecentActivity() {
     }
 
     const html = items
-      .map((item) => {
+      .map((item, index) => {
         const type = (item.entry_type || "").toLowerCase();
         const typeClass =
           type === "error"
@@ -452,7 +594,7 @@ async function loadRecentActivity() {
         if (content.length > 100) content = content.substring(0, 100) + "...";
 
         return `
-          <div class="activity-item activity-item--${typeClass}">
+          <div class="activity-item activity-item--${typeClass}" data-action="show-analysis" data-index="${index}" title="클릭하여 상세 분석 보기">
             <span class="activity-time">${formatTime(item.ts)}</span>
             <div class="activity-content">
               <span class="activity-type">${typeLabel}${symbol}</span>
@@ -965,6 +1107,12 @@ function setupEventListeners() {
     logoutBtn.addEventListener("click", handleLogout);
   }
 
+  // Theme toggle
+  const themeToggleBtn = el("theme-toggle-btn");
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener("click", handleThemeToggle);
+  }
+
   // Agent config
   const saveAgentBtn = el("save-agent-config");
   const resetAgentBtn = el("reset-agent-config");
@@ -1012,6 +1160,35 @@ function setupEventListeners() {
   if (resumeSchedulerBtn)
     resumeSchedulerBtn.addEventListener("click", resumeScheduler);
 
+  // Immediate Execution
+  const runAllNowBtn = el("run-all-now");
+  const runSymbolNowBtn = el("run-symbol-now");
+  console.log("[setupEventListeners] runAllNowBtn:", runAllNowBtn);
+  console.log("[setupEventListeners] runSymbolNowBtn:", runSymbolNowBtn);
+  if (runAllNowBtn) runAllNowBtn.addEventListener("click", runAnalysisNow);
+  if (runSymbolNowBtn) {
+    runSymbolNowBtn.addEventListener("click", openSymbolRunModal);
+    console.log("[setupEventListeners] runSymbolNowBtn 이벤트 리스너 등록됨");
+  } else {
+    console.warn("[setupEventListeners] runSymbolNowBtn을 찾을 수 없습니다");
+  }
+
+  // Symbol Run Modal
+  const closeSymbolModalBtn = el("close-symbol-run-modal");
+  const confirmRunSymbolBtn = el("confirm-run-symbol");
+  const symbolRunModal = el("symbol-run-modal");
+  if (closeSymbolModalBtn)
+    closeSymbolModalBtn.addEventListener("click", closeSymbolRunModal);
+  if (confirmRunSymbolBtn)
+    confirmRunSymbolBtn.addEventListener("click", confirmRunSymbol);
+  if (symbolRunModal) {
+    symbolRunModal.addEventListener("click", (e) => {
+      if (e.target.classList.contains("modal-backdrop")) {
+        closeSymbolRunModal();
+      }
+    });
+  }
+
   // Logs
   const refreshLogsBtn = el("refresh-logs");
   const logLevelFilter = el("log-level-filter");
@@ -1031,15 +1208,38 @@ function setupEventListeners() {
     saveSymbolsBtn.addEventListener("click", saveTradingSymbols);
   if (resetSymbolsBtn)
     resetSymbolsBtn.addEventListener("click", resetTradingSymbols);
+
+  // Event delegation for symbol toggles and activity clicks
+  document.addEventListener("click", (e) => {
+    const target = e.target.closest("[data-action]");
+    if (!target) return;
+
+    const action = target.dataset.action;
+    console.log("[이벤트 위임] action:", action, "target:", target);
+
+    if (action === "toggle-symbol") {
+      const symbol = target.dataset.symbol;
+      if (symbol) toggleSymbol(symbol);
+    } else if (action === "show-analysis") {
+      const index = parseInt(target.dataset.index, 10);
+      console.log("[이벤트 위임] show-analysis index:", index);
+      if (!isNaN(index)) showAgentAnalysisModal(index);
+    }
+  });
 }
+
+// Global function exports (for onclick handlers in HTML)
+window.unblockIP = unblockIP;
 
 // Initialize
 window.addEventListener("DOMContentLoaded", () => {
+  console.log("[admin.js] DOMContentLoaded - 초기화 시작");
   setupNavigation();
   setupEventListeners();
   setupApiKeysTabs();
   setupVisibilityToggles();
   checkAuth();
+  console.log("[admin.js] 초기화 완료");
 
   // Auto refresh dashboard every 30 seconds
   setInterval(() => {
@@ -1108,6 +1308,178 @@ async function resumeScheduler() {
     alert("스케줄러가 재개되었습니다.");
   } catch (err) {
     alert("스케줄러 재개 실패: " + err.message);
+  }
+}
+
+// ===== Immediate Execution =====
+
+async function runAnalysisNow() {
+  if (
+    !confirm(
+      "전체 심볼에 대해 즉시 분석을 실행하시겠습니까?\n(일시 중단 상태와 관계없이 실행됩니다)"
+    )
+  ) {
+    return;
+  }
+
+  const btn = el("run-all-now");
+  const originalText = btn ? btn.innerHTML : "";
+  const hint = el("scheduler-hint");
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = "<span>⏳</span> 요청 중...";
+    }
+    if (hint) hint.textContent = "전체 심볼 분석 요청 중...";
+
+    const result = await postJSON("/admin/run-now", {}, {}, 10000); // 10초 타임아웃
+
+    if (hint) hint.textContent = "✓ 백그라운드에서 분석 시작됨";
+    setTimeout(() => {
+      if (hint && hint.textContent === "✓ 백그라운드에서 분석 시작됨")
+        hint.textContent = "";
+    }, 5000);
+
+    alert(
+      result.message ||
+        "전체 심볼 분석이 백그라운드에서 시작되었습니다.\n결과는 로그 및 최근 활동에서 확인하세요."
+    );
+  } catch (err) {
+    console.error("즉시 실행 오류:", err);
+    if (hint) hint.textContent = "✗ 실행 요청 실패";
+    alert("즉시 실행 실패: " + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
+  }
+}
+
+async function openSymbolRunModal() {
+  console.log("[openSymbolRunModal] 함수 호출됨");
+
+  const modal = el("symbol-run-modal");
+  const select = el("run-symbol-select");
+
+  console.log("[openSymbolRunModal] modal:", modal, "select:", select);
+
+  if (!modal || !select) {
+    console.error(
+      "[openSymbolRunModal] 모달 또는 셀렉트 요소를 찾을 수 없습니다"
+    );
+    alert("모달 요소를 찾을 수 없습니다. 페이지를 새로고침해 주세요.");
+    return;
+  }
+
+  // 로딩 표시
+  select.innerHTML = '<option value="">심볼 로딩 중...</option>';
+  select.disabled = true;
+
+  // hidden 속성 제거 및 display 강제 설정
+  modal.hidden = false;
+  modal.removeAttribute("hidden");
+  modal.style.display = "flex";
+  document.body.style.overflow = "hidden";
+
+  console.log(
+    "[openSymbolRunModal] 모달 표시됨, hidden:",
+    modal.hidden,
+    "display:",
+    modal.style.display
+  );
+
+  try {
+    // 항상 API에서 최신 심볼 목록 가져오기
+    console.log("[openSymbolRunModal] API 호출 시작");
+    const [availableRes, currentRes] = await Promise.all([
+      fetchJSON("/admin/trading-symbols/available"),
+      fetchJSON("/admin/trading-symbols"),
+    ]);
+    console.log("[openSymbolRunModal] API 응답:", { availableRes, currentRes });
+
+    const availableSymbols = availableRes.symbols || [];
+    const selectedSymbols = currentRes.symbols || [];
+
+    // 설정된 심볼이 있으면 설정된 것만, 없으면 전체 목록
+    const symbols =
+      selectedSymbols.length > 0 ? selectedSymbols : availableSymbols;
+    console.log("[openSymbolRunModal] 표시할 심볼 수:", symbols.length);
+
+    if (symbols.length === 0) {
+      select.innerHTML =
+        '<option value="">사용 가능한 심볼이 없습니다</option>';
+      return;
+    }
+
+    select.innerHTML =
+      '<option value="">심볼을 선택하세요</option>' +
+      symbols
+        .map(
+          (s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`
+        )
+        .join("");
+  } catch (err) {
+    console.error("[openSymbolRunModal] 심볼 목록 로드 실패:", err);
+    select.innerHTML = `<option value="">심볼 로드 실패: ${escapeHtml(
+      err.message || "알 수 없는 오류"
+    )}</option>`;
+  } finally {
+    select.disabled = false;
+  }
+}
+
+function closeSymbolRunModal() {
+  const modal = el("symbol-run-modal");
+  if (modal) {
+    modal.hidden = true;
+    modal.style.display = "none";
+    document.body.style.overflow = "";
+  }
+}
+
+async function confirmRunSymbol() {
+  const select = el("run-symbol-select");
+  const symbol = select?.value;
+
+  if (!symbol) {
+    alert("심볼을 선택하세요.");
+    return;
+  }
+
+  const btn = el("confirm-run-symbol");
+  const originalText = btn ? btn.innerHTML : "";
+  const hint = el("scheduler-hint");
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = "<span>⏳</span> 요청 중...";
+    }
+
+    const result = await postJSON("/admin/run-symbol", { symbol }, {}, 10000); // 10초 타임아웃
+
+    closeSymbolRunModal();
+
+    if (hint) hint.textContent = `✓ ${symbol} 분석 시작됨`;
+    setTimeout(() => {
+      if (hint && hint.textContent.includes("분석 시작됨"))
+        hint.textContent = "";
+    }, 5000);
+
+    alert(
+      result.message ||
+        `${symbol} 분석이 백그라운드에서 시작되었습니다.\n(일시 중단 상태와 관계없이 실행됩니다)`
+    );
+  } catch (err) {
+    console.error("심볼 실행 오류:", err);
+    alert("즉시 실행 실패: " + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
   }
 }
 
@@ -1289,8 +1661,14 @@ async function loadTradingSymbols() {
   } catch (err) {
     console.error("거래 심볼 로드 실패:", err);
     const container = el("available-symbols");
+    const selectedContainer = el("selected-symbols");
     if (container) {
-      container.innerHTML = '<p class="muted">심볼을 불러올 수 없습니다</p>';
+      container.innerHTML = `<p class="muted">심볼을 불러올 수 없습니다: ${escapeHtml(
+        err.message || "알 수 없는 오류"
+      )}</p>`;
+    }
+    if (selectedContainer) {
+      selectedContainer.innerHTML = '<p class="muted">심볼 로드 실패</p>';
     }
   }
 }
@@ -1318,7 +1696,7 @@ function renderSymbols(filterText = "") {
               isBTC ? "symbol-chip--btc" : ""
             }"
             data-symbol="${escapeHtml(symbol)}"
-            onclick="toggleSymbol('${escapeHtml(symbol)}')"
+            data-action="toggle-symbol"
           >
             ${isBTC ? "⭐ " : ""}${escapeHtml(symbol)}
             <span class="symbol-remove">×</span>
@@ -1348,7 +1726,7 @@ function renderSymbols(filterText = "") {
           <button
             class="symbol-chip ${isBTC ? "symbol-chip--btc-available" : ""}"
             data-symbol="${escapeHtml(symbol)}"
-            onclick="toggleSymbol('${escapeHtml(symbol)}')"
+            data-action="toggle-symbol"
           >
             ${isBTC ? "⭐ " : ""}${escapeHtml(symbol)}
           </button>
@@ -1451,3 +1829,465 @@ function resetTradingSymbols() {
       hint.textContent = "";
   }, 2000);
 }
+
+// ===== Agent Analysis Modal =====
+
+function ensureAgentModalDOM() {
+  if (document.getElementById("agent-modal-backdrop")) return;
+
+  console.log("[ensureAgentModalDOM] 모달 DOM 생성 시작");
+
+  const modalHtml = `
+    <div class="modal-backdrop" id="agent-modal-backdrop" hidden style="display: none;">
+      <div class="modal agent-modal">
+        <div class="modal-header">
+          <h3>🤖 에이전트 분석 보고서</h3>
+          <button class="btn btn--ghost btn--sm" id="close-agent-modal-btn">닫기</button>
+        </div>
+        <div class="modal-body">
+          <div class="agent-tabs" id="agent-tabs">
+            <button class="agent-tab active" data-tab="indicator">📊 Indicator</button>
+            <button class="agent-tab" data-tab="pattern">🔮 Pattern</button>
+            <button class="agent-tab" data-tab="trend">📈 Trend</button>
+            <button class="agent-tab" data-tab="decision">🎯 Decision</button>
+          </div>
+          <div id="agent-contents"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = modalHtml;
+  document.body.appendChild(wrapper.firstElementChild);
+  console.log("[ensureAgentModalDOM] 모달 DOM 생성 완료");
+
+  // Setup event listeners
+  const backdrop = document.getElementById("agent-modal-backdrop");
+  if (backdrop) {
+    backdrop.addEventListener("click", (e) => {
+      if (e.target.classList.contains("modal-backdrop")) {
+        closeAgentAnalysisModal();
+      }
+    });
+  }
+
+  const closeBtn = document.getElementById("close-agent-modal-btn");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", closeAgentAnalysisModal);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeAgentAnalysisModal();
+    }
+  });
+}
+
+function showAgentAnalysisModal(index) {
+  console.log("[showAgentAnalysisModal] 호출됨, index:", index);
+  ensureAgentModalDOM();
+
+  const item = adminState.recentActivityItems[index];
+  console.log("[showAgentAnalysisModal] item:", item);
+
+  if (!item) {
+    console.warn(
+      "[showAgentAnalysisModal] 해당 인덱스의 아이템을 찾을 수 없습니다."
+    );
+    return;
+  }
+
+  const modal = document.getElementById("agent-modal-backdrop");
+  const contentsEl = document.getElementById("agent-contents");
+
+  console.log("[showAgentAnalysisModal] modal 요소:", modal);
+
+  const meta = item.meta || {};
+  const agents = meta.agents || {};
+  console.log("[showAgentAnalysisModal] agents 데이터:", agents);
+
+  // Render agent contents
+  if (contentsEl) {
+    contentsEl.innerHTML = `
+      ${renderIndicatorContent(agents.indicator)}
+      ${renderPatternContent(agents.pattern)}
+      ${renderTrendContent(agents.trend)}
+      ${renderDecisionContent(agents.decision || meta.decision || meta)}
+    `;
+  }
+
+  // Setup tabs
+  setupAgentTabs();
+
+  // Show modal
+  if (modal) {
+    modal.hidden = false;
+    modal.removeAttribute("hidden");
+    modal.style.display = "flex";
+    document.body.style.overflow = "hidden";
+    console.log("[showAgentAnalysisModal] 모달 표시 설정 완료 (display: flex)");
+  } else {
+    console.error(
+      "[showAgentAnalysisModal] agent-modal-backdrop 요소를 찾을 수 없습니다."
+    );
+  }
+}
+
+function closeAgentAnalysisModal() {
+  const modal = document.getElementById("agent-modal-backdrop");
+  if (modal) {
+    modal.hidden = true;
+    modal.style.display = "none";
+    document.body.style.overflow = "";
+  }
+}
+
+function setupAgentTabs() {
+  const tabs = document.querySelectorAll(".agent-tab");
+  tabs.forEach((tab) => {
+    tab.onclick = () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const tabName = tab.dataset.tab;
+      document.querySelectorAll(".agent-content").forEach((c) => {
+        c.classList.remove("active");
+      });
+      const content = document.getElementById(`agent-${tabName}`);
+      if (content) content.classList.add("active");
+    };
+  });
+  // Show first tab
+  const firstTab = document.querySelector('.agent-tab[data-tab="indicator"]');
+  if (firstTab) firstTab.click();
+}
+
+function renderIndicatorContent(data) {
+  if (!data) {
+    return `
+      <div class="agent-content" id="agent-indicator">
+        <div class="agent-card">
+          <div class="agent-card-header">
+            <div class="agent-card-icon agent-card-icon--indicator">📊</div>
+            <div class="agent-card-title">Indicator Agent</div>
+          </div>
+          <div class="no-data">분석 데이터가 없습니다</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const signalClass =
+    data.macd_signal === "bullish"
+      ? "bullish"
+      : data.macd_signal === "bearish"
+      ? "bearish"
+      : "neutral";
+
+  return `
+    <div class="agent-content" id="agent-indicator">
+      <div class="agent-card">
+        <div class="agent-card-header">
+          <div class="agent-card-icon agent-card-icon--indicator">📊</div>
+          <div class="agent-card-title">Indicator Agent</div>
+        </div>
+        <div class="agent-fields">
+          <div class="agent-field">
+            <div class="agent-field-label">RSI</div>
+            <div class="agent-field-value">${formatNumber(data.rsi, 2)}</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-field-label">MACD Signal</div>
+            <div class="agent-field-value agent-field-value--${signalClass}">${escapeHtml(
+    data.macd_signal || "-"
+  )}</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-field-label">Stochastic</div>
+            <div class="agent-field-value">${formatNumber(
+              data.stochastic,
+              2
+            )}</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-field-label">Bollinger Position</div>
+            <div class="agent-field-value">${escapeHtml(
+              data.bollinger_position || "-"
+            )}</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-field-label">Momentum Score</div>
+            <div class="agent-field-value">${formatNumber(
+              data.momentum_score,
+              4
+            )}</div>
+          </div>
+        </div>
+        ${
+          data.summary
+            ? `
+          <div class="agent-analysis-section">
+            <div class="agent-field-label">분석 요약</div>
+            <div class="agent-analysis">${renderMarkdownToHtml(
+              data.summary
+            )}</div>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderPatternContent(data) {
+  if (!data) {
+    return `
+      <div class="agent-content" id="agent-pattern">
+        <div class="agent-card">
+          <div class="agent-card-header">
+            <div class="agent-card-icon agent-card-icon--pattern">🔮</div>
+            <div class="agent-card-title">Pattern Agent</div>
+          </div>
+          <div class="no-data">분석 데이터가 없습니다</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const signalClass =
+    data.pattern_signal === "bullish"
+      ? "bullish"
+      : data.pattern_signal === "bearish"
+      ? "bearish"
+      : "neutral";
+  const patterns = Array.isArray(data.patterns_found)
+    ? data.patterns_found
+    : [];
+
+  return `
+    <div class="agent-content" id="agent-pattern">
+      <div class="agent-card">
+        <div class="agent-card-header">
+          <div class="agent-card-icon agent-card-icon--pattern">🔮</div>
+          <div class="agent-card-title">Pattern Agent</div>
+        </div>
+        <div class="agent-fields">
+          <div class="agent-field">
+            <div class="agent-field-label">Pattern Signal</div>
+            <div class="agent-field-value agent-field-value--${signalClass}">${escapeHtml(
+    data.pattern_signal || "-"
+  )}</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-field-label">Confidence</div>
+            <div class="agent-field-value">${formatNumber(
+              (data.confidence || 0) * 100,
+              1
+            )}%</div>
+          </div>
+        </div>
+        ${
+          patterns.length > 0
+            ? `
+          <div class="agent-analysis-section">
+            <div class="agent-field-label">발견된 패턴</div>
+            <div class="agent-field-value">${
+              patterns.map((p) => escapeHtml(p)).join(", ") || "-"
+            }</div>
+          </div>
+        `
+            : ""
+        }
+        ${
+          data.analysis
+            ? `
+          <div class="agent-analysis-section">
+            <div class="agent-field-label">분석 내용</div>
+            <div class="agent-analysis">${renderMarkdownToHtml(
+              data.analysis
+            )}</div>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderTrendContent(data) {
+  if (!data) {
+    return `
+      <div class="agent-content" id="agent-trend">
+        <div class="agent-card">
+          <div class="agent-card-header">
+            <div class="agent-card-icon agent-card-icon--trend">📈</div>
+            <div class="agent-card-title">Trend Agent</div>
+          </div>
+          <div class="no-data">분석 데이터가 없습니다</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const trendClass =
+    data.trend_direction === "uptrend"
+      ? "bullish"
+      : data.trend_direction === "downtrend"
+      ? "bearish"
+      : "neutral";
+  const supports = Array.isArray(data.support_levels)
+    ? data.support_levels
+    : [];
+  const resistances = Array.isArray(data.resistance_levels)
+    ? data.resistance_levels
+    : [];
+
+  return `
+    <div class="agent-content" id="agent-trend">
+      <div class="agent-card">
+        <div class="agent-card-header">
+          <div class="agent-card-icon agent-card-icon--trend">📈</div>
+          <div class="agent-card-title">Trend Agent</div>
+        </div>
+        <div class="agent-fields">
+          <div class="agent-field">
+            <div class="agent-field-label">Trend Direction</div>
+            <div class="agent-field-value agent-field-value--${trendClass}">${escapeHtml(
+    data.trend_direction || "-"
+  )}</div>
+          </div>
+          <div class="agent-field">
+            <div class="agent-field-label">Volatility (ATR %)</div>
+            <div class="agent-field-value">${formatNumber(
+              data.volatility,
+              2
+            )}%</div>
+          </div>
+        </div>
+        <div class="agent-fields agent-fields--levels">
+          <div class="agent-field agent-field--full">
+            <div class="agent-field-label">Support Levels</div>
+            <div class="agent-field-value">${
+              supports.length > 0
+                ? supports.map((s) => formatNumber(s, 2)).join(", ")
+                : "-"
+            }</div>
+          </div>
+          <div class="agent-field agent-field--full">
+            <div class="agent-field-label">Resistance Levels</div>
+            <div class="agent-field-value">${
+              resistances.length > 0
+                ? resistances.map((r) => formatNumber(r, 2)).join(", ")
+                : "-"
+            }</div>
+          </div>
+        </div>
+        ${
+          data.analysis
+            ? `
+          <div class="agent-analysis-section">
+            <div class="agent-field-label">분석 내용</div>
+            <div class="agent-analysis">${renderMarkdownToHtml(
+              data.analysis
+            )}</div>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderDecisionContent(data) {
+  if (!data) {
+    return `
+      <div class="agent-content" id="agent-decision">
+        <div class="agent-card">
+          <div class="agent-card-header">
+            <div class="agent-card-icon agent-card-icon--decision">🎯</div>
+            <div class="agent-card-title">Decision Agent</div>
+          </div>
+          <div class="no-data">결정 데이터가 없습니다</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const status = (data.status || data.Status || "").toLowerCase();
+  const statusClass =
+    status === "long" ? "bullish" : status === "short" ? "bearish" : "neutral";
+
+  return `
+    <div class="agent-content" id="agent-decision">
+      <div class="agent-card">
+        <div class="agent-card-header">
+          <div class="agent-card-icon agent-card-icon--decision">🎯</div>
+          <div class="agent-card-title">Decision Agent</div>
+        </div>
+        <div class="agent-fields">
+          <div class="agent-field">
+            <div class="agent-field-label">Status</div>
+            <div class="agent-field-value agent-field-value--${statusClass} agent-field-value--status">${escapeHtml(
+    (data.status || data.Status || "-").toUpperCase()
+  )}</div>
+          </div>
+          ${
+            data.tp
+              ? `
+            <div class="agent-field">
+              <div class="agent-field-label">Take Profit</div>
+              <div class="agent-field-value agent-field-value--bullish">${formatNumber(
+                data.tp,
+                4
+              )}</div>
+            </div>
+          `
+              : ""
+          }
+          ${
+            data.sl
+              ? `
+            <div class="agent-field">
+              <div class="agent-field-label">Stop Loss</div>
+              <div class="agent-field-value agent-field-value--bearish">${formatNumber(
+                data.sl,
+                4
+              )}</div>
+            </div>
+          `
+              : ""
+          }
+          ${
+            data.leverage
+              ? `
+            <div class="agent-field">
+              <div class="agent-field-label">Leverage</div>
+              <div class="agent-field-value">${data.leverage}x</div>
+            </div>
+          `
+              : ""
+          }
+        </div>
+        ${
+          data.explain
+            ? `
+          <div class="agent-analysis-section">
+            <div class="agent-field-label">판단 근거</div>
+            <div class="agent-analysis">${renderMarkdownToHtml(
+              data.explain
+            )}</div>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    </div>
+  `;
+}
+
+// Export modal functions
+window.showAgentAnalysisModal = showAgentAnalysisModal;
+window.closeAgentAnalysisModal = closeAgentAnalysisModal;

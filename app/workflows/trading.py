@@ -227,7 +227,6 @@ def _csv_to_df(csv_text: str) -> pd.DataFrame:
             StringIO(csv_text),
             index_col=0,
             parse_dates=True,
-            infer_datetime_format=True,
         )
     except Exception:
         return pd.DataFrame(
@@ -299,7 +298,7 @@ def _run_multi_agent_cycle(
         state = _build_multi_agent_state(deps, ctx)
         result_state = graph.run(state)
     except Exception as exc:
-        LOGGER.warning("Multi-agent 워크플로우 실패: %s", exc)
+        LOGGER.warning("Multi-agent 워크플로우 실패: %s", exc, exc_info=True)
         return None
 
     decision = result_state.get("decision")
@@ -310,8 +309,22 @@ def _run_multi_agent_cycle(
         decision.model_dump() if hasattr(decision, "model_dump") else dict(decision)
     )
     decision_payload.setdefault("Status", decision_payload.get("status"))
+
+    # 모든 에이전트 분석 결과 수집
+    agents_data: Dict[str, Any] = {}
+    for agent_key in ("indicator", "pattern", "trend"):
+        agent_result = result_state.get(agent_key)
+        if agent_result is not None:
+            agents_data[agent_key] = (
+                agent_result.model_dump()
+                if hasattr(agent_result, "model_dump")
+                else dict(agent_result)
+            )
+    agents_data["decision"] = decision_payload
+
     return {
         "decision": decision_payload,
+        "agents": agents_data,
         "state": result_state,
     }
 
@@ -1423,6 +1436,7 @@ def _execute_trade(
     deps: AutomationDependencies,
     ctx: PromptContext,
     decision: Dict[str, Any],
+    agents_data: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Translate a validated AI decision into exchange orders and journal logs."""
 
@@ -1439,7 +1453,9 @@ def _execute_trade(
         if "Status" not in decision:
             decision["Status"] = ai_status
     if ai_status not in {"long", "short"}:
-        _handle_non_trade_actions(deps, decision, ctx.current_price, ai_status)
+        _handle_non_trade_actions(
+            deps, decision, ctx.current_price, ai_status, agents_data
+        )
         return
 
     side = "buy" if ai_status == "long" else "sell"
@@ -1808,6 +1824,8 @@ def _execute_trade(
     )
     if confirm_meta is not None:
         meta_payload["confirm"] = confirm_meta
+    if agents_data is not None:
+        meta_payload["agents"] = agents_data
 
     try:
         deps.store.record_journal(
@@ -1856,6 +1874,7 @@ def _handle_non_trade_actions(
     decision: Dict[str, Any],
     current_price: float,
     ai_status: str,
+    agents_data: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist journaling or emergency close instructions when no trade opens."""
 
@@ -1868,6 +1887,8 @@ def _handle_non_trade_actions(
             else:
                 meta_payload = {"decision": decision}
             meta_payload.setdefault("status", "hold")
+            if agents_data is not None:
+                meta_payload["agents"] = agents_data
             deps.store.record_journal(
                 {
                     "symbol": deps.contract_symbol,
@@ -1924,13 +1945,18 @@ def _handle_non_trade_actions(
             LOGGER.error("PNL calc failed: %s", exc)
         deps.bybit.close_symbol_positions(deps.contract_symbol)
         try:
+            stop_meta: Dict[str, Any] = (
+                dict(decision) if isinstance(decision, dict) else {"decision": decision}
+            )
+            if agents_data is not None:
+                stop_meta["agents"] = agents_data
             deps.store.record_journal(
                 {
                     "symbol": deps.contract_symbol,
                     "entry_type": "action",
                     "content": "close_all",
                     "reason": decision.get("explain") or "stop signal",
-                    "meta": decision,
+                    "meta": stop_meta,
                 }
             )
         except Exception as exc:
@@ -2027,9 +2053,12 @@ def automation_for_symbol(
             # BTC 분석 결과 저장 (다른 심볼에서 참조할 수 있도록)
             _save_btc_analysis(deps.store, deps.contract_symbol, decision_payload)
 
+            # 에이전트 분석 결과
+            agents_data = ma_result.get("agents")
+
             if _handle_close_now(deps, ctx, decision_payload):
                 return
-            _execute_trade(deps, ctx, decision_payload)
+            _execute_trade(deps, ctx, decision_payload, agents_data)
             return
         except Exception as exc:
             LOGGER.error(
@@ -2050,6 +2079,32 @@ def automation_for_symbol(
                 delay,
             )
             time.sleep(delay)
+
+
+def run_automation_for_all_symbols() -> None:
+    """전체 거래 심볼에 대해 자동매매 분석을 실행합니다."""
+    symbols = parse_trading_symbols()
+
+    # BTC 우선 정렬
+    btc_first = []
+    others = []
+    for s in symbols:
+        if s.upper().startswith("BTC"):
+            btc_first.append(s)
+        else:
+            others.append(s)
+    sorted_symbols = btc_first + others
+
+    LOGGER.info("즉시 실행: %s 심볼 분석 시작", len(sorted_symbols))
+
+    for symbol in sorted_symbols:
+        try:
+            LOGGER.info("즉시 실행: %s 분석 중...", symbol)
+            automation_for_symbol(symbol, symbols=sorted_symbols)
+        except Exception as exc:
+            LOGGER.error("즉시 실행: %s 분석 오류 - %s", symbol, exc)
+
+    LOGGER.info("즉시 실행: 전체 분석 완료")
 
 
 def run_loss_review(
