@@ -22,7 +22,12 @@ from app.core.symbols import parse_trading_symbols, to_ccxt_symbols
 from utils.bybit_utils import BybitUtils
 from utils.storage import TradeStore, StorageConfig
 from app.services.journal import JournalService
-from app.graph.llm_factory import create_llm, LLMConfigurationError
+from app.graph.llm_factory import (
+    LLMConfigurationError,
+    create_llm,
+    resolve_ai_model,
+    resolve_ai_provider,
+)
 from app.auth.routes import router as auth_router
 from app.web import admin_router, user_router
 
@@ -1643,8 +1648,8 @@ def _try_ai_review(
 ) -> Optional[str]:
     """간단한 AI 리뷰 텍스트 생성. 설정이 없으면 None."""
     try:
-        provider = os.getenv("AI_PROVIDER", "gemini").lower()
-        model = os.getenv("AI_MODEL", "gemini-2.0-flash")
+        provider = resolve_ai_provider()
+        model = resolve_ai_model(provider)
         try:
             llm = create_llm(provider=provider, model=model, temperature=0.1)
         except LLMConfigurationError:

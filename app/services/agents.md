@@ -7,7 +7,7 @@
 ## 파일 가이드
 
 - `market_data.py`: CCXT/Bybit 유틸을 이용해 OHLCV, 포지션, 주문 데이터를 조회하고 CSV/이미지용 포맷으로 가공
-- `journal.py`: `JournalService`로 트레이드/액션 로그 저장, 리뷰용 리포트 생성, LLM 요약 호출
+- `journal.py`: `JournalService`로 트레이드/액션 로그 저장, 리뷰용 리포트 생성, LLM 요약 호출 (LLM은 `resolve_ai_provider()`로 OpenRouter/OpenAI 등 자동 감지)
 - `__init__.py`: 익스포트 편의
 
 ## 유지보수 체크리스트

@@ -37,6 +37,12 @@
 - `overlay.css` / `overlay.js`: 간소화된 오버레이 UI용 스타일/동작
 - `overlay_positions.js`: 포지션 오버레이 표시 스크립트
 
+## 에이전트 분석 모달 UX
+
+- `showAgentModal()`(공개) / `showAgentAnalysisModal()`(관리자)는 공통으로 `#agent-modal-symbol` 요소에 `에이전트 분석 보고서(BTCUSDT)` 형식의 라벨을 채워 넣습니다. 심볼이 없으면 `System`을 fallback으로 사용해 헤더가 비지 않도록 했습니다.
+- `static/style.css`, `templates/index.html` 인라인 스타일 모두 640px 이하에서 모달을 전체 폭으로 확장하고 탭을 줄바꿈/가로 스크롤로 처리하도록 media query가 추가되었습니다.
+- `static/admin.css`도 동일한 media query를 갖추고 있어 모바일에서 탭 스택, 카드 간격 축소, 모달 액션 버튼이 세로로 배치됩니다.
+
 ## 심볼 설정 UI
 
 관리자 대시보드의 "거래 심볼" 섹션에서 심볼을 관리합니다:

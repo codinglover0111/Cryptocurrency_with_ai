@@ -16,7 +16,12 @@ from langchain_core.language_models import BaseChatModel
 from utils.storage import TradeStore
 
 from app.core.symbols import contract_to_spot_symbol
-from app.graph.llm_factory import create_llm, LLMConfigurationError
+from app.graph.llm_factory import (
+    LLMConfigurationError,
+    create_llm,
+    resolve_ai_model,
+    resolve_ai_provider,
+)
 from app.services.market_data import ohlcv_csv_between
 
 
@@ -38,8 +43,8 @@ class JournalService:
         """Return a cached LLM instance, creating one if needed."""
 
         if self._llm is None:
-            provider = os.getenv("AI_PROVIDER", "gemini").lower()
-            model = os.getenv("AI_MODEL", "gemini-2.0-flash")
+            provider = resolve_ai_provider()
+            model = resolve_ai_model(provider)
             self._llm = create_llm(provider=provider, model=model, temperature=0.1)
         return self._llm
 

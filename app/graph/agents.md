@@ -7,7 +7,7 @@
 ## 파일 가이드
 
 - `workflow.py`: `build_trading_graph`와 `TradingGraph` 클래스를 통해 indicator → pattern → trend → decision → adaptive_opro 노드 흐름을 구성하고 실행
-- `llm_factory.py`: OpenAI/OpenRouter/Gemini/Anthropic provider별 Chat 모델 생성기 (`LLMConfigurationError` 포함)
+- `llm_factory.py`: OpenAI/OpenRouter/Gemini/Anthropic provider별 Chat 모델 생성기 (`LLMConfigurationError` 포함) + `resolve_ai_provider()/resolve_ai_model()`로 기본 provider/model 자동 감지
 - `__init__.py`: 그래프와 팩토리 익스포트
 
 ## 유지보수 체크리스트

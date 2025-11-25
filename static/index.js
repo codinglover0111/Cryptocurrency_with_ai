@@ -381,6 +381,9 @@ function showAgentModal(index) {
   const agents = meta.agents || {};
   console.log("[showAgentModal] agents:", agents);
 
+  const symbolLabel = item.symbol || meta.symbol || "System";
+  $("#agent-modal-symbol").text(`(${symbolLabel})`);
+
   $contentsEl.html(`
     ${renderIndicatorContent(agents.indicator)}
     ${renderPatternContent(agents.pattern)}

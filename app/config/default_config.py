@@ -16,22 +16,22 @@ AGENT_CONFIG: Dict[str, Dict[str, Any]] = {
     "indicator_agent": {
         "provider": "openrouter",
         "model": "openai/gpt-5.1",
-        "temperature": 0.1,
+        "temperature": 0.7,
     },
     "pattern_agent": {
         "provider": "openrouter",
         "model": "google/gemini-3-pro-preview",
-        "temperature": 0.1,
+        "temperature": 1,
     },
     "trend_agent": {
         "provider": "openrouter",
         "model": "google/gemini-3-pro-preview",
-        "temperature": 0.1,
+        "temperature": 1,
     },
     "decision_agent": {
         "provider": "openrouter",
         "model": "deepseek/deepseek-chat-v3.1",
-        "temperature": 0.1,
+        "temperature": 0.8,
     },
 }
 

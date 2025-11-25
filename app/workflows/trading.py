@@ -31,6 +31,7 @@ from app.services.journal import JournalService
 from app.agents import TradingState
 from app.config import load_runtime_config, RISK_CONFIG
 from app.graph import TradingGraph, build_trading_graph
+from app.graph.llm_factory import resolve_ai_provider
 from app.opro import PerformanceScorer
 
 
@@ -649,7 +650,7 @@ def _gather_prompt_context(deps: AutomationDependencies) -> PromptContext:
     current_price = df_15m["close"].iloc[-1]
 
     chart_images: Dict[str, str] = {}
-    ai_provider_type = os.getenv("AI_PROVIDER", "gemini").lower()
+    ai_provider_type = resolve_ai_provider()
     if ai_provider_type == "gemini":
         for timeframe, frame_df in ("4h", df_4h), ("1h", df_1h), ("15m", df_15m):
             try:
@@ -1331,7 +1332,7 @@ def _run_confirm_step(
                     json.dumps(
                         {
                             "event": "llm_confirm_response_parsed",
-                            "provider": os.getenv("AI_PROVIDER", "gemini").lower(),
+                            "provider": resolve_ai_provider(),
                             "parsed": confirm,
                             "attempt": attempt,
                         },

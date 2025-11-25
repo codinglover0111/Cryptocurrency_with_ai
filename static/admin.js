@@ -1841,7 +1841,9 @@ function ensureAgentModalDOM() {
     <div class="modal-backdrop" id="agent-modal-backdrop" hidden style="display: none;">
       <div class="modal agent-modal">
         <div class="modal-header">
-          <h3>🤖 에이전트 분석 보고서</h3>
+          <h3 class="agent-modal-title">
+            🤖 에이전트 분석 보고서<span class="agent-modal-symbol" id="agent-modal-symbol"></span>
+          </h3>
           <button class="btn btn--ghost btn--sm" id="close-agent-modal-btn">닫기</button>
         </div>
         <div class="modal-body">
@@ -1906,6 +1908,12 @@ function showAgentAnalysisModal(index) {
   const meta = item.meta || {};
   const agents = meta.agents || {};
   console.log("[showAgentAnalysisModal] agents 데이터:", agents);
+
+  const symbolLabel = item.symbol || meta.symbol || "System";
+  const symbolEl = document.getElementById("agent-modal-symbol");
+  if (symbolEl) {
+    symbolEl.textContent = `(${symbolLabel})`;
+  }
 
   // Render agent contents
   if (contentsEl) {

@@ -54,3 +54,4 @@
 - 스케줄러 주기는 `main.py`와 `app/config/default_config.py` 기본값을 함께 관리하세요.
 - 공용 객체(`BybitUtils`, `TradeStore`, `AIProvider`) 초기화 비용이 크므로 캐싱/지속성 변경 시 성능 영향도 검토하세요.
 - BTC 분석 결과 공유 로직 변경 시 `utils/storage.py`의 `shared_analysis` 테이블 스키마를 확인하세요.
+- confirm/리뷰 단계 LLM은 `app.graph.llm_factory.resolve_ai_provider()`를 따르므로 OpenRouter만 사용하는 환경에서도 추가 키 없이 동작해야 합니다.

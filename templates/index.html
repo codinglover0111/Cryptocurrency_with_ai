@@ -484,6 +484,25 @@
         flex: 1;
       }
 
+      .agent-modal {
+        display: flex;
+        flex-direction: column;
+        max-height: 85vh;
+      }
+
+      .agent-modal-title {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .agent-modal-symbol {
+        font-size: 14px;
+        color: var(--text-muted);
+        font-weight: 500;
+      }
+
       .agent-tabs {
         display: flex;
         gap: 8px;
@@ -672,6 +691,53 @@
       .activity-item {
         cursor: pointer;
       }
+
+      @media (max-width: 640px) {
+        .modal-backdrop {
+          padding: 0;
+        }
+
+        .agent-modal {
+          width: 100vw;
+          max-height: 100vh;
+          height: 100vh;
+          border-radius: 0;
+        }
+
+        .agent-modal .modal-header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 8px;
+          padding: 16px;
+        }
+
+        .agent-modal .modal-body {
+          padding: 16px;
+        }
+
+        .agent-tabs {
+          flex-wrap: wrap;
+          overflow-x: auto;
+          row-gap: 8px;
+        }
+
+        .agent-tab {
+          flex: 1 1 calc(50% - 8px);
+          text-align: center;
+        }
+
+        .agent-card {
+          padding: 16px;
+        }
+
+        .agent-field {
+          margin-bottom: 10px;
+        }
+
+        .agent-analysis {
+          font-size: 13px;
+        }
+      }
     </style>
     <script
       src="https://code.jquery.com/jquery-3.7.1.min.js"
@@ -766,9 +832,14 @@
 
     <!-- Agent Analysis Modal -->
     <div class="modal-backdrop" id="agent-modal" hidden>
-      <div class="modal">
+      <div class="modal agent-modal">
         <div class="modal-header">
-          <h3>🤖 에이전트 분석 보고서</h3>
+          <h3 class="agent-modal-title">
+            🤖 에이전트 분석 보고서<span
+              class="agent-modal-symbol"
+              id="agent-modal-symbol"
+            ></span>
+          </h3>
           <button class="btn btn-ghost" data-action="close-modal">닫기</button>
         </div>
         <div class="modal-body">

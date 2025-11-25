@@ -78,24 +78,25 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 
 ## 주요 환경변수
 
-| 변수                               | 설명                                                         |
-| ---------------------------------- | ------------------------------------------------------------ |
-| `BYBIT_ENV`                        | demo / testnet / mainnet                                     |
-| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증                                               |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키                                                   |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정                                             |
-| `WEB_SESSION_SECRET`               | 세션 암호화 키                                               |
-| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10)                                     |
-| `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)                  |
-| `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                           |
-| `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app`    |
-| `PRODUCTION`                       | `1` 또는 `true` 설정 시 HTTPS 전용 세션 쿠키 활성화          |
-| `MYSQL_URL`                        | MySQL 연결 URL (예: `mysql+pymysql://user:pwd@host:3306/db`) |
-| `MYSQL_ROOT_PASSWORD`              | docker-compose MySQL root 비밀번호 (기본: `rootpass`)        |
-| `MYSQL_DATABASE`                   | docker-compose MySQL 데이터베이스명 (기본: `crypto_trading`) |
-| `MYSQL_USER`                       | docker-compose MySQL 사용자 (기본: `crypto`)                 |
-| `MYSQL_PASSWORD`                   | docker-compose MySQL 비밀번호 (기본: `cryptopass`)           |
-| `FORCE_SQLITE`                     | `1` 설정 시 MySQL 대신 SQLite 강제 사용                      |
+| 변수                               | 설명                                                                |
+| ---------------------------------- | ------------------------------------------------------------------- |
+| `BYBIT_ENV`                        | demo / testnet / mainnet                                            |
+| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증                                                      |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키                                                          |
+| `AI_PROVIDER`                      | 미설정 시 OpenRouter → OpenAI → Anthropic → Gemini 순으로 자동 감지 |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정                                                    |
+| `WEB_SESSION_SECRET`               | 세션 암호화 키                                                      |
+| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10)                                            |
+| `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)                         |
+| `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                                  |
+| `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app`           |
+| `PRODUCTION`                       | `1` 또는 `true` 설정 시 HTTPS 전용 세션 쿠키 활성화                 |
+| `MYSQL_URL`                        | MySQL 연결 URL (예: `mysql+pymysql://user:pwd@host:3306/db`)        |
+| `MYSQL_ROOT_PASSWORD`              | docker-compose MySQL root 비밀번호 (기본: `rootpass`)               |
+| `MYSQL_DATABASE`                   | docker-compose MySQL 데이터베이스명 (기본: `crypto_trading`)        |
+| `MYSQL_USER`                       | docker-compose MySQL 사용자 (기본: `crypto`)                        |
+| `MYSQL_PASSWORD`                   | docker-compose MySQL 비밀번호 (기본: `cryptopass`)                  |
+| `FORCE_SQLITE`                     | `1` 설정 시 MySQL 대신 SQLite 강제 사용                             |
 
 ## 리스크 설정 기본값
 
@@ -183,6 +184,8 @@ docker-compose down -v
 - **마크다운 렌더링**: 에이전트 분석 텍스트가 마크다운으로 렌더링됨
 - **전문 저장**: 모든 에이전트 분석 결과가 저널 `meta.agents` 필드에 저장됨
 - **표시/숨김 규칙**: `static/style.css`의 `.modal-backdrop`은 `hidden` 속성 토글만으로 제어하므로 JS에서는 `.active` 클래스를 다루지 않습니다.
+- **심볼 라벨**: 헤더에 `에이전트 분석 보고서(BTCUSDT)` 형식으로 선택한 심볼을 노출해 어떤 보고서를 보는지 즉시 식별합니다.
+- **모바일 대응**: 640px 이하에서는 모달이 전체 화면을 차지하고 탭/카드가 줄바꿈되어 모바일에서도 동일 동작을 제공합니다.
 
 ### 저널 메타 데이터 구조
 
