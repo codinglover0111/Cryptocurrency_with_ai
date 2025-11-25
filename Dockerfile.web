@@ -1,30 +1,26 @@
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-alpine
 
 WORKDIR /app
 
-# 필요한 시스템 패키지 설치
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
+# uv Alpine 파생 이미지에서는 apk를 사용해 빌드 의존성을 설치한다.
+RUN apk add --no-cache \
+    pkgconf \
     python3-dev \
-    default-libmysqlclient-dev \
-    build-essential \
+    mariadb-dev \
+    build-base \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    tzdata
 
-# uv CLI 설치
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+# 시스템 파이썬에 직접 설치하도록 uv 기본값을 고정한다.
+ENV UV_SYSTEM_PYTHON=1 \
+    TZ=Asia/Seoul \
+    PYTHONUNBUFFERED=1
 
-# 프로젝트 파일 복사
+# 의존성 파일만 먼저 복사해 레이어 캐시를 극대화한다.
 COPY requirements.txt .
-RUN uv pip install --system --no-cache-dir -r requirements.txt
+RUN uv pip install --system -r requirements.txt
 
-# 전체 프로젝트 복사 (bicoin_auto 폴더 경로 수정)
+# 전체 프로젝트 복사
 COPY . .
 
-# 환경 설정
-ENV TZ=Asia/Seoul
-ENV PYTHONUNBUFFERED=1
-
-
-CMD ["uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "webapp:app", "--host", "0.0.0.0", "--port", "8000"]
