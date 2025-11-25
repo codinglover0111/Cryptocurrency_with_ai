@@ -116,6 +116,10 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 - 로컬 개발 시에는 HTTP에서도 쿠키가 작동합니다.
 - 세션 쿠키의 `SameSite` 속성은 `lax`로 설정되어 동일 사이트 요청에서 쿠키가 전송됩니다.
 
+## 의존성 주의사항
+
+- `passlib[bcrypt]==1.7.4`는 최신 `bcrypt` 4.2.x에서 제거된 `__about__` 메타데이터에 의존한다. 런타임 오류를 방지하기 위해 `bcrypt==4.1.2`로 고정한다.
+
 ## 폴더별 상세 가이드
 
 각 폴더의 세부 내용은 해당 폴더의 `agents.md` 참조:

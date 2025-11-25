@@ -32,10 +32,17 @@
 
 ### 주요 함수
 
+- `_get_trade_store()`: `TradeStore` 싱글톤 인스턴스 반환 (DB 연결 풀 재사용)
 - `_load_from_db()`: DB에서 런타임 설정 로드
-- `_save_to_db()`: 런타임 설정을 DB에 저장
+- `_save_to_db()`: 런타임 설정을 DB에 일괄 저장 (`save_runtime_configs_bulk` 사용)
 - `_load_from_json()`: JSON 파일에서 로드 (폴백용)
 - `_migrate_json_to_db()`: JSON → DB 자동 마이그레이션
+
+### 성능 최적화
+
+- **싱글톤 패턴**: `get_trade_store()` 함수로 앱 전체에서 하나의 DB 연결 풀 사용
+- **일괄 저장**: `save_runtime_configs_bulk()`로 여러 섹션을 한 트랜잭션에서 저장
+- 이전: 요청당 DB 연결 2회 + 쿼리 5회 → 현재: 연결 0회 (풀 재사용) + 쿼리 2회
 
 ## 유지보수 체크리스트
 

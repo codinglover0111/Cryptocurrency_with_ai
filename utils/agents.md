@@ -21,14 +21,14 @@
 
 ## 스케줄러 상태 테이블 (`scheduler_state`)
 
-| 키 | 설명 |
-| --- | --- |
-| `is_running` | 스케줄러 실행 중 여부 ("1" / "0") |
-| `paused` | 일시 중단 상태 ("1" / "0") |
-| `last_automation_run` | 마지막 자동매매 실행 시간 (ISO 형식) |
-| `last_review_run` | 마지막 손실 리뷰 실행 시간 (ISO 형식) |
-| `automation_minutes` | 자동매매 주기 (분) |
-| `loss_review_minutes` | 손실 리뷰 주기 (분) |
+| 키                    | 설명                                  |
+| --------------------- | ------------------------------------- |
+| `is_running`          | 스케줄러 실행 중 여부 ("1" / "0")     |
+| `paused`              | 일시 중단 상태 ("1" / "0")            |
+| `last_automation_run` | 마지막 자동매매 실행 시간 (ISO 형식)  |
+| `last_review_run`     | 마지막 손실 리뷰 실행 시간 (ISO 형식) |
+| `automation_minutes`  | 자동매매 주기 (분)                    |
+| `loss_review_minutes` | 손실 리뷰 주기 (분)                   |
 
 ## 공유 분석 테이블 (`shared_analysis`)
 
@@ -39,19 +39,28 @@
 
 관리자 UI에서 변경한 런타임 설정을 DB에 저장합니다.
 
-| 컬럼 | 타입 | 설명 |
-| --- | --- | --- |
-| `id` | Integer | Primary Key (자동 증가) |
-| `section` | String(64) | 설정 섹션 (agents, scheduler, risk, adaptive_opro) |
-| `config_data` | Text | JSON 문자열 형태의 설정 데이터 |
-| `updated_at` | DateTime | 마지막 업데이트 시간 |
+| 컬럼          | 타입       | 설명                                               |
+| ------------- | ---------- | -------------------------------------------------- |
+| `id`          | Integer    | Primary Key (자동 증가)                            |
+| `section`     | String(64) | 설정 섹션 (agents, scheduler, risk, adaptive_opro) |
+| `config_data` | Text       | JSON 문자열 형태의 설정 데이터                     |
+| `updated_at`  | DateTime   | 마지막 업데이트 시간                               |
 
 ### 주요 메서드
 
-- `save_runtime_config(section, config_data)`: 설정 저장 (upsert)
+- `save_runtime_config(section, config_data)`: 개별 섹션 설정 저장 (upsert)
+- `save_runtime_configs_bulk(configs)`: 여러 섹션을 한 트랜잭션에서 일괄 저장
 - `get_runtime_config(section)`: 특정 섹션 설정 조회
 - `get_all_runtime_configs()`: 전체 설정 조회
 - `delete_runtime_config(section)`: 설정 삭제
+
+## 싱글톤 패턴
+
+DB 연결 풀을 재사용하기 위해 `TradeStore` 싱글톤 패턴을 사용합니다:
+
+- `get_trade_store()`: 앱 전체에서 하나의 `TradeStore` 인스턴스 반환
+- 매 요청마다 새 인스턴스를 생성하지 않아 DB 연결 오버헤드 제거
+- MySQL 연결 타임아웃 및 풀 설정 포함 (connect: 10초, read/write: 30초)
 
 ## 유지보수 체크리스트
 

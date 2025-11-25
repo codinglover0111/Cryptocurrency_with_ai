@@ -131,7 +131,15 @@ class TradeStore:
                 if self._is_sqlite:
                     kwargs["connect_args"] = {"check_same_thread": False}
                 else:
+                    # MySQL 연결 타임아웃 및 풀 설정
                     kwargs["pool_pre_ping"] = True
+                    kwargs["pool_recycle"] = 300  # 5분마다 연결 재사용
+                    kwargs["pool_timeout"] = 10  # 연결 풀에서 대기 최대 10초
+                    kwargs["connect_args"] = {
+                        "connect_timeout": 10,  # 연결 타임아웃 10초
+                        "read_timeout": 30,  # 읽기 타임아웃 30초
+                        "write_timeout": 30,  # 쓰기 타임아웃 30초
+                    }
                 self._engine = sa.create_engine(self._db_url, **kwargs)
                 # 연결 확인 및 실패 시 SQLite로 폴백
                 if not self._is_sqlite:
@@ -606,23 +614,25 @@ class TradeStore:
             now = dt.datetime.utcnow()
             with self._engine.connect() as conn:
                 # 기존 값 확인
-                check_sql = sa.text(
-                    "SELECT id FROM scheduler_state WHERE `key` = :key"
-                )
+                check_sql = sa.text("SELECT id FROM scheduler_state WHERE `key` = :key")
                 result = conn.execute(check_sql, {"key": key}).fetchone()
-                
+
                 if result:
                     # UPDATE
                     update_sql = sa.text(
                         "UPDATE scheduler_state SET value = :value, updated_at = :updated_at WHERE `key` = :key"
                     )
-                    conn.execute(update_sql, {"key": key, "value": value, "updated_at": now})
+                    conn.execute(
+                        update_sql, {"key": key, "value": value, "updated_at": now}
+                    )
                 else:
                     # INSERT
                     insert_sql = sa.text(
                         "INSERT INTO scheduler_state (`key`, value, updated_at) VALUES (:key, :value, :updated_at)"
                     )
-                    conn.execute(insert_sql, {"key": key, "value": value, "updated_at": now})
+                    conn.execute(
+                        insert_sql, {"key": key, "value": value, "updated_at": now}
+                    )
                 conn.commit()
             return True
         except Exception as e:
@@ -635,9 +645,7 @@ class TradeStore:
             return None
         try:
             with self._engine.connect() as conn:
-                sql = sa.text(
-                    "SELECT value FROM scheduler_state WHERE `key` = :key"
-                )
+                sql = sa.text("SELECT value FROM scheduler_state WHERE `key` = :key")
                 result = conn.execute(sql, {"key": key}).fetchone()
                 if result:
                     return result[0]
@@ -652,9 +660,7 @@ class TradeStore:
             return {}
         try:
             with self._engine.connect() as conn:
-                sql = sa.text(
-                    "SELECT `key`, value, updated_at FROM scheduler_state"
-                )
+                sql = sa.text("SELECT `key`, value, updated_at FROM scheduler_state")
                 rows = conn.execute(sql).fetchall()
                 result = {}
                 for row in rows:
@@ -683,19 +689,24 @@ class TradeStore:
                 delete_sql = sa.text(
                     "DELETE FROM shared_analysis WHERE symbol = :symbol AND analysis_type = :analysis_type"
                 )
-                conn.execute(delete_sql, {"symbol": symbol, "analysis_type": analysis_type})
-                
+                conn.execute(
+                    delete_sql, {"symbol": symbol, "analysis_type": analysis_type}
+                )
+
                 # 새 분석 삽입
                 insert_sql = sa.text(
                     "INSERT INTO shared_analysis (symbol, analysis_type, content, created_at) "
                     "VALUES (:symbol, :analysis_type, :content, :created_at)"
                 )
-                conn.execute(insert_sql, {
-                    "symbol": symbol,
-                    "analysis_type": analysis_type,
-                    "content": content,
-                    "created_at": now,
-                })
+                conn.execute(
+                    insert_sql,
+                    {
+                        "symbol": symbol,
+                        "analysis_type": analysis_type,
+                        "content": content,
+                        "created_at": now,
+                    },
+                )
                 conn.commit()
             return True
         except Exception as e:
@@ -703,15 +714,18 @@ class TradeStore:
             return False
 
     def get_shared_analysis(
-        self, symbol: str, analysis_type: Optional[str] = None, max_age_minutes: int = 60
+        self,
+        symbol: str,
+        analysis_type: Optional[str] = None,
+        max_age_minutes: int = 60,
     ) -> Optional[Dict[str, Any]]:
         """공유 분석 결과를 가져옵니다.
-        
+
         Args:
             symbol: 심볼 (예: BTCUSDT:USDT)
             analysis_type: 분석 타입 (예: trend, market_sentiment)
             max_age_minutes: 최대 유효 시간 (분)
-        
+
         Returns:
             분석 결과 딕셔너리 또는 None
         """
@@ -726,22 +740,28 @@ class TradeStore:
                         "WHERE symbol = :symbol AND analysis_type = :analysis_type "
                         "AND created_at >= :cutoff ORDER BY created_at DESC LIMIT 1"
                     )
-                    result = conn.execute(sql, {
-                        "symbol": symbol,
-                        "analysis_type": analysis_type,
-                        "cutoff": cutoff,
-                    }).fetchone()
+                    result = conn.execute(
+                        sql,
+                        {
+                            "symbol": symbol,
+                            "analysis_type": analysis_type,
+                            "cutoff": cutoff,
+                        },
+                    ).fetchone()
                 else:
                     sql = sa.text(
                         "SELECT symbol, analysis_type, content, created_at FROM shared_analysis "
                         "WHERE symbol = :symbol AND created_at >= :cutoff "
                         "ORDER BY created_at DESC LIMIT 1"
                     )
-                    result = conn.execute(sql, {
-                        "symbol": symbol,
-                        "cutoff": cutoff,
-                    }).fetchone()
-                
+                    result = conn.execute(
+                        sql,
+                        {
+                            "symbol": symbol,
+                            "cutoff": cutoff,
+                        },
+                    ).fetchone()
+
                 if result:
                     return {
                         "symbol": result[0],
@@ -768,7 +788,7 @@ class TradeStore:
                     "AND created_at >= :cutoff ORDER BY created_at DESC LIMIT 1"
                 )
                 result = conn.execute(sql, {"cutoff": cutoff}).fetchone()
-                
+
                 if result:
                     return {
                         "symbol": result[0],
@@ -786,11 +806,11 @@ class TradeStore:
     # -------------------------------
     def save_runtime_config(self, section: str, config_data: str) -> bool:
         """런타임 설정을 DB에 저장합니다 (upsert).
-        
+
         Args:
             section: 설정 섹션 (예: 'agents', 'scheduler', 'risk', 'adaptive_opro')
             config_data: JSON 문자열 형태의 설정 데이터
-        
+
         Returns:
             성공 여부
         """
@@ -804,29 +824,35 @@ class TradeStore:
                     "SELECT id FROM runtime_config WHERE section = :section"
                 )
                 result = conn.execute(check_sql, {"section": section}).fetchone()
-                
+
                 if result:
                     # UPDATE
                     update_sql = sa.text(
                         "UPDATE runtime_config SET config_data = :config_data, updated_at = :updated_at "
                         "WHERE section = :section"
                     )
-                    conn.execute(update_sql, {
-                        "section": section,
-                        "config_data": config_data,
-                        "updated_at": now,
-                    })
+                    conn.execute(
+                        update_sql,
+                        {
+                            "section": section,
+                            "config_data": config_data,
+                            "updated_at": now,
+                        },
+                    )
                 else:
                     # INSERT
                     insert_sql = sa.text(
                         "INSERT INTO runtime_config (section, config_data, updated_at) "
                         "VALUES (:section, :config_data, :updated_at)"
                     )
-                    conn.execute(insert_sql, {
-                        "section": section,
-                        "config_data": config_data,
-                        "updated_at": now,
-                    })
+                    conn.execute(
+                        insert_sql,
+                        {
+                            "section": section,
+                            "config_data": config_data,
+                            "updated_at": now,
+                        },
+                    )
                 conn.commit()
             return True
         except Exception as e:
@@ -835,10 +861,10 @@ class TradeStore:
 
     def get_runtime_config(self, section: str) -> Optional[str]:
         """런타임 설정을 DB에서 읽어옵니다.
-        
+
         Args:
             section: 설정 섹션 (예: 'agents', 'scheduler', 'risk', 'adaptive_opro')
-        
+
         Returns:
             JSON 문자열 형태의 설정 데이터 또는 None
         """
@@ -859,7 +885,7 @@ class TradeStore:
 
     def get_all_runtime_configs(self) -> Dict[str, Any]:
         """모든 런타임 설정을 딕셔너리로 반환합니다.
-        
+
         Returns:
             {section: {"config_data": str, "updated_at": str}, ...}
         """
@@ -884,10 +910,10 @@ class TradeStore:
 
     def delete_runtime_config(self, section: str) -> bool:
         """런타임 설정을 DB에서 삭제합니다.
-        
+
         Args:
             section: 삭제할 설정 섹션
-        
+
         Returns:
             성공 여부
         """
@@ -895,12 +921,87 @@ class TradeStore:
             return False
         try:
             with self._engine.connect() as conn:
-                sql = sa.text(
-                    "DELETE FROM runtime_config WHERE section = :section"
-                )
+                sql = sa.text("DELETE FROM runtime_config WHERE section = :section")
                 conn.execute(sql, {"section": section})
                 conn.commit()
             return True
         except Exception as e:
             print(f"Error deleting runtime config: {e}")
             return False
+
+    def save_runtime_configs_bulk(self, configs: Dict[str, str]) -> bool:
+        """여러 런타임 설정을 한 트랜잭션에서 일괄 저장합니다 (upsert).
+
+        Args:
+            configs: {section: config_data_json, ...} 형태의 딕셔너리
+
+        Returns:
+            성공 여부
+        """
+        if self._engine is None or not configs:
+            return False
+        try:
+            now = dt.datetime.utcnow()
+            with self._engine.connect() as conn:
+                for section, config_data in configs.items():
+                    # 기존 값 확인
+                    check_sql = sa.text(
+                        "SELECT id FROM runtime_config WHERE section = :section"
+                    )
+                    result = conn.execute(check_sql, {"section": section}).fetchone()
+
+                    if result:
+                        # UPDATE
+                        update_sql = sa.text(
+                            "UPDATE runtime_config SET config_data = :config_data, updated_at = :updated_at "
+                            "WHERE section = :section"
+                        )
+                        conn.execute(
+                            update_sql,
+                            {
+                                "section": section,
+                                "config_data": config_data,
+                                "updated_at": now,
+                            },
+                        )
+                    else:
+                        # INSERT
+                        insert_sql = sa.text(
+                            "INSERT INTO runtime_config (section, config_data, updated_at) "
+                            "VALUES (:section, :config_data, :updated_at)"
+                        )
+                        conn.execute(
+                            insert_sql,
+                            {
+                                "section": section,
+                                "config_data": config_data,
+                                "updated_at": now,
+                            },
+                        )
+                # 모든 섹션 저장 후 한 번에 커밋
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error saving runtime configs bulk: {e}")
+            return False
+
+
+# ===== 싱글톤 패턴 =====
+
+_trade_store_instance: Optional[TradeStore] = None
+
+
+def get_trade_store() -> TradeStore:
+    """TradeStore 싱글톤 인스턴스를 반환합니다.
+
+    앱 전체에서 하나의 인스턴스만 사용하여 DB 연결 풀을 재사용합니다.
+    """
+    global _trade_store_instance
+    if _trade_store_instance is None:
+        _trade_store_instance = TradeStore(
+            StorageConfig(
+                mysql_url=os.getenv("MYSQL_URL"),
+                sqlite_path=os.getenv("SQLITE_PATH"),
+            )
+        )
+    return _trade_store_instance

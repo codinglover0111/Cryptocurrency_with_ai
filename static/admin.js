@@ -18,25 +18,53 @@ const adminState = {
 };
 
 // Utilities
-async function fetchJSON(path, init = {}) {
-  const res = await fetch(path, {
-    credentials: "include",
-    ...init,
-  });
-  if (!res.ok) throw new Error(`${path} ${res.status}`);
-  return res.json();
+const DEFAULT_TIMEOUT = 5000; // 5초 타임아웃
+
+async function fetchJSON(path, init = {}, timeout = DEFAULT_TIMEOUT) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const res = await fetch(path, {
+      credentials: "include",
+      signal: controller.signal,
+      ...init,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`${path} ${res.status}`);
+    return res.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error(`요청 타임아웃: ${path}`);
+    }
+    throw err;
+  }
 }
 
-async function postJSON(path, payload, init = {}) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    credentials: "include",
-    ...init,
-  });
-  if (!res.ok) throw new Error(`${path} ${res.status}`);
-  return res.json();
+async function postJSON(path, payload, init = {}, timeout = DEFAULT_TIMEOUT) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      credentials: "include",
+      signal: controller.signal,
+      ...init,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`${path} ${res.status}`);
+    return res.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error(`요청 타임아웃: ${path}`);
+    }
+    throw err;
+  }
 }
 
 function el(id) {
@@ -519,7 +547,16 @@ async function saveAgentConfig() {
     await loadAdminData();
   } catch (err) {
     console.error(err);
-    if (hint) hint.textContent = "✗ 저장 실패";
+    const errMsg = err.message || "저장 실패";
+    if (hint) {
+      if (errMsg.includes("타임아웃")) {
+        hint.textContent = "✗ 서버 응답 없음 (타임아웃)";
+      } else if (errMsg.includes("401")) {
+        hint.textContent = "✗ 인증 필요 - 다시 로그인하세요";
+      } else {
+        hint.textContent = `✗ 저장 실패: ${errMsg}`;
+      }
+    }
   }
 }
 

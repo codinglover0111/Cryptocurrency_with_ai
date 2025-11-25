@@ -43,10 +43,16 @@
 - `last_review_run`: 마지막 손실 리뷰 실행 시간
 - `next_automation_run`: 다음 자동매매 예상 시간 (계산값)
 
+## DB 연결 최적화
+
+- `TradeStore` 싱글톤 패턴 사용: `get_trade_store()` 함수로 앱 전체에서 하나의 DB 연결 풀 재사용
+- 설정 저장 시 `save_runtime_configs_bulk()`로 여러 섹션을 한 트랜잭션에서 일괄 저장
+- 연결 오버헤드 제거로 API 응답 시간 대폭 개선
+
 ## 유지보수 체크리스트
 
 - 응답/요청 스키마를 바꿀 때는 프런트엔드(`static/admin.js`)와 관리자 UI 폼을 함께 수정하세요.
-- 설정 저장은 `app/config/runtime_config.json`에 즉시 반영되므로, 필수 필드 누락 시 기본값 병합 로직을 확인합니다.
+- 설정 저장은 DB `runtime_config` 테이블에 저장됩니다. DB 실패 시 `app/config/runtime_config.json`으로 폴백됩니다.
 - 모든 라우트가 `auth.middleware` 의존성을 통해 역할 검증을 거치도록 유지하세요.
 - 스케줄러 상태는 `utils/storage.py`의 `scheduler_state` 테이블에서 읽습니다.
 - 세션 기반 관리자 UI는 CORS 설정에 민감합니다. `CORS_ALLOWED_ORIGINS` 환경변수(쉼표 구분 URL, 예: `https://web.example.com,https://admin.example.com`)로 허용 오리진을 구성하고, 기본값은 로컬 개발 및 Railway 기본 도메인을 포함합니다. `CORS_ALLOWED_ORIGIN_REGEX`(기본 `https://.*\.up\.railway\.app`)로 와일드카드 오리진을 추가할 수 있으며, 새 도메인을 붙일 때는 이 목록과 `static/admin.js`의 인증 fetch 로직을 동시에 확인하세요.

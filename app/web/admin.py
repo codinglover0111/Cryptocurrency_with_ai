@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,7 +16,7 @@ from app.config import (
     load_runtime_config,
     save_runtime_config,
 )
-from utils.storage import TradeStore, StorageConfig
+from utils.storage import get_trade_store
 
 
 AVAILABLE_MODELS: Dict[str, list[str]] = {
@@ -110,12 +109,7 @@ def update_agent_config(payload: AgentConfigPayload, _: str = Depends(require_ad
 def _get_scheduler_state() -> Dict[str, Any]:
     """스케줄러 실행 상태를 DB에서 읽어옵니다."""
     try:
-        store = TradeStore(
-            StorageConfig(
-                mysql_url=os.getenv("MYSQL_URL"),
-                sqlite_path=os.getenv("SQLITE_PATH"),
-            )
-        )
+        store = get_trade_store()
         states = store.get_all_scheduler_states()
 
         result = {}
@@ -337,12 +331,7 @@ def delete_api_key(payload: ApiKeyDeletePayload, _: str = Depends(require_admin)
 def pause_scheduler(_: str = Depends(require_admin)):
     """스케줄러 일시 중단."""
     try:
-        store = TradeStore(
-            StorageConfig(
-                mysql_url=os.getenv("MYSQL_URL"),
-                sqlite_path=os.getenv("SQLITE_PATH"),
-            )
-        )
+        store = get_trade_store()
         store.set_scheduler_state("paused", "1")
         return {"ok": True, "paused": True}
     except Exception as e:
@@ -353,12 +342,7 @@ def pause_scheduler(_: str = Depends(require_admin)):
 def resume_scheduler(_: str = Depends(require_admin)):
     """스케줄러 재개."""
     try:
-        store = TradeStore(
-            StorageConfig(
-                mysql_url=os.getenv("MYSQL_URL"),
-                sqlite_path=os.getenv("SQLITE_PATH"),
-            )
-        )
+        store = get_trade_store()
         store.set_scheduler_state("paused", "0")
         return {"ok": True, "paused": False}
     except Exception as e:
