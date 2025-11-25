@@ -8,11 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     default-libmysqlclient-dev \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# uv CLI 설치
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
 # 프로젝트 파일 복사
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache-dir -r requirements.txt
 
 # 전체 프로젝트 복사 (bicoin_auto 폴더 경로 수정)
 COPY . .

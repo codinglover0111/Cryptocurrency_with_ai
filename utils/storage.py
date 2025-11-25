@@ -75,6 +75,18 @@ SHARED_ANALYSIS_TABLE = sa.Table(
 )
 
 
+RUNTIME_CONFIG_TABLE = sa.Table(
+    "runtime_config",
+    SCHEMA_METADATA,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("section", sa.String(64), nullable=False),
+    sa.Column("config_data", sa.Text, nullable=True),
+    sa.Column("updated_at", sa.DateTime, nullable=True),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+)
+
+
 @dataclass
 class StorageConfig:
     # DB 전용으로 단순화
@@ -146,7 +158,13 @@ class TradeStore:
         try:
             SCHEMA_METADATA.create_all(
                 self._engine,
-                tables=[TRADES_TABLE, JOURNALS_TABLE, SCHEDULER_STATE_TABLE, SHARED_ANALYSIS_TABLE],
+                tables=[
+                    TRADES_TABLE,
+                    JOURNALS_TABLE,
+                    SCHEDULER_STATE_TABLE,
+                    SHARED_ANALYSIS_TABLE,
+                    RUNTIME_CONFIG_TABLE,
+                ],
                 checkfirst=True,
             )
         except Exception as e:
@@ -762,3 +780,127 @@ class TradeStore:
         except Exception as e:
             print(f"Error reading BTC analysis: {e}")
             return None
+
+    # -------------------------------
+    # Runtime Config (DB only)
+    # -------------------------------
+    def save_runtime_config(self, section: str, config_data: str) -> bool:
+        """런타임 설정을 DB에 저장합니다 (upsert).
+        
+        Args:
+            section: 설정 섹션 (예: 'agents', 'scheduler', 'risk', 'adaptive_opro')
+            config_data: JSON 문자열 형태의 설정 데이터
+        
+        Returns:
+            성공 여부
+        """
+        if self._engine is None:
+            return False
+        try:
+            now = dt.datetime.utcnow()
+            with self._engine.connect() as conn:
+                # 기존 값 확인
+                check_sql = sa.text(
+                    "SELECT id FROM runtime_config WHERE section = :section"
+                )
+                result = conn.execute(check_sql, {"section": section}).fetchone()
+                
+                if result:
+                    # UPDATE
+                    update_sql = sa.text(
+                        "UPDATE runtime_config SET config_data = :config_data, updated_at = :updated_at "
+                        "WHERE section = :section"
+                    )
+                    conn.execute(update_sql, {
+                        "section": section,
+                        "config_data": config_data,
+                        "updated_at": now,
+                    })
+                else:
+                    # INSERT
+                    insert_sql = sa.text(
+                        "INSERT INTO runtime_config (section, config_data, updated_at) "
+                        "VALUES (:section, :config_data, :updated_at)"
+                    )
+                    conn.execute(insert_sql, {
+                        "section": section,
+                        "config_data": config_data,
+                        "updated_at": now,
+                    })
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error saving runtime config: {e}")
+            return False
+
+    def get_runtime_config(self, section: str) -> Optional[str]:
+        """런타임 설정을 DB에서 읽어옵니다.
+        
+        Args:
+            section: 설정 섹션 (예: 'agents', 'scheduler', 'risk', 'adaptive_opro')
+        
+        Returns:
+            JSON 문자열 형태의 설정 데이터 또는 None
+        """
+        if self._engine is None:
+            return None
+        try:
+            with self._engine.connect() as conn:
+                sql = sa.text(
+                    "SELECT config_data FROM runtime_config WHERE section = :section"
+                )
+                result = conn.execute(sql, {"section": section}).fetchone()
+                if result:
+                    return result[0]
+            return None
+        except Exception as e:
+            print(f"Error reading runtime config: {e}")
+            return None
+
+    def get_all_runtime_configs(self) -> Dict[str, Any]:
+        """모든 런타임 설정을 딕셔너리로 반환합니다.
+        
+        Returns:
+            {section: {"config_data": str, "updated_at": str}, ...}
+        """
+        if self._engine is None:
+            return {}
+        try:
+            with self._engine.connect() as conn:
+                sql = sa.text(
+                    "SELECT section, config_data, updated_at FROM runtime_config"
+                )
+                rows = conn.execute(sql).fetchall()
+                result = {}
+                for row in rows:
+                    result[row[0]] = {
+                        "config_data": row[1],
+                        "updated_at": row[2].isoformat() if row[2] else None,
+                    }
+                return result
+        except Exception as e:
+            print(f"Error reading runtime configs: {e}")
+            return {}
+
+    def delete_runtime_config(self, section: str) -> bool:
+        """런타임 설정을 DB에서 삭제합니다.
+        
+        Args:
+            section: 삭제할 설정 섹션
+        
+        Returns:
+            성공 여부
+        """
+        if self._engine is None:
+            return False
+        try:
+            with self._engine.connect() as conn:
+                sql = sa.text(
+                    "DELETE FROM runtime_config WHERE section = :section"
+                )
+                conn.execute(sql, {"section": section})
+                conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error deleting runtime config: {e}")
+            return False

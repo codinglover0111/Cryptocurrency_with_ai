@@ -3,6 +3,7 @@
 from .default_config import (
     ADAPTIVE_OPRO_CONFIG,
     AGENT_CONFIG,
+    RISK_CONFIG,
     RUNTIME_CONFIG_PATH,
     SCHEDULER_CONFIG,
     load_runtime_config,
@@ -14,6 +15,7 @@ __all__ = [
     "AGENT_CONFIG",
     "SCHEDULER_CONFIG",
     "ADAPTIVE_OPRO_CONFIG",
+    "RISK_CONFIG",
     "RUNTIME_CONFIG_PATH",
     "load_runtime_config",
     "save_runtime_config",

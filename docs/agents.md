@@ -116,6 +116,21 @@ class TradeDecision(BaseModel):
     explain: str
 ```
 
+### 4.1 런타임 설정 저장소
+
+런타임 설정은 **DB 우선** 저장 방식을 사용합니다:
+
+- **저장 위치**: `utils/storage.py`의 `runtime_config` 테이블
+- **폴백**: DB 저장 실패 시 `runtime_config.json` 파일로 저장
+- **자동 마이그레이션**: 기존 JSON 파일이 있으면 DB로 자동 마이그레이션
+
+| 섹션 | 설명 |
+| --- | --- |
+| `agents` | 에이전트별 LLM provider/model/temperature |
+| `scheduler` | 자동매매/손실 리뷰 주기, 콜드 스타트 옵션 |
+| `risk` | 레버리지, 최대 손실 %, 포지션 할당 % |
+| `adaptive_opro` | OPRO 윈도우/임계값/활성화 여부 |
+
 ---
 
 ## 5. 인증 및 권한 시스템 (`app/auth/`)

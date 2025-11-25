@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from io import StringIO
@@ -223,7 +224,10 @@ def _csv_to_df(csv_text: str) -> pd.DataFrame:
         )
     try:
         return pd.read_csv(
-            StringIO(csv_text), index_col=0, parse_dates=True, infer_datetime_format=True
+            StringIO(csv_text),
+            index_col=0,
+            parse_dates=True,
+            infer_datetime_format=True,
         )
     except Exception:
         return pd.DataFrame(
@@ -231,7 +235,9 @@ def _csv_to_df(csv_text: str) -> pd.DataFrame:
         )
 
 
-def _performance_snapshot(store: TradeStore, symbol: str, window: int = 20) -> Dict[str, float]:
+def _performance_snapshot(
+    store: TradeStore, symbol: str, window: int = 20
+) -> Dict[str, float]:
     try:
         trades = store.load_trades()
     except Exception:
@@ -244,7 +250,9 @@ def _performance_snapshot(store: TradeStore, symbol: str, window: int = 20) -> D
     if df.empty:
         return {}
 
-    summary = PERFORMANCE_SCORER.summarize({"pnl": float(v)} for v in df["pnl"].tolist())
+    summary = PERFORMANCE_SCORER.summarize(
+        {"pnl": float(v)} for v in df["pnl"].tolist()
+    )
     return {
         "roi": summary.roi,
         "sharpe": summary.sharpe,
@@ -571,7 +579,7 @@ def _get_btc_analysis_context(store: TradeStore, current_symbol: str) -> str:
     # BTC 심볼인 경우 자기 자신의 분석을 가져올 필요 없음
     if current_symbol.upper().startswith("BTC"):
         return ""
-    
+
     try:
         btc_analysis = store.get_btc_analysis(max_age_minutes=60)
         if btc_analysis:
@@ -588,18 +596,20 @@ def _get_btc_analysis_context(store: TradeStore, current_symbol: str) -> str:
     return ""
 
 
-def _save_btc_analysis(store: TradeStore, symbol: str, decision: Dict[str, Any]) -> None:
+def _save_btc_analysis(
+    store: TradeStore, symbol: str, decision: Dict[str, Any]
+) -> None:
     """BTC 분석 결과를 저장합니다."""
     if not symbol.upper().startswith("BTC"):
         return
-    
+
     try:
         # 분석 결과를 문자열로 변환
         explain = decision.get("explain", "")
         status = decision.get("status") or decision.get("Status", "")
         tp = decision.get("tp", "N/A")
         sl = decision.get("sl", "N/A")
-        
+
         content = f"""상태: {status}
 설명: {explain}
 TP: {tp}
@@ -838,11 +848,11 @@ def _compute_max_loss_percent(leverage: float) -> float:
     """Derive maximum tolerated loss percentage based on leverage settings."""
 
     leverage_factor = max(1.0, float(leverage or 1.0))
-    
+
     # 런타임 설정에서 최대 손실 % 가져오기
     risk_config = _get_risk_config()
     max_loss_from_config = risk_config.get("max_loss_percent", 40)
-    
+
     max_loss_env = os.getenv("MAX_LOSS_PERCENT")
     if max_loss_env is not None:
         try:
@@ -861,7 +871,7 @@ def _compute_max_loss_percent(leverage: float) -> float:
             leveraged_cap = max_loss_pct
     else:
         leveraged_cap = max_loss_pct
-        
+
     if leveraged_cap > 0:
         leveraged_raw_cap = (
             leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
@@ -1286,7 +1296,16 @@ def _run_confirm_step(
 
         for attempt in range(1, max_attempts + 1):
             try:
-                candidate = deps.ai_provider.confirm_trade_json(confirm_prompt)
+                llm = deps.journal_service._ensure_llm()
+                response = llm.invoke(confirm_prompt)
+                response_text = (
+                    response.content if hasattr(response, "content") else str(response)
+                )
+                # JSON 추출 (응답이 ```json ... ``` 형식일 수 있음)
+                json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+                if not json_match:
+                    raise ValueError("응답에서 JSON을 찾을 수 없습니다.")
+                candidate = json.loads(json_match.group())
                 if not isinstance(candidate, dict):
                     raise ValueError("confirm 응답이 dict 형식이 아닙니다.")
                 internal_error = candidate.get("_internal.tool_calls_error")
@@ -1436,10 +1455,12 @@ def _execute_trade(
     risk_config = _get_risk_config()
     default_leverage = risk_config.get("default_leverage", 5)
     position_allocation = risk_config.get("position_allocation_percent", 20)
-    
+
     risk_percent = float(position_allocation)
     max_alloc = float(os.getenv("MAX_ALLOC_PERCENT", str(position_allocation)))
-    leverage = float(decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", str(default_leverage)))
+    leverage = float(
+        decision.get("leverage") or os.getenv("DEFAULT_LEVERAGE", str(default_leverage))
+    )
 
     try:
         market = deps.bybit.exchange.market(deps.contract_symbol)
@@ -2002,10 +2023,10 @@ def automation_for_symbol(
                     "Multi-agent workflow returned no decision (single-agent path disabled)"
                 )
             decision_payload = ma_result["decision"]
-            
+
             # BTC 분석 결과 저장 (다른 심볼에서 참조할 수 있도록)
             _save_btc_analysis(deps.store, deps.contract_symbol, decision_payload)
-            
+
             if _handle_close_now(deps, ctx, decision_payload):
                 return
             _execute_trade(deps, ctx, decision_payload)

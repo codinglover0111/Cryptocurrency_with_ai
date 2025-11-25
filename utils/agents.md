@@ -15,6 +15,7 @@
   - 트레이드/저널/리뷰 CRUD
   - **스케줄러 상태 관리**: `set_scheduler_state`, `get_scheduler_state`, `get_all_scheduler_states`
   - **공유 분석 결과**: `save_shared_analysis`, `get_btc_analysis` (BTC 분석 결과 공유용)
+  - **런타임 설정 관리**: `save_runtime_config`, `get_runtime_config`, `get_all_runtime_configs`, `delete_runtime_config`
 - `types.py`: 타입 힌트 플레이스홀더
 - `__init__.py`: 익스포트
 
@@ -34,9 +35,27 @@
 - BTC 분석 결과를 저장하여 다른 심볼 분석 시 컨텍스트로 제공
 - `get_btc_analysis(max_age_minutes)`: 지정 시간 내 BTC 분석 결과 조회
 
+## 런타임 설정 테이블 (`runtime_config`)
+
+관리자 UI에서 변경한 런타임 설정을 DB에 저장합니다.
+
+| 컬럼 | 타입 | 설명 |
+| --- | --- | --- |
+| `id` | Integer | Primary Key (자동 증가) |
+| `section` | String(64) | 설정 섹션 (agents, scheduler, risk, adaptive_opro) |
+| `config_data` | Text | JSON 문자열 형태의 설정 데이터 |
+| `updated_at` | DateTime | 마지막 업데이트 시간 |
+
+### 주요 메서드
+
+- `save_runtime_config(section, config_data)`: 설정 저장 (upsert)
+- `get_runtime_config(section)`: 특정 섹션 설정 조회
+- `get_all_runtime_configs()`: 전체 설정 조회
+- `delete_runtime_config(section)`: 설정 삭제
+
 ## 유지보수 체크리스트
 
 - API 키/엔드포인트 변경 시 `ai_provider.py`와 `.env.sample`을 함께 수정하고 호출 제한(재시도 간격)을 조정하세요.
 - Bybit 래퍼는 예외 메시지를 그대로 전달하므로, 프런트/워크플로에서 사용자 친화적 메시지가 필요한 경우 래핑을 고려하세요.
 - 스토리지 경로와 엔진(`SQLITE_PATH`, `MYSQL_URL`)은 환경변수에 의존합니다. 마이그레이션 시 스키마(`SCHEMA_METADATA`)를 같이 업데이트하세요.
-- 스케줄러 상태와 공유 분석 테이블은 앱 시작 시 자동 생성됩니다 (`_ensure_schema`).
+- 스케줄러 상태, 공유 분석, 런타임 설정 테이블은 앱 시작 시 자동 생성됩니다 (`_ensure_schema`).

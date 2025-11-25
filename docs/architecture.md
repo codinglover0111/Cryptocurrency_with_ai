@@ -59,6 +59,7 @@ Confirm 단계에서는 원본 결정 프롬프트와 LLM 응답을 다시 제�
 - 모든 거래/저널 기록은 `TradeStore`를 통해 MySQL(기본) 또는 SQLite로 저장됩니다.
 - `StorageConfig.resolve()`가 환경변수에 따라 연결을 결정합니다.
 - `journal_service.review_losing_trades`는 동일 DB를 이용하여 손실 거래를 조회한 뒤 리뷰 기록을 추가합니다.
+- **런타임 설정 저장**: 관리자 UI에서 변경한 설정은 `runtime_config` 테이블에 저장됩니다. DB 연결 실패 시 JSON 파일로 폴백됩니다.
 
 ## Extension Points
 
