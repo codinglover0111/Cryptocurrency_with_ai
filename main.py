@@ -179,7 +179,7 @@ def run_scheduler() -> None:
         # BTC를 먼저 분석하도록 정렬
         symbols = _sort_symbols_btc_first(symbols)
         logging.info("Symbol order (BTC first): %s", symbols)
-        
+
         _save_scheduler_state(last_automation_run=datetime.now(timezone.utc))
         for symbol in symbols:
             try:
@@ -197,7 +197,7 @@ def run_scheduler() -> None:
         if _is_scheduler_paused():
             logging.info("Scheduler is paused, skipping loss review")
             return
-            
+
         try:
             logging.info("Run loss review job")
             symbols = parse_trading_symbols()

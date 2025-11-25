@@ -1846,10 +1846,7 @@ def get_logs(lines: int = 500, level: Optional[str] = None):
         # 레벨 필터링 (옵션)
         if level:
             level_upper = level.upper()
-            tail_lines = [
-                line for line in tail_lines
-                if level_upper in line.upper()
-            ]
+            tail_lines = [line for line in tail_lines if level_upper in line.upper()]
 
         # 각 라인에서 레벨 추출
         parsed_logs = []
@@ -1869,10 +1866,12 @@ def get_logs(lines: int = 500, level: Optional[str] = None):
             elif "CRITICAL" in line_upper:
                 log_level = "CRITICAL"
 
-            parsed_logs.append({
-                "text": line,
-                "level": log_level,
-            })
+            parsed_logs.append(
+                {
+                    "text": line,
+                    "level": log_level,
+                }
+            )
 
         return {
             "logs": parsed_logs,

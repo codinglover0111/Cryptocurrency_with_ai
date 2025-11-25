@@ -43,6 +43,7 @@ class SchedulerPayload(BaseModel):
 
 class ApiKeyPayload(BaseModel):
     """API 키 설정 요청."""
+
     provider: str
     key_type: str
     value: str
@@ -51,6 +52,7 @@ class ApiKeyPayload(BaseModel):
 
 class ApiKeyDeletePayload(BaseModel):
     """API 키 삭제 요청."""
+
     provider: str
     key_type: str
     environment: str = "default"
@@ -58,6 +60,7 @@ class ApiKeyDeletePayload(BaseModel):
 
 class RiskConfigPayload(BaseModel):
     """리스크 설정 요청."""
+
     default_leverage: int = Field(ge=1, le=100, default=5)
     max_loss_percent: int = Field(ge=1, le=100, default=40)
     position_allocation_percent: int = Field(ge=1, le=100, default=20)
@@ -65,6 +68,7 @@ class RiskConfigPayload(BaseModel):
 
 class ApiKeyBulkPayload(BaseModel):
     """여러 API 키 일괄 설정."""
+
     keys: List[ApiKeyPayload]
 
 
@@ -83,9 +87,7 @@ def get_agent_config(_: str = Depends(require_admin)):
 
 
 @router.post("/agent-config")
-def update_agent_config(
-    payload: AgentConfigPayload, _: str = Depends(require_admin)
-):
+def update_agent_config(payload: AgentConfigPayload, _: str = Depends(require_admin)):
     runtime = load_runtime_config()
     updated = {**AGENT_CONFIG}
     for key, value in payload.model_dump().items():
@@ -133,8 +135,7 @@ def _get_scheduler_state() -> Dict[str, Any]:
 
 
 def _calculate_next_run(
-    last_run_iso: Optional[str], 
-    interval_minutes: int
+    last_run_iso: Optional[str], interval_minutes: int
 ) -> Optional[str]:
     """마지막 실행 시간과 주기를 기반으로 다음 실행 시간을 계산합니다."""
     if not last_run_iso:
@@ -151,13 +152,13 @@ def _calculate_next_run(
 def get_scheduler(_: str = Depends(require_admin)):
     runtime = load_runtime_config()
     config = runtime.get("scheduler", SCHEDULER_CONFIG)
-    
+
     # 스케줄러 실행 상태 가져오기
     state = _get_scheduler_state()
-    
+
     # paused 상태 확인
     paused = state.get("paused") == "1" if state.get("paused") else False
-    
+
     # 설정과 상태 병합
     result = {
         **config,
@@ -167,14 +168,15 @@ def get_scheduler(_: str = Depends(require_admin)):
         "last_review_run": state.get("last_review_run"),
         "updated_at": state.get("updated_at"),
     }
-    
+
     # 다음 실행 시간 계산
-    automation_minutes = config.get("automation_minutes", SCHEDULER_CONFIG["automation_minutes"])
-    result["next_automation_run"] = _calculate_next_run(
-        state.get("last_automation_run"),
-        automation_minutes
+    automation_minutes = config.get(
+        "automation_minutes", SCHEDULER_CONFIG["automation_minutes"]
     )
-    
+    result["next_automation_run"] = _calculate_next_run(
+        state.get("last_automation_run"), automation_minutes
+    )
+
     return result
 
 
@@ -187,6 +189,7 @@ def update_scheduler(payload: SchedulerPayload, _: str = Depends(require_admin))
 
 
 # ===== API Keys Management =====
+
 
 @router.get("/api-keys/providers")
 def list_api_key_providers(_: str = Depends(require_admin)):
@@ -211,34 +214,36 @@ def set_api_key(payload: ApiKeyPayload, _: str = Depends(require_admin)):
     """API 키 설정."""
     # Provider 검증
     if payload.provider not in ApiKeyService.PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {payload.provider}")
-    
+        raise HTTPException(
+            status_code=400, detail=f"Unknown provider: {payload.provider}"
+        )
+
     provider_config = ApiKeyService.PROVIDERS[payload.provider]
-    
+
     # key_type 검증
     if payload.key_type not in provider_config["key_types"]:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid key_type '{payload.key_type}' for provider '{payload.provider}'"
+            status_code=400,
+            detail=f"Invalid key_type '{payload.key_type}' for provider '{payload.provider}'",
         )
-    
+
     # environment 검증
     if payload.environment not in provider_config["environments"]:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid environment '{payload.environment}' for provider '{payload.provider}'"
+            detail=f"Invalid environment '{payload.environment}' for provider '{payload.provider}'",
         )
-    
+
     success = ApiKeyService.set_key(
         provider=payload.provider,
         key_type=payload.key_type,
         value=payload.value,
         environment=payload.environment,
     )
-    
+
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save API key")
-    
+
     return {"ok": True, "message": "API key saved successfully"}
 
 
@@ -249,53 +254,61 @@ def set_api_keys_bulk(payload: ApiKeyBulkPayload, _: str = Depends(require_admin
     for key_data in payload.keys:
         # Provider 검증
         if key_data.provider not in ApiKeyService.PROVIDERS:
-            results.append({
-                "provider": key_data.provider,
-                "key_type": key_data.key_type,
-                "environment": key_data.environment,
-                "ok": False,
-                "error": f"Unknown provider: {key_data.provider}"
-            })
+            results.append(
+                {
+                    "provider": key_data.provider,
+                    "key_type": key_data.key_type,
+                    "environment": key_data.environment,
+                    "ok": False,
+                    "error": f"Unknown provider: {key_data.provider}",
+                }
+            )
             continue
-        
+
         provider_config = ApiKeyService.PROVIDERS[key_data.provider]
-        
+
         # key_type 검증
         if key_data.key_type not in provider_config["key_types"]:
-            results.append({
-                "provider": key_data.provider,
-                "key_type": key_data.key_type,
-                "environment": key_data.environment,
-                "ok": False,
-                "error": f"Invalid key_type"
-            })
+            results.append(
+                {
+                    "provider": key_data.provider,
+                    "key_type": key_data.key_type,
+                    "environment": key_data.environment,
+                    "ok": False,
+                    "error": f"Invalid key_type",
+                }
+            )
             continue
-        
+
         # environment 검증
         if key_data.environment not in provider_config["environments"]:
-            results.append({
-                "provider": key_data.provider,
-                "key_type": key_data.key_type,
-                "environment": key_data.environment,
-                "ok": False,
-                "error": f"Invalid environment"
-            })
+            results.append(
+                {
+                    "provider": key_data.provider,
+                    "key_type": key_data.key_type,
+                    "environment": key_data.environment,
+                    "ok": False,
+                    "error": f"Invalid environment",
+                }
+            )
             continue
-        
+
         success = ApiKeyService.set_key(
             provider=key_data.provider,
             key_type=key_data.key_type,
             value=key_data.value,
             environment=key_data.environment,
         )
-        
-        results.append({
-            "provider": key_data.provider,
-            "key_type": key_data.key_type,
-            "environment": key_data.environment,
-            "ok": success,
-        })
-    
+
+        results.append(
+            {
+                "provider": key_data.provider,
+                "key_type": key_data.key_type,
+                "environment": key_data.environment,
+                "ok": success,
+            }
+        )
+
     return {"results": results}
 
 
@@ -307,11 +320,12 @@ def delete_api_key(payload: ApiKeyDeletePayload, _: str = Depends(require_admin)
         key_type=payload.key_type,
         environment=payload.environment,
     )
-    
+
     return {"ok": success}
 
 
 # ===== Scheduler Pause/Resume =====
+
 
 @router.post("/scheduler/pause")
 def pause_scheduler(_: str = Depends(require_admin)):
@@ -347,15 +361,19 @@ def resume_scheduler(_: str = Depends(require_admin)):
 
 # ===== Risk Config =====
 
+
 @router.get("/risk-config")
 def get_risk_config(_: str = Depends(require_admin)):
     """리스크 설정 조회."""
     runtime = load_runtime_config()
-    risk_config = runtime.get("risk", {
-        "default_leverage": 5,
-        "max_loss_percent": 40,
-        "position_allocation_percent": 20,
-    })
+    risk_config = runtime.get(
+        "risk",
+        {
+            "default_leverage": 5,
+            "max_loss_percent": 40,
+            "position_allocation_percent": 20,
+        },
+    )
     return risk_config
 
 
@@ -366,4 +384,3 @@ def update_risk_config(payload: RiskConfigPayload, _: str = Depends(require_admi
     runtime["risk"] = payload.model_dump()
     save_runtime_config(runtime)
     return {"ok": True, "risk": runtime["risk"]}
-

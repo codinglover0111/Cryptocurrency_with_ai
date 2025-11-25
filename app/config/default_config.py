@@ -112,4 +112,3 @@ def update_runtime_config(section: str, payload: Mapping[str, Any]) -> Dict[str,
         current_section = runtime[section]
     save_runtime_config(runtime)
     return dict(current_section)
-
