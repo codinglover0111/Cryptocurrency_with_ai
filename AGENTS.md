@@ -89,6 +89,7 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 | `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)               |
 | `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                        |
 | `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app` |
+| `PRODUCTION`                       | `1` 또는 `true` 설정 시 HTTPS 전용 세션 쿠키 활성화       |
 
 ## 리스크 설정 기본값
 
@@ -105,7 +106,15 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 - Alpine 환경 의존성은 `apk add --no-cache pkgconf python3-dev mariadb-dev build-base curl tzdata` 조합으로 통일한다.
 - `requirements.txt`를 먼저 복사한 뒤 `uv pip install --system -r requirements.txt`로 의존성을 설치하고, 이후 애플리케이션 전체를 복사해 Docker 레이어 캐시를 유지한다.
 - 런타임 명령은 `uv run ...` 형식으로 통일해 uv가 관리하는 환경을 항상 사용한다.
+- **웹 서버(webapp.py)** 실행 시 Uvicorn에 `--proxy-headers --forwarded-allow-ips=*` 옵션을 추가하여 Railway 등 리버스 프록시 환경에서 HTTPS를 올바르게 감지하도록 한다.
 - 자세한 권장 패턴은 uv 공식 가이드([docs.astral.sh](https://docs.astral.sh/uv/guides/integration/docker/#installing-a-project))를 따른다.
+
+## 세션 및 쿠키 설정
+
+- 프로덕션 환경(Railway 등)에서는 세션 쿠키가 **HTTPS 전용**(`https_only=True`)으로 설정됩니다.
+- `RAILWAY_PUBLIC_DOMAIN`, `RAILWAY_ENVIRONMENT`, 또는 `PRODUCTION=1` 환경변수가 있으면 자동으로 프로덕션 모드로 인식합니다.
+- 로컬 개발 시에는 HTTP에서도 쿠키가 작동합니다.
+- 세션 쿠키의 `SameSite` 속성은 `lax`로 설정되어 동일 사이트 요청에서 쿠키가 전송됩니다.
 
 ## 폴더별 상세 가이드
 

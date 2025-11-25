@@ -77,11 +77,29 @@ def _build_allowed_origin_regex() -> Optional[str]:
 ALLOWED_ORIGINS = _build_allowed_origins()
 ALLOWED_ORIGIN_REGEX = _build_allowed_origin_regex()
 
+
+def _is_production() -> bool:
+    """Return True if running in production environment (Railway, etc.)."""
+    # Railway 환경이거나 명시적으로 PRODUCTION=1인 경우
+    return bool(
+        os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        or os.getenv("RAILWAY_ENVIRONMENT")
+        or os.getenv("PRODUCTION", "").lower() in ("1", "true")
+    )
+
+
 app = FastAPI(title="Crypto Bot UI")
+
+# 세션 미들웨어: 프로덕션 환경에서는 HTTPS 전용 쿠키 사용
+_session_https_only = _is_production()
+_session_same_site = "lax"  # 동일 사이트에서는 lax로 충분
+
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("WEB_SESSION_SECRET", "change-me"),
     max_age=60 * 60 * 24 * 7,
+    https_only=_session_https_only,
+    same_site=_session_same_site,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -90,6 +108,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 app.include_router(auth_router)
 app.include_router(admin_router)

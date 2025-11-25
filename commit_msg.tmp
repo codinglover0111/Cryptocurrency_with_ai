@@ -1,0 +1,7 @@
+프로덕션 환경 HTTPS 전용 세션 쿠키 및 프록시 헤더 처리 개선
+
+- webapp.py: 프로덕션 환경 감지 함수 추가 및 세션 쿠키 https_only 설정
+- Dockerfile.web: Uvicorn에 --proxy-headers 및 --forwarded-allow-ips 옵션 추가
+- 문서 업데이트: AGENTS.md 및 app/web/agents.md에 세션 쿠키 설정 가이드 추가
+- 프런트엔드: admin.css, admin.js 업데이트
+

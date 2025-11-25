@@ -50,3 +50,4 @@
 - 모든 라우트가 `auth.middleware` 의존성을 통해 역할 검증을 거치도록 유지하세요.
 - 스케줄러 상태는 `utils/storage.py`의 `scheduler_state` 테이블에서 읽습니다.
 - 세션 기반 관리자 UI는 CORS 설정에 민감합니다. `CORS_ALLOWED_ORIGINS` 환경변수(쉼표 구분 URL, 예: `https://web.example.com,https://admin.example.com`)로 허용 오리진을 구성하고, 기본값은 로컬 개발 및 Railway 기본 도메인을 포함합니다. `CORS_ALLOWED_ORIGIN_REGEX`(기본 `https://.*\.up\.railway\.app`)로 와일드카드 오리진을 추가할 수 있으며, 새 도메인을 붙일 때는 이 목록과 `static/admin.js`의 인증 fetch 로직을 동시에 확인하세요.
+- **세션 쿠키**: Railway 등 프로덕션 환경에서는 `https_only=True`가 자동 설정됩니다. Uvicorn 실행 시 `--proxy-headers --forwarded-allow-ips=*` 옵션이 필요합니다 (`Dockerfile.web` 참조). 로컬 개발 시에는 HTTP에서도 쿠키가 작동합니다.
