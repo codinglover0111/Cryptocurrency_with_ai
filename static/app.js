@@ -151,7 +151,9 @@ function renderAgentConfigForm() {
           </label>
           <label>
             Temp
-            <input data-field="temperature" type="number" step="0.05" min="0" max="1" value="${cfg.temperature ?? 0.1}" />
+            <input data-field="temperature" type="number" step="0.05" min="0" max="1" value="${
+              cfg.temperature ?? 0.1
+            }" />
           </label>
         </div>
       `;
@@ -1527,7 +1529,7 @@ async function refreshJournals() {
             )}">${tsStr}</td>
             <td>${title}</td>
             <td style="width: 100px; text-align:right">
-              <button class="btn secondary" data-action="jr-detail" data-item="${encodeURIComponent(
+              <button class="btn btn--ghost btn--sm" data-action="jr-detail" data-item="${encodeURIComponent(
                 JSON.stringify(it)
               )}">상세</button>
             </td>

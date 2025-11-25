@@ -6,309 +6,532 @@
     <title>Crypto Bot Dashboard</title>
     <link rel="stylesheet" href="/static/dashboard.css" />
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/admin.css" />
     <script src="/static/theme.js"></script>
     <script defer src="/static/app.js"></script>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self' data:; connect-src 'self'"
     />
+    <style>
+      /* Index specific overrides for admin-like layout without sidebar */
+      .dashboard-container {
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+      .admin-main.full-width {
+        margin-left: 0;
+        padding: 32px 0;
+      }
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1fr 350px;
+        gap: 24px;
+        margin-bottom: 32px;
+      }
+      @media (max-width: 1024px) {
+        .hero-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      /* Compact inputs for filters */
+      .filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: flex-end;
+      }
+      .filter-row .input-field {
+        flex: 1;
+        min-width: 140px;
+      }
+      .filter-row .btn {
+        height: 45px; /* Match input height roughly */
+      }
+      .hidden-mobile {
+        display: block;
+      }
+      @media (max-width: 600px) {
+        .hidden-mobile {
+          display: none !important;
+        }
+      }
+    </style>
   </head>
-  <body>
-    <div class="page-shell">
-      <header class="page-header card">
-        <div class="page-heading">
-          <h1 class="page-title">Crypto Bot Dashboard</h1>
-          <p class="page-subtitle">
-            상태와 통계를 한눈에 확인하고 최근 저널을 빠르게 탐색하세요.
-          </p>
-        </div>
-        <div class="page-meta">
-          <button
-            class="theme-toggle"
-            onclick="toggleTheme()"
-            aria-label="테마 변경"
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
+  <body class="admin-body">
+    <div class="admin-shell">
+      <main class="admin-main full-width">
+        <div class="dashboard-container">
+          <!-- Header -->
+          <header class="admin-header">
+            <div class="header-left">
+              <div
+                class="logo-wrapper"
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 12px;
+                  margin-bottom: 8px;
+                "
+              >
+                <span class="logo-icon">⚡</span>
+                <span class="header-title">CryptoBot Dashboard</span>
+              </div>
+              <p class="header-subtitle">
+                실시간 트레이딩 현황과 저널을 모니터링하세요
+              </p>
+            </div>
+            <div
+              class="header-right"
+              style="display: flex; gap: 12px; align-items: center"
             >
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-            </svg>
-          </button>
-          <span class="chip chip--accent">조회 전용</span>
-        </div>
-      </header>
-
-      <main class="page-main layout-grid layout-grid--single">
-        <section class="card panel" id="auth-card">
-          <header class="panel-header">
-            <div>
-              <h2 class="panel-title">접속 상태</h2>
-              <p class="panel-subtitle">
-                로그인하면 관리자/사용자 전용 설정을 조정할 수 있습니다.
-              </p>
-            </div>
-            <div class="panel-actions">
-              <button class="btn btn--ghost" id="logout-btn" hidden>
-                로그아웃
+              <button
+                class="theme-toggle"
+                onclick="toggleTheme()"
+                aria-label="테마 변경"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                  ></path>
+                </svg>
               </button>
+              <span class="status-badge status-badge--active">조회 전용</span>
             </div>
           </header>
-          <div class="panel-body auth-panel">
-            <form id="login-form">
-              <div class="input-field">
-                <label for="login-username">아이디</label>
-                <input id="login-username" required />
-              </div>
-              <div class="input-field">
-                <label for="login-password">비밀번호</label>
-                <input id="login-password" type="password" required />
-              </div>
-              <button class="btn" type="submit">로그인</button>
-              <span class="panel-actions__hint" id="auth-status"></span>
-            </form>
-          </div>
-        </section>
 
-        <section class="card panel" id="admin-settings" hidden>
-          <header class="panel-header">
-            <div>
-              <h2 class="panel-title">관리자 설정</h2>
-              <p class="panel-subtitle">
-                에이전트별 LLM 모델과 자동화 주기를 웹에서 바로 변경하세요.
+          <!-- Auth Section (Collapsed by default mostly, but keeping functionality) -->
+          <section
+            id="auth-card"
+            class="admin-panel"
+            style="
+              margin-bottom: 32px;
+              max-width: 400px;
+              margin-left: auto;
+              margin-right: auto;
+            "
+          >
+            <header class="panel-header">
+              <h3 class="panel-title">접속 상태</h3>
+              <div class="panel-actions">
+                <button class="btn btn--ghost btn--sm" id="logout-btn" hidden>
+                  로그아웃
+                </button>
+              </div>
+            </header>
+            <div class="panel-body auth-panel">
+              <p
+                class="text-muted"
+                style="margin-top: 0; margin-bottom: 16px; font-size: 14px"
+              >
+                관리자 계정으로 로그인하면 설정을 변경할 수 있습니다.
               </p>
-            </div>
-          </header>
-          <div class="panel-body">
-            <div class="admin-grid">
-              <div>
-                <h3 class="subtle-heading">LLM 에이전트 구성</h3>
-                <div id="agent-config"></div>
-                <button class="btn" id="save-agent-config">저장</button>
-                <span class="panel-actions__hint" id="agent-config-hint"></span>
-              </div>
-              <div>
-                <h3 class="subtle-heading">스케줄러</h3>
-                <div class="input-field">
-                  <label for="automation-minutes">자동매매 주기 (분)</label>
+              <form id="login-form" class="auth-form" style="gap: 16px">
+                <div class="form-group">
+                  <input id="login-username" placeholder="아이디" required />
+                </div>
+                <div class="form-group">
                   <input
-                    id="automation-minutes"
-                    type="number"
-                    min="1"
-                    max="180"
+                    id="login-password"
+                    type="password"
+                    placeholder="비밀번호"
+                    required
                   />
                 </div>
-                <div class="input-field">
-                  <label for="loss-review-minutes">손실 리뷰 주기 (분)</label>
-                  <input
-                    id="loss-review-minutes"
-                    type="number"
-                    min="1"
-                    max="720"
-                  />
-                </div>
-                <label class="toggle">
-                  <input type="checkbox" id="cold-start-flag" />
-                  <span>앱 시작 시 즉시 실행(COLD_START)</span>
-                </label>
-                <button class="btn" id="save-scheduler">저장</button>
-                <span class="panel-actions__hint" id="scheduler-hint"></span>
-              </div>
+                <button class="btn btn--primary btn--full" type="submit">
+                  로그인
+                </button>
+                <span
+                  class="auth-status"
+                  id="auth-status"
+                  style="min-height: 0"
+                ></span>
+              </form>
             </div>
-          </div>
-        </section>
-
-        <div class="layout-column layout-column--primary">
-          <section class="panel-grid panel-grid--balanced">
-            <article class="card panel panel--stack" id="card-balance">
-              <header class="panel-header">
-                <div>
-                  <h2 class="panel-title">잔고 / 포지션</h2>
-                  <p class="panel-subtitle">실시간 자산 현황</p>
-                </div>
-                <div class="panel-actions">
-                  <button
-                    class="btn btn--ghost"
-                    type="button"
-                    id="balance-refresh"
-                  >
-                    새로고침
-                  </button>
-                  <span
-                    class="panel-actions__hint"
-                    id="balance-refresh-hint"
-                  ></span>
-                </div>
-              </header>
-              <div class="panel-body">
-                <div class="balance-summary" id="balance"></div>
-                <div class="table-wrapper" id="positions"></div>
-              </div>
-            </article>
-
-            <article class="card panel" id="card-stats">
-              <header class="panel-header">
-                <div>
-                  <h2 class="panel-title">통계</h2>
-                  <p class="panel-subtitle">기간별 성과를 비교해 보세요.</p>
-                </div>
-              </header>
-              <div class="panel-body">
-                <div class="stats-grid">
-                  <div class="input-field">
-                    <label for="st-since">시작 (UTC YYYY-MM-DD)</label>
-                    <input id="st-since" placeholder="2025-01-01" />
-                  </div>
-                  <div class="input-field">
-                    <label for="st-until">종료 (UTC YYYY-MM-DD)</label>
-                    <input id="st-until" placeholder="2025-12-31" />
-                  </div>
-                  <div class="input-field">
-                    <label for="st-symbol">심볼 (선택)</label>
-                    <select id="st-symbol">
-                      <option value="">전체</option>
-                    </select>
-                  </div>
-                  <div class="input-field">
-                    <label for="st-group">그룹</label>
-                    <select id="st-group">
-                      <option value="">없음</option>
-                      <option value="day">일별</option>
-                      <option value="week">주별</option>
-                      <option value="month">월별</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="stats-actions">
-                  <button class="btn btn--ghost" id="st-refresh">조회</button>
-                  <button class="btn" id="st-today">오늘</button>
-                  <button class="btn" id="st-this-month">이번 달</button>
-                  <button class="btn" id="st-last-7d">최근 7일</button>
-                  <span class="panel-actions__hint" id="st-refresh-hint"></span>
-                </div>
-                <div class="stats-output" id="stats"></div>
-              </div>
-            </article>
           </section>
 
-          <article class="card panel" id="card-review-pending">
+          <!-- Admin Settings (Hidden) -->
+          <section
+            id="admin-settings"
+            class="admin-panel"
+            style="margin-bottom: 32px"
+            hidden
+          >
             <header class="panel-header">
-              <div>
-                <h2 class="panel-title">리뷰 대기열</h2>
-                <p class="panel-subtitle">청산 후 48시간 대기 중인 포지션</p>
-              </div>
+              <h3 class="panel-title">🤖 관리자 설정</h3>
             </header>
             <div class="panel-body">
-              <div class="table-wrapper" id="pending-reviews"></div>
+              <div class="config-grid">
+                <!-- LLM Config -->
+                <article class="config-card">
+                  <div class="config-header">
+                    <div class="config-title">
+                      <h3>LLM 에이전트 구성</h3>
+                    </div>
+                  </div>
+                  <div class="config-body">
+                    <div
+                      id="agent-config"
+                      style="display: flex; flex-direction: column; gap: 12px"
+                    ></div>
+                    <button
+                      class="btn btn--primary"
+                      id="save-agent-config"
+                      style="margin-top: 12px"
+                    >
+                      저장
+                    </button>
+                    <span class="config-hint" id="agent-config-hint"></span>
+                  </div>
+                </article>
+                <!-- Scheduler -->
+                <article class="config-card">
+                  <div class="config-header">
+                    <div class="config-title">
+                      <h3>스케줄러 설정</h3>
+                    </div>
+                  </div>
+                  <div class="config-body">
+                    <div class="form-group">
+                      <label for="automation-minutes">자동매매 주기 (분)</label>
+                      <input
+                        id="automation-minutes"
+                        type="number"
+                        min="1"
+                        max="180"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label for="loss-review-minutes"
+                        >손실 리뷰 주기 (분)</label
+                      >
+                      <input
+                        id="loss-review-minutes"
+                        type="number"
+                        min="1"
+                        max="720"
+                      />
+                    </div>
+                    <div class="form-group">
+                      <label class="toggle-label">
+                        <input type="checkbox" id="cold-start-flag" />
+                        <span class="toggle-switch"></span>
+                        <span style="font-size: 14px"
+                          >앱 시작 시 즉시 실행 (COLD_START)</span
+                        >
+                      </label>
+                    </div>
+                    <button class="btn btn--primary" id="save-scheduler">
+                      저장
+                    </button>
+                    <span class="config-hint" id="scheduler-hint"></span>
+                  </div>
+                </article>
+              </div>
             </div>
-          </article>
+          </section>
 
-          <section class="card panel">
+          <!-- Main Content Grid -->
+          <div class="hero-grid">
+            <!-- Left Column: Balance & Positions -->
+            <div style="display: flex; flex-direction: column; gap: 24px">
+              <!-- Balance Card -->
+              <article class="admin-panel" id="card-balance">
+                <header class="panel-header">
+                  <h3 class="panel-title">💰 자산 현황</h3>
+                  <div style="display: flex; gap: 8px; align-items: center">
+                    <span
+                      id="balance-refresh-hint"
+                      class="text-muted"
+                      style="font-size: 12px"
+                    ></span>
+                    <button
+                      class="btn btn--ghost btn--sm"
+                      type="button"
+                      id="balance-refresh"
+                    >
+                      새로고침
+                    </button>
+                  </div>
+                </header>
+                <div class="panel-body">
+                  <div
+                    class="dashboard-grid"
+                    id="balance"
+                    style="margin-bottom: 0"
+                  >
+                    <!-- Balance items will be injected here -->
+                  </div>
+                </div>
+              </article>
+
+              <!-- Positions Card -->
+              <article class="admin-panel">
+                <header class="panel-header">
+                  <h3 class="panel-title">📊 활성 포지션</h3>
+                </header>
+                <div class="panel-body">
+                  <div class="table-wrapper" id="positions">
+                    <p class="muted">데이터 로딩 중...</p>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <!-- Right Column: Stats & Review -->
+            <div style="display: flex; flex-direction: column; gap: 24px">
+              <!-- Stats Panel -->
+              <article class="admin-panel" id="card-stats">
+                <header class="panel-header">
+                  <h3 class="panel-title">📈 성과 분석</h3>
+                </header>
+                <div class="panel-body">
+                  <div class="form-group" style="margin-bottom: 16px">
+                    <div class="filter-row">
+                      <div class="input-field">
+                        <label for="st-since">시작일</label>
+                        <input id="st-since" placeholder="YYYY-MM-DD" />
+                      </div>
+                      <div class="input-field">
+                        <label for="st-until">종료일</label>
+                        <input id="st-until" placeholder="YYYY-MM-DD" />
+                      </div>
+                    </div>
+                    <div class="filter-row" style="margin-top: 12px">
+                      <div class="input-field">
+                        <label for="st-symbol">심볼</label>
+                        <select id="st-symbol">
+                          <option value="">전체</option>
+                        </select>
+                      </div>
+                      <div class="input-field">
+                        <label for="st-group">그룹</label>
+                        <select id="st-group">
+                          <option value="">없음</option>
+                          <option value="day">일별</option>
+                          <option value="week">주별</option>
+                          <option value="month">월별</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="filter-row" style="margin-top: 16px">
+                      <button
+                        class="btn btn--primary btn--full"
+                        id="st-refresh"
+                      >
+                        조회
+                      </button>
+                    </div>
+                    <div
+                      style="
+                        display: flex;
+                        gap: 8px;
+                        margin-top: 8px;
+                        flex-wrap: wrap;
+                      "
+                    >
+                      <button class="btn btn--ghost btn--sm" id="st-today">
+                        오늘
+                      </button>
+                      <button class="btn btn--ghost btn--sm" id="st-this-month">
+                        이번 달
+                      </button>
+                      <button class="btn btn--ghost btn--sm" id="st-last-7d">
+                        7일
+                      </button>
+                    </div>
+                  </div>
+                  <div id="stats" class="stats-output">
+                    <!-- Stats output -->
+                  </div>
+                </div>
+              </article>
+
+              <!-- Review Pending -->
+              <article class="admin-panel" id="card-review-pending">
+                <header class="panel-header">
+                  <h3 class="panel-title">⏳ 리뷰 대기열</h3>
+                </header>
+                <div class="panel-body">
+                  <div class="table-wrapper" id="pending-reviews">
+                    <!-- Table injected via JS -->
+                  </div>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <!-- Journal Section (Full Width) -->
+          <section class="admin-panel" style="margin-bottom: 40px">
             <header class="panel-header">
-              <div>
-                <h2 class="panel-title">저널 조회</h2>
-                <p class="panel-subtitle">
-                  오늘 생성된 최신 기록을 시간순으로 확인하세요.
+              <div class="panel-title-group">
+                <h3 class="panel-title">📝 매매 저널</h3>
+                <p
+                  class="panel-subtitle hidden-mobile"
+                  style="margin-left: 12px; margin-bottom: 0"
+                >
+                  오늘 생성된 기록을 확인하세요
                 </p>
               </div>
-            </header>
-            <div class="panel-body">
-              <div class="journal-controls">
-                <label class="journal-limit">
-                  페이지당 개수
-                  <select id="jr-limit">
-                    <option value="10">10개</option>
-                    <option value="30" selected>30개</option>
-                    <option value="50">50개</option>
-                    <option value="100">100개</option>
-                  </select>
-                </label>
-                <label class="journal-limit">
-                  타임존
-                  <select id="tz-select">
-                    <option value="UTC">UTC</option>
-                    <option value="UTC+9" selected>UTC+9</option>
-                    <option value="UTC+1">UTC+1</option>
-                    <option value="UTC-5">UTC-5</option>
-                  </select>
-                </label>
-                <label class="journal-limit">
-                  코인
-                  <select id="jr-symbol">
-                    <option value="">전체</option>
-                  </select>
-                </label>
-                <label class="journal-sort">
-                  정렬
-                  <select id="jr-sort">
-                    <option value="desc" selected>최신순</option>
-                    <option value="asc">오래된순</option>
-                  </select>
-                </label>
-                <label class="journal-sort">
-                  기간
-                  <select id="jr-range">
-                    <option value="today">오늘</option>
-                    <option value="recent15" selected>최근 15분</option>
-                  </select>
-                </label>
-                <div id="jr-type-filters" class="journal-type-filters">
-                  <span class="journal-type-label">유형</span>
-                  <label
-                    ><input
-                      type="checkbox"
-                      value="decision"
-                      checked
-                    />판단</label
-                  >
-                  <label
-                    ><input type="checkbox" value="action" checked />액션</label
-                  >
-                  <label
-                    ><input type="checkbox" value="review" checked />리뷰</label
-                  >
-                  <label
-                    ><input type="checkbox" value="error" checked />오류</label
-                  >
-                </div>
-                <div id="jr-status-filters" class="journal-type-filters">
-                  <span class="journal-type-label">포지션</span>
-                  <label
-                    ><input type="checkbox" value="long" checked />롱</label
-                  >
-                  <label
-                    ><input type="checkbox" value="hold" checked />홀딩</label
-                  >
-                  <label
-                    ><input type="checkbox" value="short" checked />숏</label
-                  >
-                </div>
-                <button class="btn btn--ghost" id="jr-refresh">조회</button>
-                <button class="btn btn--ghost" id="jr-reset">초기화</button>
+              <div class="action-buttons">
                 <a
-                  class="btn"
+                  class="btn btn--ghost btn--sm"
                   href="/overlay?limit=12&today_only=1&ascending=0&types=decision,action,review"
                   target="_blank"
                 >
                   판단 오버레이
                 </a>
                 <a
-                  class="btn"
+                  class="btn btn--ghost btn--sm"
                   href="/overlay_positions?refresh=5&fs=18"
                   target="_blank"
                 >
                   포지션 오버레이
                 </a>
               </div>
+            </header>
+            <div class="panel-body">
+              <!-- Filters -->
+              <div
+                class="journal-controls"
+                style="background: var(--surface); margin-bottom: 24px"
+              >
+                <div class="filter-row">
+                  <div class="input-field">
+                    <label>페이지당 개수</label>
+                    <select id="jr-limit">
+                      <option value="10">10개</option>
+                      <option value="30" selected>30개</option>
+                      <option value="50">50개</option>
+                      <option value="100">100개</option>
+                    </select>
+                  </div>
+                  <div class="input-field">
+                    <label>타임존</label>
+                    <select id="tz-select">
+                      <option value="UTC">UTC</option>
+                      <option value="UTC+9" selected>UTC+9</option>
+                      <option value="UTC+1">UTC+1</option>
+                      <option value="UTC-5">UTC-5</option>
+                    </select>
+                  </div>
+                  <div class="input-field">
+                    <label>코인</label>
+                    <select id="jr-symbol">
+                      <option value="">전체</option>
+                    </select>
+                  </div>
+                  <div class="input-field">
+                    <label>기간</label>
+                    <select id="jr-range">
+                      <option value="today">오늘</option>
+                      <option value="recent15" selected>최근 15분</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div
+                  style="
+                    margin-top: 16px;
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 24px;
+                  "
+                >
+                  <div
+                    id="jr-type-filters"
+                    class="journal-type-filters"
+                    style="flex: 1"
+                  >
+                    <span
+                      class="journal-type-label"
+                      style="
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: var(--text-muted);
+                        margin-right: 8px;
+                      "
+                      >유형</span
+                    >
+                    <label
+                      ><input
+                        type="checkbox"
+                        value="decision"
+                        checked
+                      />판단</label
+                    >
+                    <label
+                      ><input
+                        type="checkbox"
+                        value="action"
+                        checked
+                      />액션</label
+                    >
+                    <label
+                      ><input
+                        type="checkbox"
+                        value="review"
+                        checked
+                      />리뷰</label
+                    >
+                    <label
+                      ><input
+                        type="checkbox"
+                        value="error"
+                        checked
+                      />오류</label
+                    >
+                  </div>
+                  <div
+                    id="jr-status-filters"
+                    class="journal-type-filters"
+                    style="flex: 1"
+                  >
+                    <span
+                      class="journal-type-label"
+                      style="
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: var(--text-muted);
+                        margin-right: 8px;
+                      "
+                      >포지션</span
+                    >
+                    <label
+                      ><input type="checkbox" value="long" checked />롱</label
+                    >
+                    <label
+                      ><input type="checkbox" value="hold" checked />홀딩</label
+                    >
+                    <label
+                      ><input type="checkbox" value="short" checked />숏</label
+                    >
+                  </div>
+                </div>
+
+                <div
+                  class="action-buttons"
+                  style="margin-top: 16px; justify-content: flex-end"
+                >
+                  <button class="btn btn--primary" id="jr-refresh">조회</button>
+                  <button class="btn btn--ghost" id="jr-reset">초기화</button>
+                </div>
+              </div>
+
+              <!-- Table -->
               <div class="table-wrapper" id="journals"></div>
               <div class="journal-pagination" id="jr-pagination" hidden></div>
             </div>
