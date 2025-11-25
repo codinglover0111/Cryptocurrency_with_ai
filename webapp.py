@@ -27,6 +27,56 @@ from app.auth.routes import router as auth_router
 from app.web import admin_router, user_router
 
 
+def _build_allowed_origins() -> List[str]:
+    """Return CORS allowlist honoring env overrides."""
+    raw = os.getenv("CORS_ALLOWED_ORIGINS")
+    if raw:
+        origins = [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
+        return [origin for origin in origins if origin]
+
+    defaults = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    for key in ("PUBLIC_APP_URL", "FRONTEND_URL", "WEB_BASE_URL"):
+        value = os.getenv(key)
+        if value:
+            defaults.append(value.strip().rstrip("/"))
+
+    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv(
+        "RAILWAY_STATIC_URL"
+    )
+    if railway_domain:
+        railway_domain = railway_domain.strip()
+        if not railway_domain.startswith("http"):
+            railway_domain = f"https://{railway_domain}"
+        defaults.append(railway_domain.rstrip("/"))
+
+    # Preserve order while removing duplicates/empties
+    seen = set()
+    result: List[str] = []
+    for origin in defaults:
+        if not origin or origin in seen:
+            continue
+        seen.add(origin)
+        result.append(origin)
+    return result or ["http://localhost:8000"]
+
+
+def _build_allowed_origin_regex() -> Optional[str]:
+    """Return regex pattern for wildcard CORS origins."""
+    raw = os.getenv("CORS_ALLOWED_ORIGIN_REGEX")
+    if raw is not None:
+        raw = raw.strip()
+        return raw or None
+    return r"https://.*\.up\.railway\.app"
+
+
+ALLOWED_ORIGINS = _build_allowed_origins()
+ALLOWED_ORIGIN_REGEX = _build_allowed_origin_regex()
+
 app = FastAPI(title="Crypto Bot UI")
 app.add_middleware(
     SessionMiddleware,
@@ -35,7 +85,8 @@ app.add_middleware(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

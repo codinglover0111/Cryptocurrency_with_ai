@@ -1,4 +1,4 @@
-# QuantAgent - 프로젝트 가이드
+# Cryptocurrency_with_ai(CCA) - 프로젝트 가이드
 
 > LangChain 1.0 / LangGraph 1.0 기반 멀티 에이전트 암호화폐 자동매매 시스템
 
@@ -78,15 +78,17 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 
 ## 주요 환경변수
 
-| 변수                               | 설명                     |
-| ---------------------------------- | ------------------------ |
-| `BYBIT_ENV`                        | demo / testnet / mainnet |
-| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증           |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키               |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정         |
-| `WEB_SESSION_SECRET`               | 세션 암호화 키           |
-| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10) |
-| `TRADING_SYMBOLS`                  | 거래 심볼 목록           |
+| 변수                               | 설명                                                      |
+| ---------------------------------- | --------------------------------------------------------- |
+| `BYBIT_ENV`                        | demo / testnet / mainnet                                  |
+| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증                                            |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키                                                |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정                                          |
+| `WEB_SESSION_SECRET`               | 세션 암호화 키                                            |
+| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10)                                  |
+| `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)               |
+| `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                        |
+| `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app` |
 
 ## 리스크 설정 기본값
 

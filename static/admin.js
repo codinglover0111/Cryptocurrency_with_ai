@@ -12,20 +12,28 @@ const adminState = {
   apiKeysStatus: {},
   currentSection: "dashboard",
   currentBybitEnv: "demo",
+  availableSymbols: [],
+  selectedSymbols: [],
+  defaultSymbols: [],
 };
 
 // Utilities
-async function fetchJSON(path) {
-  const res = await fetch(path);
+async function fetchJSON(path, init = {}) {
+  const res = await fetch(path, {
+    credentials: "include",
+    ...init,
+  });
   if (!res.ok) throw new Error(`${path} ${res.status}`);
   return res.json();
 }
 
-async function postJSON(path, payload) {
+async function postJSON(path, payload, init = {}) {
   const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
+    ...init,
   });
   if (!res.ok) throw new Error(`${path} ${res.status}`);
   return res.json();
@@ -144,6 +152,7 @@ async function handleLogin(e) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      credentials: "include",
     });
 
     if (!res.ok) {
@@ -232,6 +241,10 @@ function showSection(sectionId) {
       title: "리스크 설정",
       subtitle: "레버리지, 손실 한도, 포지션 할당을 설정하세요",
     },
+    symbols: {
+      title: "거래 심볼",
+      subtitle: "자동매매에 사용할 거래 심볼을 설정하세요",
+    },
   };
 
   const info = titles[sectionId] || { title: sectionId, subtitle: "" };
@@ -253,6 +266,11 @@ function showSection(sectionId) {
   // Load risk config when risk section is shown
   if (sectionId === "risk") {
     loadRiskConfig();
+  }
+
+  // Load symbols when symbols section is shown
+  if (sectionId === "symbols") {
+    loadTradingSymbols();
   }
 }
 
@@ -952,8 +970,10 @@ function setupEventListeners() {
   // Scheduler Pause/Resume
   const pauseSchedulerBtn = el("pause-scheduler");
   const resumeSchedulerBtn = el("resume-scheduler");
-  if (pauseSchedulerBtn) pauseSchedulerBtn.addEventListener("click", pauseScheduler);
-  if (resumeSchedulerBtn) resumeSchedulerBtn.addEventListener("click", resumeScheduler);
+  if (pauseSchedulerBtn)
+    pauseSchedulerBtn.addEventListener("click", pauseScheduler);
+  if (resumeSchedulerBtn)
+    resumeSchedulerBtn.addEventListener("click", resumeScheduler);
 
   // Logs
   const refreshLogsBtn = el("refresh-logs");
@@ -966,6 +986,14 @@ function setupEventListeners() {
   const resetRiskBtn = el("reset-risk-config");
   if (saveRiskBtn) saveRiskBtn.addEventListener("click", saveRiskConfig);
   if (resetRiskBtn) resetRiskBtn.addEventListener("click", resetRiskConfig);
+
+  // Trading Symbols
+  const saveSymbolsBtn = el("save-symbols");
+  const resetSymbolsBtn = el("reset-symbols");
+  if (saveSymbolsBtn)
+    saveSymbolsBtn.addEventListener("click", saveTradingSymbols);
+  if (resetSymbolsBtn)
+    resetSymbolsBtn.addEventListener("click", resetTradingSymbols);
 }
 
 // Initialize
@@ -1071,7 +1099,9 @@ async function loadLogs() {
     const html = logs
       .map((log) => {
         const levelClass = `log-line--${(log.level || "info").toLowerCase()}`;
-        return `<div class="log-line ${levelClass}">${escapeHtml(log.text)}</div>`;
+        return `<div class="log-line ${levelClass}">${escapeHtml(
+          log.text
+        )}</div>`;
       })
       .join("");
 
@@ -1109,7 +1139,8 @@ async function loadRiskConfig() {
 
     if (leverageInput) leverageInput.value = config.default_leverage ?? 5;
     if (maxLossInput) maxLossInput.value = config.max_loss_percent ?? 40;
-    if (allocationInput) allocationInput.value = config.position_allocation_percent ?? 20;
+    if (allocationInput)
+      allocationInput.value = config.position_allocation_percent ?? 20;
   } catch (err) {
     console.warn("리스크 설정 로드 실패:", err);
   }
@@ -1152,7 +1183,8 @@ function resetRiskConfig() {
   const hint = el("risk-config-hint");
   if (hint) hint.textContent = "기본값으로 초기화됨";
   setTimeout(() => {
-    if (hint && hint.textContent === "기본값으로 초기화됨") hint.textContent = "";
+    if (hint && hint.textContent === "기본값으로 초기화됨")
+      hint.textContent = "";
   }, 2000);
 }
 
@@ -1180,7 +1212,7 @@ function updateThemeIcon() {
   const currentTheme = html.getAttribute("data-theme") || "dark";
   const moonIcon = document.querySelector(".moon-icon");
   const sunIcon = document.querySelector(".sun-icon");
-  
+
   if (moonIcon && sunIcon) {
     if (currentTheme === "dark") {
       // 다크모드: 달 아이콘 표시 (클릭하면 라이트로)
@@ -1199,3 +1231,186 @@ window.addEventListener("DOMContentLoaded", () => {
   // 테마 아이콘 초기화
   setTimeout(updateThemeIcon, 100);
 });
+
+// ===== Trading Symbols Management =====
+
+async function loadTradingSymbols() {
+  try {
+    // 사용 가능한 심볼과 현재 설정된 심볼을 동시에 로드
+    const [availableRes, currentRes] = await Promise.all([
+      fetchJSON("/admin/trading-symbols/available"),
+      fetchJSON("/admin/trading-symbols"),
+    ]);
+
+    adminState.availableSymbols = availableRes.symbols || [];
+    adminState.selectedSymbols = currentRes.symbols || [];
+    adminState.defaultSymbols = currentRes.defaults || [];
+
+    renderSymbols();
+    updateSymbolCount();
+    setupSymbolSearch();
+  } catch (err) {
+    console.error("거래 심볼 로드 실패:", err);
+    const container = el("available-symbols");
+    if (container) {
+      container.innerHTML = '<p class="muted">심볼을 불러올 수 없습니다</p>';
+    }
+  }
+}
+
+function renderSymbols(filterText = "") {
+  const selectedContainer = el("selected-symbols");
+  const availableContainer = el("available-symbols");
+
+  if (!selectedContainer || !availableContainer) return;
+
+  const filter = filterText.toLowerCase().trim();
+  const selectedSet = new Set(adminState.selectedSymbols);
+
+  // 선택된 심볼 렌더링
+  if (adminState.selectedSymbols.length === 0) {
+    selectedContainer.innerHTML = '<p class="muted">선택된 심볼이 없습니다</p>';
+  } else {
+    const selectedHtml = adminState.selectedSymbols
+      .filter((s) => !filter || s.toLowerCase().includes(filter))
+      .map((symbol) => {
+        const isBTC = symbol === "BTCUSDT";
+        return `
+          <button
+            class="symbol-chip symbol-chip--selected ${
+              isBTC ? "symbol-chip--btc" : ""
+            }"
+            data-symbol="${escapeHtml(symbol)}"
+            onclick="toggleSymbol('${escapeHtml(symbol)}')"
+          >
+            ${isBTC ? "⭐ " : ""}${escapeHtml(symbol)}
+            <span class="symbol-remove">×</span>
+          </button>
+        `;
+      })
+      .join("");
+
+    selectedContainer.innerHTML =
+      selectedHtml || '<p class="muted">검색 결과가 없습니다</p>';
+  }
+
+  // 사용 가능한 심볼 렌더링 (선택되지 않은 것만)
+  const availableSymbols = adminState.availableSymbols.filter(
+    (s) => !selectedSet.has(s) && (!filter || s.toLowerCase().includes(filter))
+  );
+
+  if (availableSymbols.length === 0) {
+    availableContainer.innerHTML = filter
+      ? '<p class="muted">검색 결과가 없습니다</p>'
+      : '<p class="muted">모든 심볼이 선택되었습니다</p>';
+  } else {
+    const availableHtml = availableSymbols
+      .map((symbol) => {
+        const isBTC = symbol === "BTCUSDT";
+        return `
+          <button
+            class="symbol-chip ${isBTC ? "symbol-chip--btc-available" : ""}"
+            data-symbol="${escapeHtml(symbol)}"
+            onclick="toggleSymbol('${escapeHtml(symbol)}')"
+          >
+            ${isBTC ? "⭐ " : ""}${escapeHtml(symbol)}
+          </button>
+        `;
+      })
+      .join("");
+
+    availableContainer.innerHTML = availableHtml;
+  }
+}
+
+function toggleSymbol(symbol) {
+  const index = adminState.selectedSymbols.indexOf(symbol);
+  if (index > -1) {
+    // 선택 해제
+    adminState.selectedSymbols.splice(index, 1);
+  } else {
+    // 선택 추가
+    adminState.selectedSymbols.push(symbol);
+  }
+
+  // BTCUSDT가 포함되어 있으면 맨 앞으로 이동
+  const btcIndex = adminState.selectedSymbols.indexOf("BTCUSDT");
+  if (btcIndex > 0) {
+    adminState.selectedSymbols.splice(btcIndex, 1);
+    adminState.selectedSymbols.unshift("BTCUSDT");
+  }
+
+  const searchInput = el("symbol-search");
+  const filterText = searchInput?.value || "";
+  renderSymbols(filterText);
+  updateSymbolCount();
+}
+
+function updateSymbolCount() {
+  const countEl = el("selected-symbol-count");
+  if (countEl) {
+    countEl.textContent = `${adminState.selectedSymbols.length}개 선택됨`;
+  }
+}
+
+function setupSymbolSearch() {
+  const searchInput = el("symbol-search");
+  if (!searchInput) return;
+
+  // 이벤트 리스너 중복 방지
+  searchInput.removeEventListener("input", handleSymbolSearch);
+  searchInput.addEventListener("input", handleSymbolSearch);
+}
+
+function handleSymbolSearch(e) {
+  const filterText = e.target.value;
+  renderSymbols(filterText);
+}
+
+async function saveTradingSymbols() {
+  const hint = el("symbols-hint");
+
+  if (adminState.selectedSymbols.length === 0) {
+    if (hint) hint.textContent = "⚠ 최소 1개 이상의 심볼을 선택하세요";
+    return;
+  }
+
+  try {
+    if (hint) hint.textContent = "저장 중...";
+
+    const result = await postJSON("/admin/trading-symbols", {
+      symbols: adminState.selectedSymbols,
+    });
+
+    if (result.ok) {
+      if (hint) {
+        hint.textContent = result.warnings
+          ? `✓ 저장 완료 (${result.warnings})`
+          : "✓ 저장 완료";
+      }
+      setTimeout(() => {
+        if (hint && hint.textContent.startsWith("✓")) hint.textContent = "";
+      }, 3000);
+    } else {
+      if (hint) hint.textContent = "✗ 저장 실패";
+    }
+  } catch (err) {
+    console.error("심볼 저장 실패:", err);
+    if (hint) hint.textContent = "✗ 저장 실패";
+  }
+}
+
+function resetTradingSymbols() {
+  adminState.selectedSymbols = [...adminState.defaultSymbols];
+  const searchInput = el("symbol-search");
+  if (searchInput) searchInput.value = "";
+  renderSymbols();
+  updateSymbolCount();
+
+  const hint = el("symbols-hint");
+  if (hint) hint.textContent = "기본값으로 초기화됨";
+  setTimeout(() => {
+    if (hint && hint.textContent === "기본값으로 초기화됨")
+      hint.textContent = "";
+  }, 2000);
+}

@@ -58,6 +58,10 @@
             <span class="nav-icon">⚙️</span>
             <span class="nav-label">리스크 설정</span>
           </a>
+          <a href="#symbols" class="nav-item" data-section="symbols">
+            <span class="nav-icon">💱</span>
+            <span class="nav-label">거래 심볼</span>
+          </a>
         </nav>
         <div class="sidebar-footer">
           <a href="/" class="nav-item nav-item--back">
@@ -462,11 +466,15 @@
                     <span class="status-value" id="last-run">-</span>
                   </div>
                 </div>
-                <div class="scheduler-controls" style="margin-top: 20px;">
+                <div class="scheduler-controls" style="margin-top: 20px">
                   <button class="btn btn--warning" id="pause-scheduler">
                     <span>⏸️</span> 스케줄러 일시 중단
                   </button>
-                  <button class="btn btn--success" id="resume-scheduler" style="display: none;">
+                  <button
+                    class="btn btn--success"
+                    id="resume-scheduler"
+                    style="display: none"
+                  >
                     <span>▶️</span> 스케줄러 재개
                   </button>
                 </div>
@@ -786,12 +794,16 @@
                   <option value="INFO">INFO</option>
                   <option value="DEBUG">DEBUG</option>
                 </select>
-                <label class="toggle-label" style="margin-left: 16px;">
+                <label class="toggle-label" style="margin-left: 16px">
                   <input type="checkbox" id="log-auto-scroll" checked />
                   <span class="toggle-switch"></span>
                   <span class="toggle-text">자동 스크롤</span>
                 </label>
-                <button class="btn btn--ghost btn--sm" id="refresh-logs" style="margin-left: 16px;">
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="refresh-logs"
+                  style="margin-left: 16px"
+                >
                   새로고침
                 </button>
               </div>
@@ -825,10 +837,14 @@
                     />
                     <span class="input-unit">x</span>
                   </div>
-                  <p class="form-hint">새 포지션 진입 시 기본 적용되는 레버리지</p>
+                  <p class="form-hint">
+                    새 포지션 진입 시 기본 적용되는 레버리지
+                  </p>
                 </div>
                 <div class="form-group">
-                  <label for="max-loss-percent">최대 손실 허용 % (레버리지 후)</label>
+                  <label for="max-loss-percent"
+                    >최대 손실 허용 % (레버리지 후)</label
+                  >
                   <div class="input-with-unit">
                     <input
                       type="number"
@@ -840,10 +856,15 @@
                     />
                     <span class="input-unit">%</span>
                   </div>
-                  <p class="form-hint">레버리지 적용 후 기준, 이 값을 초과하는 손실이 발생하면 SL이 강제 조정됩니다</p>
+                  <p class="form-hint">
+                    레버리지 적용 후 기준, 이 값을 초과하는 손실이 발생하면 SL이
+                    강제 조정됩니다
+                  </p>
                 </div>
                 <div class="form-group">
-                  <label for="position-allocation-percent">포지션당 최대 할당 %</label>
+                  <label for="position-allocation-percent"
+                    >포지션당 최대 할당 %</label
+                  >
                   <div class="input-with-unit">
                     <input
                       type="number"
@@ -855,7 +876,10 @@
                     />
                     <span class="input-unit">%</span>
                   </div>
-                  <p class="form-hint">총 잔고 대비 하나의 포지션에 할당 가능한 최대 비율 (초기 잔고 기준)</p>
+                  <p class="form-hint">
+                    총 잔고 대비 하나의 포지션에 할당 가능한 최대 비율 (초기
+                    잔고 기준)
+                  </p>
                 </div>
               </div>
             </article>
@@ -868,14 +892,22 @@
                 <div class="risk-info">
                   <h4>포지션 할당 로직</h4>
                   <ul>
-                    <li>초기 잔고가 100 USDT이고 할당 %가 20%면, 각 포지션은 최대 20 USDT까지 사용</li>
-                    <li>거래 후 잔고가 80 USDT가 되어도, 포지션 최대값은 여전히 20 USDT (초기 기준)</li>
+                    <li>
+                      초기 잔고가 100 USDT이고 할당 %가 20%면, 각 포지션은 최대
+                      20 USDT까지 사용
+                    </li>
+                    <li>
+                      거래 후 잔고가 80 USDT가 되어도, 포지션 최대값은 여전히 20
+                      USDT (초기 기준)
+                    </li>
                     <li>이는 급격한 손실 후 무리한 복구 시도를 방지합니다</li>
                   </ul>
                   <h4>최대 손실 허용 %</h4>
                   <ul>
                     <li>레버리지 적용 후 손실률 기준입니다</li>
-                    <li>예: 40% 설정 시, 레버리지 10x로 4% 가격 하락하면 한도 도달</li>
+                    <li>
+                      예: 40% 설정 시, 레버리지 10x로 4% 가격 하락하면 한도 도달
+                    </li>
                     <li>청산 방지를 위해 적절한 값을 설정하세요</li>
                   </ul>
                 </div>
@@ -884,11 +916,91 @@
           </div>
 
           <div class="config-actions">
-            <button class="btn btn--ghost" id="reset-risk-config">초기화</button>
+            <button class="btn btn--ghost" id="reset-risk-config">
+              초기화
+            </button>
             <button class="btn btn--primary" id="save-risk-config">
               설정 저장
             </button>
             <span class="config-hint" id="risk-config-hint"></span>
+          </div>
+        </section>
+
+        <!-- Trading Symbols Section -->
+        <section class="admin-section" id="section-symbols" hidden>
+          <div class="symbols-grid">
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">거래 심볼 설정</h3>
+                <span class="symbol-count" id="selected-symbol-count"
+                  >0개 선택됨</span
+                >
+              </header>
+              <div class="panel-body">
+                <div class="form-group">
+                  <label for="symbol-search">심볼 검색</label>
+                  <input
+                    type="text"
+                    id="symbol-search"
+                    placeholder="심볼 이름으로 검색 (예: BTC, ETH...)"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="symbols-container">
+                  <div class="symbols-section">
+                    <h4 class="symbols-section-title">선택된 심볼</h4>
+                    <div class="selected-symbols" id="selected-symbols">
+                      <p class="muted">선택된 심볼이 없습니다</p>
+                    </div>
+                  </div>
+                  <div class="symbols-section">
+                    <h4 class="symbols-section-title">사용 가능한 심볼</h4>
+                    <div class="available-symbols" id="available-symbols">
+                      <p class="muted">로딩 중...</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="admin-panel">
+              <header class="panel-header">
+                <h3 class="panel-title">설정 안내</h3>
+              </header>
+              <div class="panel-body">
+                <div class="symbols-info">
+                  <h4>💡 심볼 설정 방법</h4>
+                  <ul>
+                    <li>왼쪽 목록에서 거래할 심볼을 클릭하여 선택하세요</li>
+                    <li>검색창에서 심볼을 빠르게 찾을 수 있습니다</li>
+                    <li>선택된 심볼을 다시 클릭하면 선택 해제됩니다</li>
+                    <li>여러 심볼을 동시에 선택할 수 있습니다</li>
+                  </ul>
+                  <h4>⚡ BTC 우선 분석</h4>
+                  <ul>
+                    <li>BTCUSDT가 포함된 경우 항상 먼저 분석됩니다</li>
+                    <li>
+                      BTC 분석 결과는 다른 심볼 분석 시 컨텍스트로 활용됩니다
+                    </li>
+                    <li>시장 전반의 흐름을 파악하는 데 도움이 됩니다</li>
+                  </ul>
+                  <h4>⚠️ 주의사항</h4>
+                  <ul>
+                    <li>너무 많은 심볼 선택 시 분석 시간이 증가합니다</li>
+                    <li>변경 사항은 저장 버튼을 눌러야 적용됩니다</li>
+                    <li>서버 재시작 후에도 설정이 유지됩니다</li>
+                  </ul>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn--ghost" id="reset-symbols">초기화</button>
+            <button class="btn btn--primary" id="save-symbols">
+              설정 저장
+            </button>
+            <span class="config-hint" id="symbols-hint"></span>
           </div>
         </section>
       </main>

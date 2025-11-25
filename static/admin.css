@@ -1066,3 +1066,165 @@
   background: var(--success);
   opacity: 0.9;
 }
+
+/* Trading Symbols Styles */
+.symbols-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+@media (max-width: 1200px) {
+  .symbols-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.symbol-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+}
+
+.symbols-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.symbols-section {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+}
+
+.symbols-section-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.selected-symbols,
+.available-symbols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 48px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.symbol-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.symbol-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.symbol-chip--selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.symbol-chip--selected:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.symbol-chip--btc,
+.symbol-chip--btc-available {
+  background: linear-gradient(135deg, rgba(247, 147, 26, 0.15), rgba(247, 147, 26, 0.05));
+  border-color: #f7931a;
+  color: #f7931a;
+}
+
+.symbol-chip--btc:hover {
+  background: linear-gradient(135deg, rgba(247, 147, 26, 0.25), rgba(247, 147, 26, 0.15));
+}
+
+.symbol-chip--btc-available:hover {
+  background: linear-gradient(135deg, rgba(247, 147, 26, 0.3), rgba(247, 147, 26, 0.2));
+  border-color: #f7931a;
+}
+
+.symbol-remove {
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.symbol-chip--selected:hover .symbol-remove {
+  opacity: 1;
+}
+
+.symbols-info {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.symbols-info h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.symbols-info h4:not(:first-child) {
+  margin-top: 20px;
+}
+
+.symbols-info ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.symbols-info li {
+  margin-bottom: 8px;
+}
+
+/* Symbol search input styling */
+#symbol-search {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text);
+  width: 100%;
+  transition: border-color 0.2s ease;
+}
+
+#symbol-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#symbol-search::placeholder {
+  color: var(--text-muted);
+}

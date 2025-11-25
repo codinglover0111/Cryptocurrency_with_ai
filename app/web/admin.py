@@ -66,6 +66,12 @@ class RiskConfigPayload(BaseModel):
     position_allocation_percent: int = Field(ge=1, le=100, default=20)
 
 
+class TradingSymbolsPayload(BaseModel):
+    """거래 심볼 설정 요청."""
+
+    symbols: List[str] = Field(default_factory=list, min_length=1)
+
+
 class ApiKeyBulkPayload(BaseModel):
     """여러 API 키 일괄 설정."""
 
@@ -384,3 +390,65 @@ def update_risk_config(payload: RiskConfigPayload, _: str = Depends(require_admi
     runtime["risk"] = payload.model_dump()
     save_runtime_config(runtime)
     return {"ok": True, "risk": runtime["risk"]}
+
+
+# ===== Trading Symbols Management =====
+
+
+@router.get("/trading-symbols/available")
+def get_available_symbols(_: str = Depends(require_admin)):
+    """거래 가능한 심볼 목록 반환."""
+    from app.core.symbols import AVAILABLE_SYMBOLS
+
+    return {"symbols": list(AVAILABLE_SYMBOLS)}
+
+
+@router.get("/trading-symbols")
+def get_trading_symbols(_: str = Depends(require_admin)):
+    """현재 설정된 거래 심볼 목록 반환."""
+    from app.core.symbols import (
+        parse_trading_symbols,
+        get_trading_symbols_from_db,
+        DEFAULT_SYMBOLS,
+    )
+
+    # DB에서 설정된 심볼 확인
+    db_symbols = get_trading_symbols_from_db()
+
+    # 현재 활성화된 심볼
+    active_symbols = parse_trading_symbols()
+
+    return {
+        "symbols": active_symbols,
+        "source": "db" if db_symbols else "env_or_default",
+        "defaults": list(DEFAULT_SYMBOLS),
+    }
+
+
+@router.post("/trading-symbols")
+def update_trading_symbols(
+    payload: TradingSymbolsPayload, _: str = Depends(require_admin)
+):
+    """거래 심볼 목록 업데이트."""
+    from app.core.symbols import save_trading_symbols_to_db, AVAILABLE_SYMBOLS
+
+    # 심볼 검증 (선택적 - 알려진 심볼인지 확인)
+    normalized_symbols = [s.strip().upper() for s in payload.symbols if s.strip()]
+
+    # 유효하지 않은 심볼 경고 (저장은 진행)
+    unknown_symbols = [s for s in normalized_symbols if s not in AVAILABLE_SYMBOLS]
+
+    success = save_trading_symbols_to_db(normalized_symbols)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save trading symbols")
+
+    return {
+        "ok": True,
+        "symbols": normalized_symbols,
+        "warnings": (
+            f"Unknown symbols (may still work): {unknown_symbols}"
+            if unknown_symbols
+            else None
+        ),
+    }
