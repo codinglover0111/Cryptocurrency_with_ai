@@ -24,19 +24,19 @@
   --danger: #fb7185;
   --danger-soft: rgba(251, 113, 133, 0.15);
   --warning: #fbbf24;
-  
+
   --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 18px 36px rgba(2, 6, 23, 0.35);
   --shadow-inner: inset 0 1px 0 rgba(148, 163, 184, 0.12);
-  
+
   --body-background: radial-gradient(
     circle at 10% 20%,
     #0b1940 0%,
     #050910 55%,
     #03060c 100%
   );
-  
+
   --checkbox-bg: rgba(15, 23, 42, 0.45);
   --checkbox-border: rgba(148, 163, 184, 0.6);
   --checkbox-checked: #38bdf8;
@@ -71,7 +71,7 @@
   --shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 
   --body-background: #f1f5f9;
-  
+
   --checkbox-bg: #ffffff;
   --checkbox-border: #cbd5e1;
   --checkbox-checked: #0284c7;
@@ -81,7 +81,9 @@
   --glass-bg: rgba(255, 255, 255, 0.7);
 }
 
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -137,11 +139,7 @@ a {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(
-    120deg,
-    var(--accent-soft),
-    transparent 55%
-  );
+  background: linear-gradient(120deg, var(--accent-soft), transparent 55%);
   opacity: 0.5;
 }
 
@@ -347,10 +345,20 @@ tbody tr:hover {
 }
 
 /* Utilities */
-.muted { color: var(--text-muted); }
-.text-right { text-align: right; }
-.pnl-positive { color: var(--success); font-weight: 600; }
-.pnl-negative { color: var(--danger); font-weight: 600; }
+.muted {
+  color: var(--text-muted);
+}
+.text-right {
+  text-align: right;
+}
+.pnl-positive {
+  color: var(--success);
+  font-weight: 600;
+}
+.pnl-negative {
+  color: var(--danger);
+  font-weight: 600;
+}
 
 /* Stats Grid */
 .stats-grid {
@@ -385,7 +393,8 @@ select {
   width: 100%;
 }
 
-input:focus, select:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -524,12 +533,12 @@ input:focus, select:focus {
   .page-shell {
     padding: 32px 20px 40px;
   }
-  
+
   .layout-grid {
     grid-template-columns: 1fr;
     gap: 24px;
   }
-  
+
   .layout-column--secondary {
     position: static;
   }
@@ -540,12 +549,12 @@ input:focus, select:focus {
     flex-direction: column;
     padding: 24px;
   }
-  
+
   .page-meta {
     width: 100%;
     justify-content: space-between;
   }
-  
+
   .panel-grid {
     grid-template-columns: 1fr;
   }
@@ -559,25 +568,25 @@ input:focus, select:focus {
   .page-shell {
     padding: 16px;
   }
-  
+
   .card {
     padding: 20px;
   }
-  
+
   .panel-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
   }
-  
+
   .panel-actions {
     width: 100%;
   }
-  
+
   .btn {
     flex: 1;
   }
-  
+
   .journal-controls {
     grid-template-columns: 1fr;
   }
