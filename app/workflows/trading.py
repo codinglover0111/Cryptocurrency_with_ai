@@ -858,6 +858,29 @@ def _get_risk_config() -> Dict[str, Any]:
     return runtime.get("risk", RISK_CONFIG)
 
 
+def _resolve_leveraged_loss_cap(
+    *, risk_config: Optional[Dict[str, Any]] = None
+) -> float:
+    """Return max allowed loss percent after leverage, honoring overrides."""
+
+    config = risk_config or _get_risk_config()
+    fallback_cap = _safe_float(config.get("max_loss_percent"))
+    if fallback_cap is None:
+        fallback_cap = _safe_float(RISK_CONFIG.get("max_loss_percent"))
+    if fallback_cap is None:
+        fallback_cap = 40.0
+
+    max_loss_env = _safe_float(os.getenv("MAX_LOSS_PERCENT"))
+    if max_loss_env is not None:
+        fallback_cap = max_loss_env
+
+    leveraged_cap_env = _safe_float(os.getenv("MAX_LEVERAGED_LOSS_PERCENT"))
+    if leveraged_cap_env is not None:
+        fallback_cap = leveraged_cap_env
+
+    return max(0.0, float(fallback_cap))
+
+
 def _compute_max_loss_percent(leverage: float) -> float:
     """Derive maximum tolerated loss percentage based on leverage settings."""
 
@@ -865,35 +888,24 @@ def _compute_max_loss_percent(leverage: float) -> float:
 
     # 런타임 설정에서 최대 손실 % 가져오기
     risk_config = _get_risk_config()
-    max_loss_from_config = risk_config.get("max_loss_percent", 40)
+    max_loss_base = _safe_float(os.getenv("MAX_LOSS_PERCENT"))
+    if max_loss_base is None:
+        max_loss_base = _safe_float(risk_config.get("max_loss_percent"))
+    if max_loss_base is None:
+        max_loss_base = _safe_float(RISK_CONFIG.get("max_loss_percent"))
+    if max_loss_base is None:
+        max_loss_base = 40.0
 
-    max_loss_env = os.getenv("MAX_LOSS_PERCENT")
-    if max_loss_env is not None:
-        try:
-            max_loss_pct = float(max_loss_env)
-        except Exception:
-            max_loss_pct = float(max_loss_from_config)
-    else:
-        # 런타임 설정의 max_loss_percent를 사용 (레버리지 후 기준)
-        max_loss_pct = float(max_loss_from_config)
-
-    leveraged_cap_env = os.getenv("MAX_LEVERAGED_LOSS_PERCENT")
-    if leveraged_cap_env:
-        try:
-            leveraged_cap = float(leveraged_cap_env)
-        except Exception:
-            leveraged_cap = max_loss_pct
-    else:
-        leveraged_cap = max_loss_pct
+    leveraged_cap = _resolve_leveraged_loss_cap(risk_config=risk_config)
 
     if leveraged_cap > 0:
         leveraged_raw_cap = (
             leveraged_cap / leverage_factor if leverage_factor > 0 else leveraged_cap
         )
         if leveraged_raw_cap > 0:
-            max_loss_pct = min(max_loss_pct, leveraged_raw_cap)
+            max_loss_base = min(float(max_loss_base), leveraged_raw_cap)
 
-    return max(0.0, max_loss_pct)
+    return max(0.0, float(max_loss_base))
 
 
 def _extract_order_type(data: Dict[str, Any]) -> Optional[str]:
@@ -1260,6 +1272,7 @@ def _run_confirm_step(
     use_tp: Optional[float],
     use_sl: Optional[float],
     leverage: float,
+    risk_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[
     str, float, Optional[float], Optional[float], float, Optional[Dict[str, Any]], bool
 ]:
@@ -1288,7 +1301,7 @@ def _run_confirm_step(
         sl_pct = float(pct_info.get("sl_pct") or 0.0)
         tp_pct_leverage = float(pct_info.get("tp_pct_leverage") or 0.0)
         sl_pct_leverage = float(pct_info.get("sl_pct_leverage") or 0.0)
-        max_loss_pct = int(os.getenv("MAX_LEVERAGED_LOSS_PERCENT", "65"))
+        max_loss_pct = _resolve_leveraged_loss_cap(risk_config=risk_config)
         confirm_prompt = (
             "당신이 제안한 주문 파라미터를 최종 확인하세요. JSON만 응답. 한국어로.\n"
             f"심볼: {deps.contract_symbol}\n"
@@ -1297,7 +1310,7 @@ def _run_confirm_step(
             f"TP: {float(tp_v)} (예상 수익률: {tp_pct:.4f}% | 레버리지 기준: {tp_pct_leverage:.4f}%)\n"
             f"SL: {float(sl_v)} (예상 손실률: {sl_pct:.4f}% | 레버리지 기준: {sl_pct_leverage:.4f}%)\n"
             f"레버리지: {float(leverage)}x\n"
-            f"레버리지 기준 손실률은 청산 방지를 위해 {max_loss_pct}%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
+            f"레버리지 기준 손실률은 청산 방지를 위해 {max_loss_pct:.2f}%를 넘으면 안 됩니다. 필요시 조정하세요.\n"
             "필수: confirm(boolean), explain(string). 선택: tp, sl, price, buy_now, leverage.\n"
             "confirm=false이면 반드시 explain에 거부 사유를 한국어로 작성하세요. confirm=true라면 결정 근거를 간단히 남기세요.\n"
             "확신하면 confirm=true. 수정이 필요하면 값을 조정해 응답하세요."
@@ -1550,6 +1563,7 @@ def _execute_trade(
         use_tp=use_tp,
         use_sl=use_sl,
         leverage=leverage,
+        risk_config=risk_config,
     )
     if should_skip:
         return

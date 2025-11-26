@@ -47,6 +47,7 @@
 - `_get_risk_config()`로 `app/config/runtime_config.json`의 리스크 설정 로드
 - `default_leverage`, `max_loss_percent`, `position_allocation_percent` 적용
 - 환경변수(`MAX_LOSS_PERCENT`, `DEFAULT_LEVERAGE`)로 오버라이드 가능
+- `_run_confirm_step()`도 `_resolve_leveraged_loss_cap()`을 통해 동일한 `max_loss_percent` 한도를 프롬프트에 반영하므로 관리자 UI에서 조정한 값이 confirm 단계 거부 조건과 즉시 동기화됩니다.
 
 ## 유지보수 체크리스트
 

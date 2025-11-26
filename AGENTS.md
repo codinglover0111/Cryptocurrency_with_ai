@@ -106,6 +106,8 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 | `max_loss_percent`            | 40     | 최대 손실 허용 %     |
 | `position_allocation_percent` | 20     | 포지션당 최대 할당 % |
 
+- confirm 단계 LLM 검증(`app/workflows/trading.py`)도 동일한 `max_loss_percent` 한도를 사용하므로 관리자 UI 또는 환경변수(`MAX_LOSS_PERCENT`, `MAX_LEVERAGED_LOSS_PERCENT`) 변경 시 즉시 반영됩니다.
+
 ## 컨테이너 빌드 가이드
 
 - Docker 이미지는 `ghcr.io/astral-sh/uv:python3.12-alpine` 파생본을 기본으로 사용한다.
