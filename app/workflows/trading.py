@@ -1023,6 +1023,7 @@ def _handle_update_existing_positions(
     ai_status: str,
     use_tp: Optional[float],
     use_sl: Optional[float],
+    agents_data: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Update TP/SL for existing positions when the AI requests modifications."""
 
@@ -1037,6 +1038,7 @@ def _handle_update_existing_positions(
             decision=decision,
             meta={"decision": decision},
             reason_text="update_existing=true 이지만 tp/sl 값이 제공되지 않았습니다.",
+            agents_data=agents_data,
         )
         return
 
@@ -1059,6 +1061,7 @@ def _handle_update_existing_positions(
             decision=decision,
             meta={"decision": decision},
             reason_text="update_existing=true 이지만 활성 포지션이 없습니다.",
+            agents_data=agents_data,
         )
         return
 
@@ -1228,6 +1231,7 @@ def _handle_update_existing_positions(
                 decision=decision,
                 meta={"decision": decision, "updates": updates},
                 reason_text="제공된 TP/SL 값이 기존 값과 동일합니다.",
+                agents_data=agents_data,
             )
         else:
             LOGGER.error("update_existing 요청으로 TP/SL을 수정하지 못했습니다.")
@@ -1237,6 +1241,7 @@ def _handle_update_existing_positions(
                 decision=decision,
                 meta={"decision": decision, "updates": updates},
                 reason_text="TP/SL 업데이트 API 호출에 실패했습니다.",
+                agents_data=agents_data,
             )
         return
 
@@ -1273,6 +1278,7 @@ def _run_confirm_step(
     use_sl: Optional[float],
     leverage: float,
     risk_config: Optional[Dict[str, Any]] = None,
+    agents_data: Optional[Dict[str, Any]] = None,
 ) -> Tuple[
     str, float, Optional[float], Optional[float], float, Optional[Dict[str, Any]], bool
 ]:
@@ -1379,6 +1385,7 @@ def _run_confirm_step(
                     "confirm_error": str(confirm_error) if confirm_error else None,
                 },
                 reason_text="confirm 단계 호출에 실패했습니다.",
+                agents_data=agents_data,
             )
             return (
                 order_type,
@@ -1401,6 +1408,7 @@ def _run_confirm_step(
                 decision=decision,
                 meta={"first": decision, "confirm": confirm},
                 reason_text=skip_reason,
+                agents_data=agents_data,
             )
             return order_type, entry_price, use_tp, use_sl, leverage, confirm_meta, True
 
@@ -1542,6 +1550,7 @@ def _execute_trade(
             ai_status=ai_status,
             use_tp=use_tp,
             use_sl=use_sl,
+            agents_data=agents_data,
         )
         return
 
@@ -1564,6 +1573,7 @@ def _execute_trade(
         use_sl=use_sl,
         leverage=leverage,
         risk_config=risk_config,
+        agents_data=agents_data,
     )
     if should_skip:
         return
@@ -1683,6 +1693,7 @@ def _execute_trade(
                     "max_notional_for_symbol": float(max_notional_for_symbol),
                     "confirm": confirm_meta,
                 },
+                agents_data=agents_data,
             )
             return
         max_qty_by_remaining = (
@@ -1700,6 +1711,7 @@ def _execute_trade(
                     "max_notional_for_symbol": float(max_notional_for_symbol),
                     "confirm": confirm_meta,
                 },
+                agents_data=agents_data,
             )
             return
         quantity = min(float(quantity), float(max_qty_by_remaining))
@@ -1724,6 +1736,7 @@ def _execute_trade(
                 "target_qty": float(quantity),
                 "confirm": confirm_meta,
             },
+            agents_data=agents_data,
         )
         return
 
@@ -1768,6 +1781,7 @@ def _execute_trade(
             reason="order_execution_failed",
             decision=decision,
             meta={"params": position_params.dict(), "confirm": confirm_meta},
+            agents_data=agents_data,
         )
         return
 
@@ -1988,10 +2002,19 @@ def _record_skip(
     decision: Dict[str, Any],
     meta: Optional[Dict[str, Any]] = None,
     reason_text: Optional[str] = None,
+    agents_data: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Log skip decisions to the journal for downstream auditing."""
 
     try:
+        meta_payload: Dict[str, Any]
+        if meta is not None:
+            meta_payload = {"decision": decision, "details": meta}
+        else:
+            meta_payload = dict(decision)
+        if agents_data is not None:
+            meta_payload = dict(meta_payload)
+            meta_payload["agents"] = agents_data
         deps.store.record_journal(
             {
                 "symbol": deps.contract_symbol,
@@ -2001,11 +2024,7 @@ def _record_skip(
                     ensure_ascii=False,
                 ),
                 "reason": reason_text or decision.get("explain"),
-                "meta": (
-                    {"decision": decision, "details": meta}
-                    if meta is not None
-                    else decision
-                ),
+                "meta": meta_payload,
             }
         )
     except Exception:

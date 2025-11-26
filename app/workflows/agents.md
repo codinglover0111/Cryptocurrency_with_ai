@@ -36,6 +36,8 @@
 
 이 데이터는 대시보드의 에이전트 분석 모달에서 사용됩니다.
 
+- confirm 단계에서 거부(`skip_after_confirm`)되거나 TP/SL 업데이트 실패 등으로 `_record_skip()`이 호출되는 경우에도 동일한 `agents` 스냅샷을 `meta.agents`에 함께 기록해 모달에서 항상 최근 분석을 확인할 수 있습니다.
+
 ## BTC 우선 분석
 
 - `main.py`에서 심볼 목록을 BTC 우선으로 정렬 (`_sort_symbols_btc_first`)
