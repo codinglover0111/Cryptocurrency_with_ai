@@ -176,6 +176,11 @@ docker-compose down -v
 - `templates/admin.html` - 즉시 실행 버튼 및 심볼 선택 모달
 - `static/admin.js` - 즉시 실행 함수 및 이벤트 핸들러
 
+## 스케줄러 일시중단 표시
+
+- 관리자 대시보드의 일시중단 뱃지/버튼은 `static/admin.js`의 `updateSchedulerPausedUI()`를 통해 DB `scheduler_state.paused` 값을 즉시 반영합니다.
+- `populateSchedulerForm()` 등 스케줄러 상태를 초기화하는 경로에서 이 함수를 호출해 새로고침 후에도 표시와 서버 상태가 어긋나지 않도록 유지하세요.
+
 ## 에이전트 분석 모달
 
 공개/관리자 대시보드의 "최근 활동" 섹션에서 항목을 클릭하면 4개 에이전트(Indicator, Pattern, Trend, Decision)의 분석 보고서를 모달로 확인할 수 있습니다.

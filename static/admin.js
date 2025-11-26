@@ -724,6 +724,7 @@ function populateSchedulerForm() {
 
   // 스케줄 상태 업데이트
   updateSchedulerStatus(scheduler);
+  updateSchedulerPausedUI(Boolean(scheduler.paused));
 }
 
 function updateSchedulerStatus(scheduler) {
