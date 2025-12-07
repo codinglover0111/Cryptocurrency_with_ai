@@ -8,3 +8,5 @@ trading.log
 data/trading.sqlite
 node_modules/
 .next/
+node_modules_tmp/
+frontend/node_modules_tmp*
