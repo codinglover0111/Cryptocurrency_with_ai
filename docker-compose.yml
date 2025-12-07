@@ -31,8 +31,8 @@ services:
 
   app:
     build:
-      context: .
-      dockerfile: Dockerfile.bot
+      context: ./server
+      dockerfile: Dockerfile
     container_name: crypto_bot
     depends_on:
       mysql:
@@ -51,8 +51,8 @@ services:
 
   web:
     build:
-      context: .
-      dockerfile: Dockerfile.web
+      context: ./server
+      dockerfile: Dockerfile
     container_name: crypto_web
     depends_on:
       mysql:

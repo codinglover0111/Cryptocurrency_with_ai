@@ -1,31 +1,35 @@
-# Cryptocurrency_with_ai(CCA) - 프로젝트 가이드
+# Cryptocurrency_with_ai (CCA) - 프로젝트 가이드
 
-> LangChain 1.0 / LangGraph 1.0 기반 멀티 에이전트 암호화폐 자동매매 시스템
+> LangChain 1.0 / LangGraph 1.0 기반 멀티 에이전트 암호화폐 자동매매 시스템  
+> 프런트엔드: Next.js(App Router) + Supabase Auth, 백엔드: FastAPI/LangGraph
 
 ## 프로젝트 구조
 
 ```text
-├── app/                    # 핵심 애플리케이션 모듈
-│   ├── agents/             # 멀티 에이전트 (Indicator/Pattern/Trend/Decision)
-│   ├── auth/               # 세션 인증, IP 차단 시스템
-│   ├── config/             # LLM/스케줄러/리스크 설정
-│   ├── core/               # 심볼/숫자 포맷 유틸리티
-│   ├── graph/              # LangGraph 워크플로 그래프
-│   ├── opro/               # Adaptive-OPRO 프롬프트 최적화
-│   ├── services/           # 마켓 데이터/저널링 서비스
-│   ├── web/                # FastAPI 라우터 (admin/user)
-│   └── workflows/          # 자동매매 워크플로 엔트리포인트
-├── utils/                  # 공통 헬퍼 (Bybit, AI, 스토리지, 리스크)
-├── static/                 # 프런트엔드 JS/CSS
-├── templates/              # Jinja2 HTML 템플릿
-├── docs/                   # 아키텍처 문서
-├── main.py                 # 봇 엔트리포인트 (스케줄러)
-└── webapp.py               # 웹 서버 엔트리포인트
+├── server/                         # FastAPI/LangGraph 백엔드
+│   ├── app/                        # 에이전트·워크플로·서비스·라우터
+│   ├── utils/                      # Bybit/AI/스토리지/리스크 헬퍼
+│   ├── static/                     # JS/CSS (레거시 대시보드)
+│   ├── templates/                  # Jinja2 템플릿 (레거시)
+│   ├── docs/                       # 아키텍처 문서
+│   ├── main.py                     # 스케줄러 엔트리포인트
+│   └── webapp.py                   # FastAPI 엔트리포인트
+├── frontend/                       # Next.js App Router UI (Supabase 인증, API 프록시)
+│   ├── app/                        # 페이지·라우트 핸들러
+│   ├── app/api/proxy/[...path]/    # FastAPI 프록시 (Authorization: Bearer <supabase_jwt>)
+│   ├── middleware.ts               # /admin 보호 라우트 미들웨어
+│   ├── lib/supabase*               # Supabase 클라이언트 헬퍼
+│   ├── public/                     # 정적 에셋
+│   └── agents.md                   # 프런트엔드 단일 진실 문서
+├── Dockerfile.bot                  # bot 서비스 (server/main.py)
+├── Dockerfile.web                  # web 서비스 (server/webapp.py)
+├── docker-compose.yml              # 로컬 개발 (MySQL + bot + web)
+└── AGENTS.md                       # 최상위 가이드 (본 문서)
 ```
 
 ## 에이전트 파이프라인
 
-```text
+```
 Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
                       │                │
                       └───────┬────────┘
@@ -40,197 +44,68 @@ Indicator Agent → Pattern Agent → Trend Agent → Decision Agent
 | Trend     | 지지/저항, 추세 방향 판별           | 비전     |
 | Decision  | LONG/SHORT/HOLD/STOP 최종 결정      | 텍스트   |
 
+프롬프트는 DB(`agent_prompts`) 우선, 폴백은 `server/app/agents/prompts.py`.
+
 ## 개발 규칙
 
-### 1. 문서 우선 원칙
+1) **문서 우선**: 새 기능 추가 전 해당 폴더의 `agents.md`를 먼저 업데이트.  
+2) **설정 동기화**: LLM/스키마/API 응답 변경 시 백엔드·프런트엔드·UI를 함께 수정.  
+3) **LLM 호출**: LangChain 1.0 인터페이스 사용, 구조화 출력은 `with_structured_output`.  
+4) **권한**: 모든 FastAPI 라우터는 `require_user`/`require_admin`(Supabase JWT) 필수.  
+5) **Bybit**: CCXT 우선, 오류 코드(110007, 110025, 110026, 110043)별 처리 유지.  
+6) **데이터 저장**: DB 우선 → JSON 폴백 (`utils/storage.py`), `scheduler_state`, `shared_analysis` 테이블 유지.
 
-- **새 기능 추가 전 `agents.md` 먼저 갱신** → 구현 진행
-- 각 폴더의 `agents.md`는 해당 모듈의 단일 진실 공급원(Single Source of Truth)
+## 인증/권한 (Supabase + Next.js 프록시)
 
-### 2. 설정 변경 시 동기화
+- Next.js가 Supabase Auth(이메일/비밀번호 기본, OAuth 선택)로 로그인/세션을 관리.  
+- Next.js API 라우트 `app/api/proxy/[...path]`가 세션을 검증하고 FastAPI로 프록시(Authorization: Bearer <supabase_jwt>).  
+- FastAPI는 Supabase JWKS로 토큰을 재검증하고 `role` 클레임(`app_metadata.role` → `user_metadata.role` → 기본 user)으로 RBAC를 적용.  
+- 브라우저는 FastAPI를 직접 호출하지 않는다.
 
-- 에이전트 LLM 설정 변경 → `app/config/default_config.py` + 관리자 UI 함께 수정
-- 스키마 변경 → `app/agents/schemas.py` + `app/graph/workflow.py` + `app/workflows/trading.py` 연동 확인
-- API 응답 변경 → `static/*.js` + `templates/*.html` 동기화
+## 주요 환경변수 (백엔드 server/.env.sample)
 
-### 3. LLM 호출 규칙
+| 변수                        | 설명                                                         |
+| --------------------------- | ------------------------------------------------------------ |
+| `BYBIT_ENV`                 | demo / testnet / mainnet                                     |
+| `BYBIT_API_KEY`, `BYBIT_SECRET` | Bybit API 인증                                           |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` | LLM API 키                |
+| `SUPABASE_URL`              | Supabase 프로젝트 URL                                        |
+| `SUPABASE_ANON_KEY`         | Supabase anon 키 (프런트엔드)                               |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase 서비스 롤 키 (백엔드 검증/관리)                    |
+| `SUPABASE_JWKS_URL`         | Supabase JWKS (`https://<project>.supabase.co/auth/v1/jwks`) |
+| `API_KEY_ENCRYPTION_KEY`    | API 키 암호화용 키 (Base64 urlsafe 32바이트)                 |
+| `TRADING_SYMBOLS`           | 거래 심볼 목록 (DB 설정 우선)                               |
+| `CORS_ALLOWED_ORIGINS`      | 쉼표 구분 허용 오리진                                       |
+| `CORS_ALLOWED_ORIGIN_REGEX` | 정규식 허용 오리진 (기본 `https://.*\.up\.railway\.app`)    |
+| `MYSQL_URL` / `SQLITE_PATH` | DB 연결 (FORCE_SQLITE=1로 SQLite 강제)                      |
 
-- 모든 LLM 호출은 **LangChain 1.0 인터페이스** 사용
-- 구조화된 출력은 `with_structured_output` 활용 (JSON 파싱 로직 제거)
-- 새 provider 추가 시 `app/graph/llm_factory.py` + `.env.sample` 업데이트
-
-### 4. 인증/권한
-
-- FastAPI 엔드포인트는 **role-based access control** 필수 적용
-- `admin`: 설정 변경, 사용자 관리, 스케줄러 제어
-- `user`: 대시보드/저널 조회만 가능
-
-### 5. Bybit API 호출
-
-- CCXT 통합 메서드 우선 사용
-- 없을 경우 `privatePost` 폴백
-- 에러 코드(110007, 110025, 110026, 110043) 별도 처리 로직 유지
-
-### 6. 데이터 저장
-
-- 런타임 설정: **DB 우선** → JSON 폴백 (`utils/storage.py`)
-- 스케줄러 상태, 공유 분석 결과: `scheduler_state`, `shared_analysis` 테이블
-
-## 주요 환경변수
-
-| 변수                               | 설명                                                                |
-| ---------------------------------- | ------------------------------------------------------------------- |
-| `BYBIT_ENV`                        | demo / testnet / mainnet                                            |
-| `BYBIT_API_KEY`, `BYBIT_SECRET`    | Bybit API 인증                                                      |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY` | LLM API 키                                                          |
-| `AI_PROVIDER`                      | 미설정 시 OpenRouter → OpenAI → Anthropic → Gemini 순으로 자동 감지 |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | 기본 관리자 계정                                                    |
-| `WEB_SESSION_SECRET`               | 세션 암호화 키                                                      |
-| `MAX_LOGIN_ATTEMPTS`               | IP 차단 임계값 (기본 10)                                            |
-| `TRADING_SYMBOLS`                  | 거래 심볼 목록 (관리자 UI에서 DB 설정 우선)                         |
-| `CORS_ALLOWED_ORIGINS`             | 쉼표 구분 허용 오리진(정확히 일치)                                  |
-| `CORS_ALLOWED_ORIGIN_REGEX`        | 정규식 허용 오리진, 기본값 `https://.*\.up\.railway\.app`           |
-| `PRODUCTION`                       | `1` 또는 `true` 설정 시 HTTPS 전용 세션 쿠키 활성화                 |
-| `MYSQL_URL`                        | MySQL 연결 URL (예: `mysql+pymysql://user:pwd@host:3306/db`)        |
-| `MYSQL_ROOT_PASSWORD`              | docker-compose MySQL root 비밀번호 (기본: `rootpass`)               |
-| `MYSQL_DATABASE`                   | docker-compose MySQL 데이터베이스명 (기본: `crypto_trading`)        |
-| `MYSQL_USER`                       | docker-compose MySQL 사용자 (기본: `crypto`)                        |
-| `MYSQL_PASSWORD`                   | docker-compose MySQL 비밀번호 (기본: `cryptopass`)                  |
-| `FORCE_SQLITE`                     | `1` 설정 시 MySQL 대신 SQLite 강제 사용                             |
-
-## 리스크 설정 기본값
-
-| 항목                          | 기본값 | 설명                 |
-| ----------------------------- | ------ | -------------------- |
-| `default_leverage`            | 5      | 기본 레버리지        |
-| `max_loss_percent`            | 40     | 최대 손실 허용 %     |
-| `position_allocation_percent` | 20     | 포지션당 최대 할당 % |
-
-- confirm 단계 LLM 검증(`app/workflows/trading.py`)도 동일한 `max_loss_percent` 한도를 사용하므로 관리자 UI 또는 환경변수(`MAX_LOSS_PERCENT`, `MAX_LEVERAGED_LOSS_PERCENT`) 변경 시 즉시 반영됩니다.
+프런트엔드 예시(`frontend/.env.example`):  
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWKS_URL`, `FASTAPI_BASE_URL`.
 
 ## 컨테이너 빌드 가이드
 
-- Docker 이미지는 `ghcr.io/astral-sh/uv:python3.12-alpine` 파생본을 기본으로 사용한다.
-- uv CLI는 이미지에 포함되어 있으므로 별도 설치하지 말고 시스템 파이썬(`UV_SYSTEM_PYTHON=1`)에 직접 동기화한다.
-- Alpine 환경 의존성은 `apk add --no-cache pkgconf python3-dev mariadb-dev build-base curl tzdata` 조합으로 통일한다.
-- `requirements.txt`를 먼저 복사한 뒤 `uv pip install --system -r requirements.txt`로 의존성을 설치하고, 이후 애플리케이션 전체를 복사해 Docker 레이어 캐시를 유지한다.
-- 런타임 명령은 `uv run ...` 형식으로 통일해 uv가 관리하는 환경을 항상 사용한다.
-- **웹 서버(webapp.py)** 실행 시 Uvicorn에 `--proxy-headers --forwarded-allow-ips=*` 옵션을 추가하여 Railway 등 리버스 프록시 환경에서 HTTPS를 올바르게 감지하도록 한다.
-- 자세한 권장 패턴은 uv 공식 가이드([docs.astral.sh](https://docs.astral.sh/uv/guides/integration/docker/#installing-a-project))를 따른다.
+- 베이스 이미지: `ghcr.io/astral-sh/uv:python3.12-alpine` (uv 내장, `UV_SYSTEM_PYTHON=1`).  
+- 의존성 설치: `apk add --no-cache pkgconf python3-dev mariadb-dev build-base curl tzdata`.  
+- `server/requirements.txt` 복사 후 `uv pip install --system -r requirements.txt`, 이어서 `server/` 전체 복사.  
+- web 실행: `uv run uvicorn webapp:app --proxy-headers --forwarded-allow-ips=*`.  
+- bot 실행: `uv run python main.py`.
 
-## 로컬 개발 환경 (docker-compose)
-
-로컬에서 MySQL과 함께 전체 시스템을 테스트하려면:
+## 로컬 개발 (docker-compose)
 
 ```bash
-# 전체 서비스 시작 (MySQL + Bot + Web)
-docker-compose up -d
-
-# 로그 확인
+docker-compose up -d      # MySQL + bot + web
 docker-compose logs -f
-
-# 서비스 중지
-docker-compose down
-
-# 볼륨 포함 완전 삭제 (MySQL 데이터 포함)
-docker-compose down -v
+docker-compose down       # 종료
+docker-compose down -v    # 볼륨 포함 삭제
 ```
 
-**기본 접속 정보:**
+- 웹 UI: http://localhost:8000  
+- MySQL: localhost:3306 (user: crypto / pass: cryptopass / db: crypto_trading)  
+- SQLite 사용 시 `.env`에 `FORCE_SQLITE=1`.
 
-- 웹 UI: http://localhost:8000
-- MySQL: `localhost:3306` (user: `crypto`, password: `cryptopass`, database: `crypto_trading`)
+## 주요 기능 메모
 
-**MySQL 대신 SQLite 사용:**
-
-`.env` 파일에 `FORCE_SQLITE=1`을 추가하면 MySQL 대신 SQLite를 사용합니다.
-
-## 세션 및 쿠키 설정
-
-- 프로덕션 환경(Railway 등)에서는 세션 쿠키가 **HTTPS 전용**(`https_only=True`)으로 설정됩니다.
-- `RAILWAY_PUBLIC_DOMAIN`, `RAILWAY_ENVIRONMENT`, 또는 `PRODUCTION=1` 환경변수가 있으면 자동으로 프로덕션 모드로 인식합니다.
-- 로컬 개발 시에는 HTTP에서도 쿠키가 작동합니다.
-- 세션 쿠키의 `SameSite` 속성은 `lax`로 설정되어 동일 사이트 요청에서 쿠키가 전송됩니다.
-
-## 의존성 주의사항
-
-- `passlib[bcrypt]==1.7.4`는 최신 `bcrypt` 4.2.x에서 제거된 `__about__` 메타데이터에 의존한다. 런타임 오류를 방지하기 위해 `bcrypt==4.1.2`로 고정한다.
-
-## 즉시 실행 기능
-
-관리자 대시보드의 스케줄러 섹션에서 스케줄러 주기를 기다리지 않고 즉시 분석을 실행할 수 있습니다.
-
-### 기능
-
-- **전체 심볼 즉시 실행**: 설정된 모든 거래 심볼에 대해 분석 실행
-- **특정 심볼 실행**: 선택한 심볼에 대해서만 분석 실행
-
-### API 엔드포인트
-
-- `POST /admin/run-now`: 전체 심볼 즉시 실행 (백그라운드 스레드)
-- `POST /admin/run-symbol`: 특정 심볼 즉시 실행 (백그라운드 스레드)
-
-### 관련 파일
-
-- `app/web/admin.py` - 즉시 실행 API 엔드포인트
-- `templates/admin.html` - 즉시 실행 버튼 및 심볼 선택 모달
-- `static/admin.js` - 즉시 실행 함수 및 이벤트 핸들러
-
-## 스케줄러 일시중단 표시
-
-- 관리자 대시보드의 일시중단 뱃지/버튼은 `static/admin.js`의 `updateSchedulerPausedUI()`를 통해 DB `scheduler_state.paused` 값을 즉시 반영합니다.
-- `populateSchedulerForm()` 등 스케줄러 상태를 초기화하는 경로에서 이 함수를 호출해 새로고침 후에도 표시와 서버 상태가 어긋나지 않도록 유지하세요.
-
-## 에이전트 분석 모달
-
-공개/관리자 대시보드의 "최근 활동" 섹션에서 항목을 클릭하면 4개 에이전트(Indicator, Pattern, Trend, Decision)의 분석 보고서를 모달로 확인할 수 있습니다.
-
-### 기능
-
-- **탭 UI**: Indicator / Pattern / Trend / Decision 4개 탭으로 구분
-- **마크다운 렌더링**: 에이전트 분석 텍스트가 마크다운으로 렌더링됨
-- **전문 저장**: 모든 에이전트 분석 결과가 저널 `meta.agents` 필드에 저장됨
-- **스킵 로그에도 노출**: confirm 단계 거부나 TP/SL 업데이트 실패와 같이 `_record_skip()`이 호출된 경우에도 `meta.agents`가 함께 기록되어 모달에서 최근 분석을 잃지 않습니다.
-- **표시/숨김 규칙**: `static/style.css`의 `.modal-backdrop`은 `hidden` 속성 토글만으로 제어하므로 JS에서는 `.active` 클래스를 다루지 않습니다.
-- **심볼 라벨**: 헤더에 `에이전트 분석 보고서(BTCUSDT)` 형식으로 선택한 심볼을 노출해 어떤 보고서를 보는지 즉시 식별합니다.
-- **모바일 대응**: 640px 이하에서는 모달이 전체 화면을 차지하고 탭/카드가 줄바꿈되어 모바일에서도 동일 동작을 제공합니다.
-
-### 저널 메타 데이터 구조
-
-```json
-{
-  "decision": { ... },
-  "agents": {
-    "indicator": { "rsi": 45.2, "macd_signal": "bullish", "summary": "..." },
-    "pattern": { "patterns_found": ["hammer"], "analysis": "..." },
-    "trend": { "trend_direction": "uptrend", "analysis": "..." },
-    "decision": { "status": "long", "explain": "..." }
-  }
-}
-```
-
-### 관련 파일
-
-- `app/workflows/trading.py` - 에이전트 결과 수집 및 저널 저장
-- `templates/index.html` - 공개 대시보드 모달 UI
-- `static/admin.js` - 관리자 대시보드 모달 로직
-- `static/admin.css` - 모달 스타일
-- `static/app.js` - 마크다운 렌더링 함수
-
-## 폴더별 상세 가이드
-
-각 폴더의 세부 내용은 해당 폴더의 `agents.md` 참조:
-
-- `app/agents.md` - 앱 전체 운영 가이드
-- `app/agents/agents.md` - 멀티 에이전트 상세
-- `app/auth/agents.md` - 인증/IP 차단 시스템
-- `app/config/agents.md` - 설정 관리
-- `app/graph/agents.md` - LangGraph 워크플로
-- `app/opro/agents.md` - Adaptive-OPRO
-- `app/workflows/agents.md` - 트레이딩 워크플로
-- `utils/agents.md` - 공통 헬퍼
-- `docs/agents.md` - 전체 아키텍처 문서
-
----
-
-> 문서를 최신 상태로 유지하지 않으면 구현이 중단됩니다.
+- 스케줄러 제어/일시중단 및 즉시 실행: `/admin/run-now`, `/admin/run-symbol`.  
+- 리스크 설정/프롬프트 관리/모델 선택: `/admin/*` API.  
+- 에이전트 분석 모달: Indicator/Pattern/Trend/Decision 탭, 마크다운 렌더링, 모바일 전체 화면 대응.  
+- 런타임 설정/스케줄러 상태/공유 분석 결과: DB 우선 저장, 실패 시 JSON 폴백.
