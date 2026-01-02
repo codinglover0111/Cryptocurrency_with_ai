@@ -16,12 +16,9 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from app.core.symbols import parse_trading_symbols, to_ccxt_symbols
 from utils.bybit_utils import BybitUtils
@@ -34,6 +31,7 @@ from app.graph.llm_factory import (
     resolve_ai_provider,
 )
 from app.web import admin_router, user_router
+from app.auth.deps import require_admin, require_user
 
 
 def _build_allowed_origins() -> List[str]:
@@ -197,22 +195,6 @@ def _first_number(values: List[Any]) -> Optional[float]:
     return None
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-
-@app.get("/", response_class=HTMLResponse)
-def public_dashboard(request: Request):
-    """공개 대시보드 렌더링 (로그인 불필요)."""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page(request: Request):
-    """관리자 페이지 렌더링."""
-    return templates.TemplateResponse("admin.html", {"request": request})
-
-
 class LeverageBody(BaseModel):
     symbol: str
     leverage: float
@@ -240,7 +222,7 @@ def health():
     }
 
 
-@app.get("/status")
+@app.get("/status", dependencies=[Depends(require_user)])
 def status():
     now = time.monotonic()
     with STATUS_CACHE_LOCK:
@@ -286,14 +268,14 @@ def status():
     return data
 
 
-@app.post("/leverage")
+@app.post("/leverage", dependencies=[Depends(require_admin)])
 def set_leverage(body: LeverageBody):
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
     res = bybit.set_leverage(body.symbol, body.leverage, body.margin_mode or "cross")
     return {"ok": True, "result": res}
 
 
-@app.get("/stats")
+@app.get("/stats", dependencies=[Depends(require_user)])
 def stats():
     store = TradeStore(
         StorageConfig(
@@ -317,7 +299,7 @@ def stats():
     return s
 
 
-@app.get("/stats_range")
+@app.get("/stats_range", dependencies=[Depends(require_user)])
 def stats_range(
     since: Optional[str] = None,
     until: Optional[str] = None,
@@ -365,7 +347,7 @@ def stats_range(
     return result
 
 
-@app.post("/stats/reconcile")
+@app.post("/stats/reconcile", dependencies=[Depends(require_admin)])
 def stats_reconcile(body: StatsReconcileRequest):
     store = TradeStore(
         StorageConfig(
@@ -395,14 +377,14 @@ def stats_reconcile(body: StatsReconcileRequest):
         }
 
 
-@app.post("/close_all")
+@app.post("/close_all", dependencies=[Depends(require_admin)])
 def close_all():
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
     res = bybit.close_all_positions()
     return {"ok": True, "result": res}
 
 
-@app.get("/symbols")
+@app.get("/symbols", dependencies=[Depends(require_user)])
 def symbols():
     codes = parse_trading_symbols()
     items = []
@@ -422,7 +404,7 @@ class JournalBody(BaseModel):
     ts: Optional[datetime] = None
 
 
-@app.post("/api/journals")
+@app.post("/api/journals", dependencies=[Depends(require_user)])
 def create_journal(body: JournalBody):
     store = TradeStore(
         StorageConfig(
@@ -434,7 +416,7 @@ def create_journal(body: JournalBody):
     return {"ok": True}
 
 
-@app.get("/api/journals")
+@app.get("/api/journals", dependencies=[Depends(require_user)])
 def list_journals(
     symbol: Optional[str] = None,
     types: Optional[str] = None,
@@ -548,7 +530,7 @@ def list_journals(
     return {"items": items}
 
 
-@app.get("/api/reviews/pending")
+@app.get("/api/reviews/pending", dependencies=[Depends(require_user)])
 def list_pending_reviews(wait_hours: int = 48, since_hours: int = 24):
     try:
         safe_wait = max(0, int(wait_hours))
@@ -583,7 +565,7 @@ def list_pending_reviews(wait_hours: int = 48, since_hours: int = 24):
     }
 
 
-@app.get("/api/journals_filtered")
+@app.get("/api/journals_filtered", dependencies=[Depends(require_user)])
 def list_journals_filtered(
     symbol: Optional[str] = None,
     types: Optional[str] = None,
@@ -899,7 +881,7 @@ def list_journals_filtered(
     return {"items": items}
 
 
-@app.get("/api/positions_debug")
+@app.get("/api/positions_debug", dependencies=[Depends(require_admin)])
 def positions_debug(symbol: Optional[str] = None):
     bybit = BybitUtils(is_testnet=bool(int(os.getenv("TESTNET", "1"))))
     positions = bybit.get_positions() or []
@@ -1023,63 +1005,7 @@ def positions_debug(symbol: Optional[str] = None):
     return {"items": debug_items}
 
 
-@app.get("/overlay", response_class=HTMLResponse)
-def overlay(
-    request: Request,
-    limit: int = 10,
-    symbol: Optional[str] = None,
-    types: Optional[str] = None,
-    today_only: int = 1,
-    ascending: int = 1,
-    refresh: int = 5,
-    tz: Optional[str] = None,
-):
-    store = TradeStore(
-        StorageConfig(
-            mysql_url=os.getenv("MYSQL_URL"),
-            sqlite_path=os.getenv("SQLITE_PATH"),
-        )
-    )
-    type_list: Optional[List[str]] = (
-        [t.strip() for t in types.split(",") if t.strip()] if types else None
-    )
-    df = store.fetch_journals(
-        symbol=symbol,
-        types=type_list,
-        today_only=bool(today_only),
-        limit=max(1, min(int(limit), 200)),
-        ascending=bool(ascending),
-    )
-    items = []
-    if not df.empty:
-        for _, row in df.iterrows():
-            ts_iso = _to_utc_iso(row.get("ts"))
-            items.append(
-                {
-                    "ts": ts_iso,
-                    "symbol": row.get("symbol"),
-                    "entry_type": row.get("entry_type"),
-                    "content": row.get("content"),
-                    "reason": row.get("reason"),
-                }
-            )
-    return templates.TemplateResponse(
-        "overlay.html",
-        {
-            "request": request,
-            "items": items,
-            "limit": limit,
-            "symbol": symbol,
-            "types": types,
-            "today_only": today_only,
-            "ascending": ascending,
-            "refresh": refresh,
-            "tz": tz,
-        },
-    )
-
-
-@app.get("/api/positions_summary")
+@app.get("/api/positions_summary", dependencies=[Depends(require_user)])
 def positions_summary(
     symbol: Optional[str] = None,
     force_mark: int = 0,
@@ -1859,19 +1785,7 @@ def _summarize_positions(
     return items
 
 
-@app.get("/overlay_positions", response_class=HTMLResponse)
-def overlay_positions(
-    request: Request,
-    symbol: Optional[str] = None,
-    refresh: int = 5,
-):
-    return templates.TemplateResponse(
-        "overlay_positions.html",
-        {"request": request, "symbol": symbol, "refresh": refresh},
-    )
-
-
-@app.get("/admin/logs")
+@app.get("/admin/logs", dependencies=[Depends(require_admin)])
 def get_logs(lines: int = 500, level: Optional[str] = None):
     """로그 파일의 마지막 N줄을 반환합니다."""
     import os
