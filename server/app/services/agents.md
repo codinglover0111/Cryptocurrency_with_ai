@@ -2,16 +2,18 @@
 
 ## 역할
 
-- 거래 데이터 수집과 저널링/리뷰 기능을 제공하는 서비스 레이어입니다. 워크플로와 웹 라우터에서 공통으로 사용됩니다.
+- 마켓 데이터, 트레이드/저널 기록, 공용 분석 등을 제공하는 서비스 레이어입니다.
+- FastAPI 라우터와 워크플로가 의존하며, 외부 저장소/LLM 접근을 캡슐화합니다.
 
-## 파일 가이드
+## 구성 파일
 
-- `market_data.py`: CCXT/Bybit 유틸을 이용해 OHLCV, 포지션, 주문 데이터를 조회하고 CSV/이미지용 포맷으로 가공
-- `journal.py`: `JournalService`로 트레이드/액션 로그 저장, 리뷰용 리포트 생성, LLM 요약 호출 (LLM은 `resolve_ai_provider()`로 OpenRouter/OpenAI 등 자동 감지)
-- `__init__.py`: 익스포트 편의
+- `market_data.py`: CCXT/Bybit 기반 OHLCV·주문 조회 유틸.
+- `journal.py`: `JournalService`로 트레이드/액션 로그 기록, 리뷰 요약.
+- `supabase_repo.py`: Supabase Python 클라이언트(`supabase-py`)를 사용한 CRUD 래퍼. `agent_prompts`, `scheduler_state`, `shared_analysis`, `runtime_config` 테이블을 PostgREST로 읽고 씁니다. 서비스 롤 키만 사용합니다.
+- `__init__.py`: 패키지 초기화.
 
-## 유지보수 체크리스트
+## 운용 메모
 
-- 데이터 스키마를 바꿀 때는 `utils/storage.py`와 `app/workflows/trading.py`의 호출부를 함께 검토하세요.
-- 리뷰/요약에 사용하는 AI 호출은 비용이 높을 수 있으니 주기(`TRADE_REVIEW_WAIT_HOURS` 등)를 조정해 관리합니다.
-- 마켓 데이터 응답 포맷이 변경되면 그래프 노드 입력(특히 Indicator/Pattern)도 업데이트해야 합니다.
+- Supabase 연동은 `SUPABASE_URL`과 `SUPABASE_SERVICE_ROLE_KEY`가 있어야 활성화됩니다. 없으면 기존 `utils.storage.TradeStore`(SQLite/MySQL)로 폴백됩니다.
+- Supabase 사용 시 RLS가 설정되어 있는지 반드시 확인하고, 서버측에서는 서비스 롤 키만 사용하세요.
+- LLM 호출 비용은 `TRADE_REVIEW_WAIT_HOURS` 등으로 제어합니다.

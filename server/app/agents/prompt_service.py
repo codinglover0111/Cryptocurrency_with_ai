@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from utils.storage import get_trade_store
+from app.services import supabase_repo
 
 from .prompts import (
     INDICATOR_TEMPLATE,
@@ -45,6 +46,14 @@ def get_prompt(agent_type: str) -> str:
     Returns:
         프롬프트 템플릿 문자열
     """
+    # Supabase 우선 조회
+    try:
+        db_prompt = supabase_repo.get_agent_prompt(agent_type)
+        if db_prompt is not None and str(db_prompt).strip():
+            return str(db_prompt)
+    except Exception as e:
+        print(f\"Warning: failed to load prompt from Supabase for {agent_type}: {e}\")
+
     # DB에서 프롬프트 조회 시도
     try:
         store = get_trade_store()
@@ -52,7 +61,7 @@ def get_prompt(agent_type: str) -> str:
         if db_prompt is not None and db_prompt.strip():
             return db_prompt
     except Exception as e:
-        print(f"Warning: failed to load prompt from DB for {agent_type}: {e}")
+        print(f\"Warning: failed to load prompt from DB for {agent_type}: {e}\")
 
     # 기본값 반환
     return DEFAULT_PROMPTS.get(agent_type, "")
@@ -75,13 +84,18 @@ def get_all_prompts() -> Dict[str, Dict[str, str]]:
     """
     result = {}
 
-    # DB에서 저장된 프롬프트 조회
+    # Supabase -> DB 순서로 조회
     db_prompts = {}
     try:
-        store = get_trade_store()
-        db_prompts = store.get_all_agent_prompts()
+        db_prompts = supabase_repo.get_all_agent_prompts() or {}
     except Exception as e:
-        print(f"Warning: failed to load prompts from DB: {e}")
+        print(f\"Warning: failed to load prompts from Supabase: {e}\")
+    if not db_prompts:
+        try:
+            store = get_trade_store()
+            db_prompts = store.get_all_agent_prompts()
+        except Exception as e:
+            print(f\"Warning: failed to load prompts from DB: {e}\")
 
     # 각 에이전트 타입별로 결과 구성
     for agent_type, default_prompt in DEFAULT_PROMPTS.items():
@@ -114,11 +128,18 @@ def save_prompt(agent_type: str, prompt_template: str) -> bool:
         print(f"Warning: unknown agent type: {agent_type}")
         return False
 
+    # Supabase 우선 저장
+    try:
+        if supabase_repo.upsert_agent_prompt(agent_type, prompt_template):
+            return True
+    except Exception as e:
+        print(f\"Error saving prompt to Supabase for {agent_type}: {e}\")
+
     try:
         store = get_trade_store()
         return store.save_agent_prompt(agent_type, prompt_template)
     except Exception as e:
-        print(f"Error saving prompt for {agent_type}: {e}")
+        print(f\"Error saving prompt for {agent_type}: {e}\")
         return False
 
 
@@ -140,6 +161,13 @@ def save_prompts_bulk(prompts: Dict[str, str]) -> bool:
     if not valid_prompts:
         return False
 
+    # Supabase 우선
+    try:
+        if supabase_repo.upsert_agent_prompts_bulk(valid_prompts):
+            return True
+    except Exception as e:
+        print(f"Error saving prompts bulk to Supabase: {e}")
+
     try:
         store = get_trade_store()
         return store.save_agent_prompts_bulk(valid_prompts)
@@ -160,6 +188,12 @@ def reset_prompt(agent_type: str) -> bool:
     if agent_type not in DEFAULT_PROMPTS:
         print(f"Warning: unknown agent type: {agent_type}")
         return False
+
+    # Supabase 삭제 시도
+    try:
+        supabase_repo.delete_agent_prompt(agent_type)
+    except Exception as e:
+        print(f"Warning: failed to delete prompt from Supabase for {agent_type}: {e}")
 
     try:
         store = get_trade_store()
