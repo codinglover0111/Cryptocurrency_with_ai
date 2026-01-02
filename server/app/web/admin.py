@@ -17,6 +17,7 @@ from app.config import (
     save_runtime_config,
 )
 from utils.storage import get_trade_store
+from app.services import supabase_repo
 
 
 AVAILABLE_MODELS: Dict[str, list[str]] = {
@@ -125,30 +126,37 @@ def update_agent_config(payload: AgentConfigPayload, _: str = Depends(require_ad
     return {"ok": True, "agents": runtime["agents"]}
 
 
+def _normalize_scheduler_states(states: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize key/value rows into typed scheduler state."""
+    result: Dict[str, Any] = {}
+    for key, data in states.items():
+        value = data.get("value")
+        if key == "is_running":
+            result[key] = value == "1"
+        elif key in ("automation_minutes", "loss_review_minutes"):
+            try:
+                result[key] = int(value) if value else None
+            except (TypeError, ValueError):
+                result[key] = None
+        else:
+            result[key] = value
+        if data.get("updated_at"):
+            result["updated_at"] = data["updated_at"]
+    return result
+
+
 def _get_scheduler_state() -> Dict[str, Any]:
-    """스케줄러 실행 상태를 DB에서 읽어옵니다."""
+    """Return scheduler state (Supabase first, DB fallback)."""
+    try:
+        states = supabase_repo.get_scheduler_state_all()
+        if states:
+            return _normalize_scheduler_states(states)
+    except Exception:
+        pass
     try:
         store = get_trade_store()
         states = store.get_all_scheduler_states()
-
-        result = {}
-        for key, data in states.items():
-            value = data.get("value")
-            if key == "is_running":
-                result[key] = value == "1"
-            elif key in ("automation_minutes", "loss_review_minutes"):
-                try:
-                    result[key] = int(value) if value else None
-                except (TypeError, ValueError):
-                    result[key] = None
-            else:
-                result[key] = value
-
-            # updated_at은 가장 최근 것으로 유지
-            if data.get("updated_at"):
-                result["updated_at"] = data["updated_at"]
-
-        return result
+        return _normalize_scheduler_states(states)
     except Exception:
         return {}
 
@@ -350,8 +358,9 @@ def delete_api_key(payload: ApiKeyDeletePayload, _: str = Depends(require_admin)
 def pause_scheduler(_: str = Depends(require_admin)):
     """스케줄러 일시 중단."""
     try:
-        store = get_trade_store()
-        store.set_scheduler_state("paused", "1")
+        if not supabase_repo.set_scheduler_state("paused", "1"):
+            store = get_trade_store()
+            store.set_scheduler_state("paused", "1")
         return {"ok": True, "paused": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -361,8 +370,9 @@ def pause_scheduler(_: str = Depends(require_admin)):
 def resume_scheduler(_: str = Depends(require_admin)):
     """스케줄러 재개."""
     try:
-        store = get_trade_store()
-        store.set_scheduler_state("paused", "0")
+        if not supabase_repo.set_scheduler_state("paused", "0"):
+            store = get_trade_store()
+            store.set_scheduler_state("paused", "0")
         return {"ok": True, "paused": False}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -460,67 +470,251 @@ def update_trading_symbols(
 # ===== Immediate Execution =====
 
 
-@router.post("/run-now")
+@router.post("/run-now", status_code=202)
 def run_automation_now(_: str = Depends(require_admin)):
-    """전체 심볼 즉시 분석 실행 (백그라운드 스레드, 일시 중단과 무관)."""
+    """전체 심볼 즉시 분석을 요청합니다.
+
+    - 기본 동작: Supabase Queues(PGMQ)에 enqueue만 수행하고 202를 반환합니다.
+    - 롤백/호환: USE_LEGACY_EXECUTION=1 이면 기존처럼 스레드로 직접 실행합니다.
+    """
+
     import logging
+    import os
     import threading
-    from app.workflows.trading import run_automation_for_all_symbols
+    import uuid
+    from datetime import datetime, timezone
+
     from app.core.symbols import parse_trading_symbols
+    from app.workflows.trading import run_automation_for_all_symbols
 
     logger = logging.getLogger(__name__)
     symbols = parse_trading_symbols()
     symbol_count = len(symbols)
-    
+
     logger.info(f"[즉시실행] 전체 심볼 분석 요청 - {symbol_count}개 심볼: {symbols}")
 
-    def run_in_background():
-        try:
-            logger.info("[즉시실행] 백그라운드 스레드 시작")
-            run_automation_for_all_symbols()
-            logger.info("[즉시실행] 백그라운드 스레드 완료")
-        except Exception as e:
-            logger.exception(f"[즉시실행] 오류 발생: {e}")
+    # 레거시 실행(롤백 플랜): 로컬 스레드로 즉시 실행
+    if os.getenv("USE_LEGACY_EXECUTION") == "1":
 
-    thread = threading.Thread(target=run_in_background, daemon=True)
-    thread.start()
+        def run_in_background():
+            """스레드에서 전체 심볼 자동매매를 실행합니다(레거시)."""
+
+            try:
+                logger.info("[즉시실행] 백그라운드 스레드 시작(레거시)")
+                run_automation_for_all_symbols()
+                logger.info("[즉시실행] 백그라운드 스레드 완료(레거시)")
+            except Exception as e:
+                logger.exception(f"[즉시실행] 오류 발생(레거시): {e}")
+
+        thread = threading.Thread(target=run_in_background, daemon=True)
+        thread.start()
+
+        return {
+            "ok": True,
+            "message": f"전체 {symbol_count}개 심볼 분석이 백그라운드에서 시작되었습니다.(레거시)",
+            "symbols": symbols,
+        }
+
+    # 신규 실행: 큐 enqueue 전용
+    client = supabase_repo.get_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+
+    lock = supabase_repo.get_run_lock()
+    if lock and str(lock.get("status") or "").lower() == "running":
+        # lease_expires_at이 만료된 경우에는 "실행 중"으로 보지 않는다.
+        lease_expires_at = lock.get("lease_expires_at")
+        is_expired = False
+        if lease_expires_at:
+            try:
+                lease_dt = datetime.fromisoformat(
+                    str(lease_expires_at).replace("Z", "+00:00")
+                )
+                is_expired = lease_dt <= datetime.now(timezone.utc)
+            except Exception:
+                is_expired = False
+
+        if not is_expired:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "already_running", "run_id": lock.get("run_id")},
+            )
+
+    dedupe_key = "automation_all"
+
+    dedupe_row = supabase_repo.get_job_dedupe(dedupe_key)
+    if dedupe_row and str(dedupe_row.get("status") or "").lower() == "queued":
+        return {
+            "status": "already_queued",
+            "run_id": dedupe_row.get("run_id"),
+            "queue": dedupe_row.get("queue_name"),
+        }
+
+    run_id = str(uuid.uuid4())
+    requested_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    message = {
+        "job_type": "automation_all",
+        "dedupe_key": dedupe_key,
+        "symbols": symbols,
+        "requested_by": "admin_api",
+        "requested_at": requested_at,
+        "run_id": run_id,
+    }
+
+    msg_id = supabase_repo.pgmq_send(
+        supabase_repo.QUEUE_MANUAL, message, sleep_seconds=0
+    )
+    if msg_id is None:
+        raise HTTPException(status_code=500, detail="enqueue_failed")
+
+    supabase_repo.upsert_job_dedupe(
+        dedupe_key=dedupe_key,
+        queue_name=supabase_repo.QUEUE_MANUAL,
+        msg_id=msg_id,
+        status="queued",
+        run_id=run_id,
+        requested_by="admin_api",
+        requested_at=requested_at,
+    )
+
+    logger.info(
+        "[즉시실행] enqueue 완료: queue=%s run_id=%s msg_id=%s",
+        supabase_repo.QUEUE_MANUAL,
+        run_id,
+        msg_id,
+    )
 
     return {
-        "ok": True,
-        "message": f"전체 {symbol_count}개 심볼 분석이 백그라운드에서 시작되었습니다.",
+        "status": "queued",
+        "run_id": run_id,
+        "queue": supabase_repo.QUEUE_MANUAL,
         "symbols": symbols,
     }
 
 
-@router.post("/run-symbol")
+@router.post("/run-symbol", status_code=202)
 def run_symbol_now(payload: RunSymbolPayload, _: str = Depends(require_admin)):
-    """특정 심볼 즉시 분석 실행 (백그라운드 스레드, 일시 중단과 무관)."""
+    """특정 심볼 즉시 분석을 요청합니다.
+
+    - 기본 동작: Supabase Queues(PGMQ)에 enqueue만 수행하고 202를 반환합니다.
+    - 롤백/호환: USE_LEGACY_EXECUTION=1 이면 기존처럼 스레드로 직접 실행합니다.
+    """
+
     import logging
+    import os
     import threading
+    import uuid
+    from datetime import datetime, timezone
+
     from app.workflows.trading import automation_for_symbol
 
     logger = logging.getLogger(__name__)
     symbol = payload.symbol.strip().upper()
-    
+
     if not symbol:
         raise HTTPException(status_code=400, detail="심볼이 비어있습니다.")
 
     logger.info(f"[즉시실행] 특정 심볼 분석 요청: {symbol}")
 
-    def run_in_background():
-        try:
-            logger.info(f"[즉시실행] {symbol} 백그라운드 분석 시작")
-            automation_for_symbol(symbol)
-            logger.info(f"[즉시실행] {symbol} 백그라운드 분석 완료")
-        except Exception as e:
-            logger.exception(f"[즉시실행] {symbol} 오류 발생: {e}")
+    # 레거시 실행(롤백 플랜): 로컬 스레드로 즉시 실행
+    if os.getenv("USE_LEGACY_EXECUTION") == "1":
 
-    thread = threading.Thread(target=run_in_background, daemon=True)
-    thread.start()
+        def run_in_background():
+            """스레드에서 특정 심볼 자동매매를 실행합니다(레거시)."""
+
+            try:
+                logger.info(f"[즉시실행] {symbol} 백그라운드 분석 시작(레거시)")
+                automation_for_symbol(symbol)
+                logger.info(f"[즉시실행] {symbol} 백그라운드 분석 완료(레거시)")
+            except Exception as e:
+                logger.exception(f"[즉시실행] {symbol} 오류 발생(레거시): {e}")
+
+        thread = threading.Thread(target=run_in_background, daemon=True)
+        thread.start()
+
+        return {
+            "ok": True,
+            "message": f"{symbol} 분석이 백그라운드에서 시작되었습니다.(레거시)",
+            "symbol": symbol,
+        }
+
+    # 신규 실행: 큐 enqueue 전용
+    client = supabase_repo.get_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+
+    lock = supabase_repo.get_run_lock()
+    if lock and str(lock.get("status") or "").lower() == "running":
+        # lease_expires_at이 만료된 경우에는 "실행 중"으로 보지 않는다.
+        lease_expires_at = lock.get("lease_expires_at")
+        is_expired = False
+        if lease_expires_at:
+            try:
+                lease_dt = datetime.fromisoformat(
+                    str(lease_expires_at).replace("Z", "+00:00")
+                )
+                is_expired = lease_dt <= datetime.now(timezone.utc)
+            except Exception:
+                is_expired = False
+
+        if not is_expired:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "already_running", "run_id": lock.get("run_id")},
+            )
+
+    dedupe_key = f"automation_symbol:{symbol}"
+
+    dedupe_row = supabase_repo.get_job_dedupe(dedupe_key)
+    if dedupe_row and str(dedupe_row.get("status") or "").lower() == "queued":
+        return {
+            "status": "already_queued",
+            "run_id": dedupe_row.get("run_id"),
+            "queue": dedupe_row.get("queue_name"),
+            "symbol": symbol,
+        }
+
+    run_id = str(uuid.uuid4())
+    requested_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    message = {
+        "job_type": "automation_symbol",
+        "dedupe_key": dedupe_key,
+        "symbol": symbol,
+        "requested_by": "admin_api",
+        "requested_at": requested_at,
+        "run_id": run_id,
+    }
+
+    msg_id = supabase_repo.pgmq_send(
+        supabase_repo.QUEUE_MANUAL, message, sleep_seconds=0
+    )
+    if msg_id is None:
+        raise HTTPException(status_code=500, detail="enqueue_failed")
+
+    supabase_repo.upsert_job_dedupe(
+        dedupe_key=dedupe_key,
+        queue_name=supabase_repo.QUEUE_MANUAL,
+        msg_id=msg_id,
+        status="queued",
+        run_id=run_id,
+        requested_by="admin_api",
+        requested_at=requested_at,
+    )
+
+    logger.info(
+        "[즉시실행] enqueue 완료: queue=%s run_id=%s msg_id=%s symbol=%s",
+        supabase_repo.QUEUE_MANUAL,
+        run_id,
+        msg_id,
+        symbol,
+    )
 
     return {
-        "ok": True,
-        "message": f"{symbol} 분석이 백그라운드에서 시작되었습니다.",
+        "status": "queued",
+        "run_id": run_id,
+        "queue": supabase_repo.QUEUE_MANUAL,
         "symbol": symbol,
     }
 
